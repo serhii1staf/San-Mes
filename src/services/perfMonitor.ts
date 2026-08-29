@@ -132,7 +132,16 @@ export type PerfEventKind =
   | 'UI'
   | 'MARK'
   | 'INTER'
-  | 'ERROR';
+  | 'ERROR'
+  /**
+   * A gap in the sampler loop with NO instrumented app activity inside it.
+   *
+   * Reported separately from `LONG` and deliberately NOT counted in
+   * `RouteHotspot.longTaskCount`, because the two are not the same finding: `LONG` means the JS
+   * thread was demonstrably busy, `IDLE` means the sampler simply was not serviced and the monitor
+   * cannot say why. See the long note on the detector in `start()`.
+   */
+  | 'IDLE';
 
 /**
  * Snapshot of "what was active" right when a long task fired. Attached to the
@@ -210,6 +219,13 @@ export interface PerfSnapshot {
   currentRoute: string;
   /** Duration of the most recent long-task event, in ms (0 if none yet). */
   lastLongTaskMs: number;
+  /**
+   * Sampler gaps this session that carried no instrumented app activity, so could not be attributed
+   * to a blocked JS thread. Surfaced so a snapshot dominated by them reads as "the sampler was
+   * starved" rather than as a pile of long tasks — the old detector reported these as real stalls
+   * and they were the bulk of what showed up while the app sat idle.
+   */
+  idleGapCount: number;
   /** Per-route jank ranking, worst-first. Drives the panel's Hotspots view. */
   hotspots: RouteHotspot[];
   /** Date.now() at the moment this snapshot was built. Useful for the JSON snapshot copy. */
@@ -299,19 +315,60 @@ class PerfMonitor {
   // note on those methods for why per-component mount timing over-reports a co-mounted batch.
   private _commitBatches = new Map<string, { start: number; count: number }>();
 
-  // After a long-task / stall, RAF (and the Reanimated frame callback) deliver
-  // "catch-up" bursts where several queued frames fire back-to-back in <16 ms
-  // each. The naive `(frameCount * 1000) / elapsed` over a 500 ms window then
-  // reads as 100+ fps even on a 60 Hz device, which is more confusing than
-  // helpful (especially on input-tap where the keyboard animation pauses RAF
-  // briefly). The fix is hysteresis: when we detect a stall on either thread,
-  // suppress the displayed FPS reading for the duration of the catch-up burst
-  // (~700 ms is enough to cover even the worst observed bursts on iPhone 12).
-  // Independent windows per thread so a JS-thread stall doesn't blank the
-  // UI-thread reading and vice-versa.
-  private _jsSuppressFpsUntil = 0;
+  // ── THE JS-SIDE SUPPRESSION WINDOW WAS REMOVED. READ THIS BEFORE ADDING IT BACK ──
+  //
+  // It used to exist on both threads, justified like this: "after a stall, RAF delivers catch-up
+  // bursts where several queued frames fire back-to-back in <16 ms each, so
+  // `(frameCount * 1000) / elapsed` reads as 100+ fps". Any window inside the 700 ms after a stall
+  // was therefore DISCARDED.
+  //
+  // For the JS sampler that premise is false, and the guard did real damage. Two facts:
+  //
+  //   1. `requestAnimationFrame` in React Native is not a frame callback. From the installed
+  //      source, `node_modules/react-native/Libraries/Core/Timers/JSTimers.js`:
+  //
+  //          requestAnimationFrame: function (func) {
+  //            const id = _allocateCallback(func, 'requestAnimationFrame');
+  //            createTimer(id, 1, Date.now(), /* recurring */ false);
+  //          }
+  //
+  //      A one-shot 1 ms timer. Not vsync, not the Choreographer, no 60 Hz ceiling.
+  //
+  //   2. The sampler re-arms itself at the END of `tick`, so exactly ONE timer is outstanding at
+  //      any moment. Native has nothing queued to flush, so the "several queued frames fire
+  //      back-to-back" burst cannot happen here. The mechanism the guard defended against does not
+  //      exist in this implementation.
+  //
+  // What the guard DID do: a long task every ~1.5 s (which is what the profile screen actually
+  // produced) marks ~700 ms after each one as unusable. Combined with the `maxDtInWindow > 50`
+  // drop, nearly every window in which the thread was struggling got thrown away, and `_jsFps`
+  // kept whatever the last surviving window said — and the surviving windows are the quiet gaps.
+  // That is the mechanism behind the bubble reading 56-60 while the scroll it was measuring ran at
+  // 24 fps by `dumpsys gfxinfo`. A guard added to stop over-reporting was causing systematic
+  // under-reporting of exactly the condition the tool exists to find.
+  //
+  // The UI-thread window is KEPT. `pushUiFps` is fed from a Reanimated frame-callback worklet,
+  // which is a genuine vsync-driven callback on the native thread, so batching after a heavy
+  // commit is plausible there. Removing it too would be changing something on a hunch, which is
+  // how the JS side got wrong in the first place.
   private _uiSuppressFpsUntil = 0;
   private static readonly _SUPPRESS_MS = 700;
+
+  /**
+   * `Date.now()` of the last INSTRUMENTED APP event (mount, mark, image decode, nav, input,
+   * interaction). Written by `_record`, and deliberately not by `slow`/`error` records so the
+   * monitor's own bookkeeping cannot corroborate itself.
+   *
+   * This is what lets the detector separate "the JS thread was blocked" from "the sampler was not
+   * serviced". See the note in `start()`.
+   */
+  private _lastActivityTs = 0;
+
+  /**
+   * Count of sampler gaps that carried no instrumented activity, per session. Exposed on the
+   * snapshot so a reading full of them is visibly untrustworthy instead of quietly wrong.
+   */
+  private _idleGapCount = 0;
 
   // Per-host log-rate throttle for `markImageDecode`. Stored as a small array
   // of timestamps per host so the cleanup is constant time.
@@ -346,12 +403,10 @@ class PerfMonitor {
     this._started = true;
     this._lastSampleTs = Date.now();
     let lastFrameTs = Date.now();
-    // Largest single-frame dt observed within the current 500 ms publish
-    // window. If anything in the window blew past ~50 ms (e.g. keyboard
-    // focus animation pausing RAF, or a sub-long-task hitch), the window's
-    // (frameCount * 1000)/elapsed reading is contaminated by the catch-up
-    // burst that follows and we drop it on publish. Reset on each publish.
-    let maxDtInWindow = 0;
+    // `maxDtInWindow` used to be tracked here to power the ">50 ms in this window, drop the
+    // sample" guard. That guard is gone (see the note at the publish branch), and with it the only
+    // reader of the variable, so it is gone too. Per-gap information is not lost: every gap over
+    // 120 ms is recorded as its own `LONG` / `IDLE` event with its exact duration.
     const tick = () => {
       // If the monitor was stopped (toggled off / app backgrounded) between
       // the last requestAnimationFrame schedule and this callback firing,
@@ -360,8 +415,6 @@ class PerfMonitor {
       // this guard guarantees zero work even if a frame was already queued.
       if (!this._started) return;
       const now = Date.now();
-      const dt = lastFrameTs ? now - lastFrameTs : 0;
-      if (dt > maxDtInWindow) maxDtInWindow = dt;
       // Single-frame stall detection. Anything ≥120 ms between two RAF
       // callbacks means the JS thread was blocked by one big task — that's
       // far more diagnostic than a sustained <30 fps window because it
@@ -370,25 +423,54 @@ class PerfMonitor {
       // from. Skip the very first tick (no previous timestamp).
       if (lastFrameTs && now - lastFrameTs > 120 && now - lastFrameTs < 5000) {
         const dur = now - lastFrameTs;
+        // ── A GAP IS NOT PROOF OF A LONG TASK ───────────────────────────────
+        //
+        // This block used to treat every gap over 120 ms as a JS-thread block, and that produced
+        // false positives I measured directly: monitor OFF, app left completely idle for 20 s,
+        // `dumpsys gfxinfo` reporting 0 frames rendered and 0 missed vsyncs — and the monitor
+        // still logging "long tasks". Nothing was blocked. Nothing was even drawing.
+        //
+        // The reason is the sampler's clock. `requestAnimationFrame` here is a one-shot 1 ms
+        // native timer (see the note on `_uiSuppressFpsUntil`), and the native Timing module that
+        // services it is driven off the platform's frame loop. When the app has no reason to
+        // produce frames, that loop is not running at a steady 60 Hz, so the timer is serviced
+        // late. A late timer and a blocked thread look IDENTICAL from inside the callback: both
+        // are just a large `Date.now()` delta. The old code read every one of them as the second
+        // thing.
+        //
+        // So the gap is corroborated against instrumented app activity. If anything the app does
+        // was recorded inside the gap — a component mount, an image decode, a named mark, a
+        // navigation, an input — then the thread was demonstrably doing work while the sampler
+        // was starved, and "long task" is a supported claim. If the gap is empty, it is reported
+        // as `IDLE` and kept out of `longTaskCount`.
+        //
+        // HONEST LIMITATION: work the app does without instrumenting itself — a large JSON parse,
+        // a store reconciliation with no mark around it — lands in the `IDLE` bucket even though
+        // the thread really was busy. That is why an idle gap is still RECORDED rather than
+        // dropped: the evidence stays visible, only the confident label is withheld. The fix for
+        // that class of blind spot is more marks at the call sites, not a looser detector here.
+        const corroborated = this.classifyGap(lastFrameTs) === 'LONG';
         this._lastLongTaskMs = dur;
-        // Suppress BOTH thread fps readings for the catch-up window. On
-        // the JS side a stall is followed by a flurry of queued RAF
-        // callbacks firing in <16 ms each, which would otherwise read
-        // as 100+ fps in the bubble. On the UI side Reanimated's frame
-        // callback exhibits the same catch-up pattern when the native
-        // thread resumes after a heavy commit.
-        this._jsSuppressFpsUntil = now + PerfMonitor._SUPPRESS_MS;
+        // The UI-thread reading is still suppressed either way: whatever starved this sampler,
+        // the Reanimated frame callback on the other thread is subject to the same catch-up
+        // behaviour, and that window is the one whose premise still holds.
         this._uiSuppressFpsUntil = now + PerfMonitor._SUPPRESS_MS;
-        const st = this._routeStat(this._currentRoute);
-        st.longTaskCount += 1;
-        st.sumLongMs += dur;
-        if (dur > st.worstLongMs) st.worstLongMs = dur;
-        st.lastTs = now;
+        if (corroborated) {
+          const st = this._routeStat(this._currentRoute);
+          st.longTaskCount += 1;
+          st.sumLongMs += dur;
+          if (dur > st.worstLongMs) st.worstLongMs = dur;
+          st.lastTs = now;
+        } else {
+          this._idleGapCount += 1;
+        }
         this._record({
           ts: now,
           type: 'slow',
-          kind: 'LONG',
-          label: `long task @ ${this._currentRoute}`,
+          kind: corroborated ? 'LONG' : 'IDLE',
+          label: corroborated
+            ? `long task @ ${this._currentRoute}`
+            : `idle gap @ ${this._currentRoute} (no recorded work)`,
           durationMs: dur,
           route: this._currentRoute,
           // Smoking-gun snapshot: pending image decodes, time since last
@@ -403,49 +485,39 @@ class PerfMonitor {
       // Publish about twice per second so the bubble label can update
       // without flooding the JS bridge with re-renders.
       if (elapsed >= 500) {
-        // While we're inside the post-stall suppression window, throw
-        // away the sample (don't update _jsFps, don't push history) but
-        // still reset the counters so the NEXT window starts fresh
-        // after the catch-up burst has flushed. This keeps the bubble
-        // showing the last "real" FPS instead of an inflated catch-up
-        // value, which was the source of the spurious "120 fps" the
-        // user saw on input tap (keyboard-focus pauses RAF briefly).
-        if (now < this._jsSuppressFpsUntil) {
-          this._frameCount = 0;
-          this._lastSampleTs = now;
-          this._rafHandle = requestAnimationFrame(tick) as unknown as number;
-          return;
-        }
-        // Sub-threshold-pause guard: catch the case where the JS thread
-        // paused 50–120 ms (e.g. a keyboard-focus animation interrupting
-        // RAF) without crossing the long-task bar. Those pauses still
-        // produce a catch-up burst that inflates fps. If any single frame
-        // in this window had dt > 50 ms, drop the sample. This is what
-        // killed the spurious "120 fps" / "150 fps" readings on input
-        // tap that the user reported.
-        if (maxDtInWindow > 50) {
-          this._frameCount = 0;
-          this._lastSampleTs = now;
-          maxDtInWindow = 0;
-          this._rafHandle = requestAnimationFrame(tick) as unknown as number;
-          return;
-        }
-        const rawFps = Math.round((this._frameCount * 1000) / elapsed);
-        // Cap displayed FPS at 60. iPhone non-Pro models are 60 Hz — the
-        // "120 fps" the bubble previously showed on input-tap was a
-        // catch-up artifact, not a real reading. Capping at 60 makes the
-        // value either truthful (on 60 Hz devices) or conservative (on
-        // 120 Hz ProMotion, where we under-report by half — acceptable
-        // since the indicator is for spotting problems, not bragging
-        // rights). Combined with the suppression and >50ms guard above,
-        // the bubble now shows realistic numbers in every scenario.
-        const fps = Math.min(60, rawFps);
+        // ── NO SAMPLE IS DISCARDED ANY MORE ─────────────────────────────────
+        //
+        // Two guards used to live here and both dropped the window outright: one for the 700 ms
+        // after a long task, one for any window containing a single frame gap over 50 ms. Their
+        // shared premise was a catch-up burst of queued rAF callbacks inflating the rate. With a
+        // one-shot 1 ms timer re-armed at the end of each tick there is never more than one
+        // callback outstanding, so there is nothing to queue and nothing to flush — see the long
+        // note on `_uiSuppressFpsUntil`.
+        //
+        // Their actual effect was to throw away every window in which the thread was struggling
+        // and leave `_jsFps` showing the last quiet one. Removing them is what makes a bad scroll
+        // read as a bad number.
+        //
+        // The arithmetic needs no guard to stay honest: `elapsed` is at least 500 ms of real time
+        // and `_frameCount` is the number of times this callback actually ran in it, so the result
+        // cannot exceed the rate the loop truly achieved. A stall pulls it DOWN, which is correct.
+        const rawHz = Math.round((this._frameCount * 1000) / elapsed);
+        // ── AND IT IS NOT CAPPED AT 60, BECAUSE IT IS NOT A FRAME RATE ───────
+        //
+        // The old cap was justified as "60 Hz is what iPhones display, so 120 must be a catch-up
+        // artifact". Both halves are wrong. This loop is a 1 ms timer chain, not vsync: it has no
+        // display refresh ceiling, and on an unblocked JS thread it genuinely does exceed 60
+        // iterations per second. That — not ProMotion, not a burst — is where the "120 fps" came
+        // from, and clamping it to 60 was hiding a units error behind a plausible-looking number.
+        //
+        // Kept as `jsFps` in the snapshot to avoid churning every consumer, but it is a JS
+        // event-loop rate. Its VALUE is not comparable to the UI number; its DROPS are the signal.
+        const fps = Math.max(0, rawHz);
         this._jsFps = fps;
         this._pushHistory(this._jsHistory, now, fps);
         this._bumpRouteFps(fps);
         this._frameCount = 0;
         this._lastSampleTs = now;
-        maxDtInWindow = 0;
         // Sustained jank below 30 fps still gets its own marker so the user
         // can distinguish a single hitch from a long stutter.
         if (this._jsHistory.length > 1 && fps < 30) {
@@ -847,6 +919,7 @@ class PerfMonitor {
       pendingDecodes: this._pendingDecodes,
       currentRoute: this._currentRoute,
       lastLongTaskMs: this._lastLongTaskMs,
+      idleGapCount: this._idleGapCount,
       hotspots: this.getHotspots(),
       capturedAt: Date.now(),
     };
@@ -875,6 +948,11 @@ class PerfMonitor {
     this._slowHead = 0;
     this._slowCount = 0;
     this._routeStats.clear();
+    this._idleGapCount = 0;
+    // Forget the corroboration timestamp too. Left behind, it is a timestamp from BEFORE the clear
+    // that still sits after the sampler's `lastFrameTs`, so the first gap after a clear would be
+    // vouched for by work the user just asked to be forgotten.
+    this._lastActivityTs = 0;
     // Reset the image throttle buckets too. "Clear" means the panel starts from
     // nothing; leaving populated buckets behind silently suppressed the first
     // couple of decodes per host after a clear, which is the one moment the user
@@ -956,6 +1034,23 @@ class PerfMonitor {
     st.lastTs = Date.now();
   }
 
+  /**
+   * The corroboration rule, in one place.
+   *
+   * `LONG` when instrumented app work was recorded after `gapStartTs`, i.e. inside the sampler gap
+   * that ended now — the thread was demonstrably busy. `IDLE` when the gap is empty, which means the
+   * sampler was not serviced and the monitor cannot attribute that to the app.
+   *
+   * Lives here rather than inline in the sampler loop for two reasons: the rule is the whole basis
+   * for trusting a `LONG` count, so it should be readable without unpicking a closure; and it cannot
+   * be exercised from a test while it is trapped inside `requestAnimationFrame`.
+   *
+   * @internal Not private so the unit test can drive it directly. Not part of the public surface.
+   */
+  classifyGap(gapStartTs: number): 'LONG' | 'IDLE' {
+    return this._lastActivityTs > gapStartTs ? 'LONG' : 'IDLE';
+  }
+
   private _record(ev: PerfEvent) {
     this._events[this._eventHead] = ev;
     this._eventHead = (this._eventHead + 1) % RING_CAPACITY;
@@ -966,6 +1061,12 @@ class PerfMonitor {
       this._slowEvents[this._slowHead] = ev;
       this._slowHead = (this._slowHead + 1) % SLOW_RING_CAPACITY;
       if (this._slowCount < SLOW_RING_CAPACITY) this._slowCount += 1;
+    } else {
+      // Timestamp of the last thing the APP did, which is what the long-task detector corroborates
+      // a sampler gap against. `slow` and `error` are excluded above by construction: they are the
+      // monitor's own output, and letting them count as activity would let one long task vouch for
+      // the next one and re-introduce exactly the false positives this guards against.
+      this._lastActivityTs = ev.ts;
     }
   }
 

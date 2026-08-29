@@ -16,6 +16,7 @@ import Skeleton from './Skeleton';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
 import { openUrl } from '../../utils/openUrl';
 import { useT } from '../../i18n/store';
 
@@ -141,7 +142,16 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
 
   const profile = comment.profiles || {};
   const body: string = displayBody ?? comment.content ?? '';
-  const link = (!gifUrl && !hasCodeBlock(body)) ? extractFirstUrl(body) : null;
+  // Prefer OUR url over the positional first match, then strip it from the body, so a comment that
+  // shares a post shows the card alone instead of the card plus a bare elided link above it.
+  //
+  // Worth stating plainly: this menu is the ONLY comments surface that renders a link card at all —
+  // there is no comment row component with a `LinkPreview` — so this is not being brought in line
+  // with a sibling, it is the whole of the comments behaviour.
+  const link = (!gifUrl && !hasCodeBlock(body))
+    ? extractInAppCardUrl(body) ?? extractFirstUrl(body)
+    : null;
+  const bodyText = isInAppCardUrl(link) ? stripInAppCardUrl(body, link) : body;
 
   // Tapping a link from inside the modal must close THIS modal first, else
   // the modal (with `<StatusBar hidden />` and full-screen backdrop) stays
@@ -186,8 +196,8 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
           // cut-out, which is the same defect that was just removed from the chat bubble.
           ? <CachedImage uri={gifUrl} style={{ width: 220, height: 220, borderRadius: 14 }} resizeMode="contain" progressive />
           : <Skeleton width={160} height={160} radius={14} />
-      ) : body ? (
-        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }} onLinkPress={handleLinkPress}>{body}</FormattedText>
+      ) : bodyText ? (
+        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }} onLinkPress={handleLinkPress}>{bodyText}</FormattedText>
       ) : null}
       {link ? (
         <View style={{ marginTop: 6 }}>

@@ -31,7 +31,10 @@ interface Props {
 
 // Order in which the chip row renders. Mirrors the most-to-least useful
 // kinds when triaging perceived lag.
-const FILTER_KINDS: PerfEventKind[] = ['NAV', 'MOUNT', 'INPUT', 'IMG', 'LONG', 'UI', 'MARK'];
+// `IDLE` sits next to `LONG` because the pair is only useful read together: a screen showing
+// six LONG is a screen with a problem, the same six as IDLE means the sampler was starved and the
+// snapshot says nothing about the app. Before the split, both looked like the first case.
+const FILTER_KINDS: PerfEventKind[] = ['NAV', 'MOUNT', 'INPUT', 'IMG', 'LONG', 'IDLE', 'UI', 'MARK'];
 
 // Visual tint per kind. Kept small so the panel reads quickly at a glance.
 function tintForKind(kind: PerfEventKind, theme: any): string {
@@ -46,6 +49,10 @@ function tintForKind(kind: PerfEventKind, theme: any): string {
       return '#10b981';
     case 'LONG':
       return '#ef4444';
+    // Deliberately grey rather than another alarm colour: an idle gap is an absence of evidence,
+    // and giving it a red would recreate the alarm the old detector raised for nothing.
+    case 'IDLE':
+      return '#6b7280';
     case 'UI':
       return '#f59e0b';
     case 'INTER':
@@ -681,7 +688,9 @@ const EventRow = React.memo(function EventRow({
   const tint = tintForKind(event.kind, theme);
   const time = new Date(event.ts).toLocaleTimeString([], { hour12: false });
   // Long-task rows are tappable to reveal their captured context.
-  const hasContext = event.kind === 'LONG' && !!event.context;
+  // `IDLE` carries the same captured context as `LONG` and is worth expanding for the opposite
+  // reason: seeing an EMPTY recent-marks list is what confirms the gap was unattributable.
+  const hasContext = (event.kind === 'LONG' || event.kind === 'IDLE') && !!event.context;
   return (
     <View>
       <TouchableOpacity

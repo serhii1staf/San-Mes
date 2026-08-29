@@ -11,6 +11,7 @@ import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
 import { parseGif } from '../../services/giphy';
 import { useT } from '../../i18n/store';
 
@@ -187,9 +188,17 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
   // on dense reply lists. Falls back to extracting a URL from the
   // snippet only when no image exists.
   const showThumb = !!reply.parentImageUrl;
+  // Prefer OUR url over the positional first match, for the same reason as every other card: the
+  // thing being shared should win the preview slot even when the text also quotes a third party.
   const linkUrl = !showThumb
-    ? reply.parentLinkUrl || extractFirstUrl(reply.parentSnippet)
+    ? reply.parentLinkUrl || extractInAppCardUrl(reply.parentSnippet) || extractFirstUrl(reply.parentSnippet)
     : null;
+  // The one-line quote above the card loses our url too. A reply to a post that was itself a share
+  // otherwise printed `san-m-app.com/post` as the entire snippet, directly above a card showing that
+  // same post.
+  const snippetText = isInAppCardUrl(linkUrl)
+    ? stripInAppCardUrl(reply.parentSnippet, linkUrl)
+    : (reply.parentSnippet || '');
   const extraImages = Math.max(0, (reply.parentImageCount || 0) - 1);
 
   const openThread = () => {
@@ -213,15 +222,21 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
             </Text>
             {reply.parentAuthorVerified ? <VerifiedBadge size={10} /> : null}
           </View>
-          {reply.parentSnippet ? (
+          {/* THREE cases, not two. The old two-way branch was `snippet ? quote : placeholder`, which
+              is wrong once the snippet can be emptied by stripping: a parent post whose whole text
+              was our share url would fall to "nothing here" while a card showing that very post sat
+              directly below. So the placeholder is now reserved for a parent that genuinely has
+              nothing to show — no text AND no card — and a snippet emptied by stripping renders as
+              nothing at all, letting the card speak for itself. */}
+          {snippetText ? (
             <FormattedText
               numberOfLines={1}
               color={theme.colors.text.tertiary}
               style={{ fontSize: 11, marginTop: 1 }}
             >
-              {reply.parentSnippet}
+              {snippetText}
             </FormattedText>
-          ) : (
+          ) : linkUrl || showThumb ? null : (
             <Text
               variant="caption"
               color={theme.colors.text.tertiary}
