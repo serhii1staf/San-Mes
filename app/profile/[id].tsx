@@ -2056,7 +2056,7 @@ export default function UserProfileScreen() {
                 <Feather name="chevron-left" size={18} color="#FFFFFF" />
               </NativeGlassView>
             ) : chromeReady ? (
-              <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+              <BlurView role="scrim" intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="chevron-left" size={18} color="#FFFFFF" />
               </BlurView>
             ) : (
@@ -2075,7 +2075,7 @@ export default function UserProfileScreen() {
                 <ThemedMenuTrigger size={18} color="#FFFFFF" iconName="more-horizontal" />
               </NativeGlassView>
             ) : chromeReady ? (
-              <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+              <BlurView role="scrim" intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                 <ThemedMenuTrigger size={18} color="#FFFFFF" iconName="more-horizontal" />
               </BlurView>
             ) : (
