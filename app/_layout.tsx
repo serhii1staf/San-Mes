@@ -22,6 +22,7 @@ import { installPowerMode } from '../src/services/powerMode';
 import { useConnectivityStore } from '../src/services/connectivityMonitor';
 import { useEntityStore } from '../src/services/entityStore';
 import { setCacheAccount } from '../src/services/cacheService';
+import { useChatUnread } from '../src/store/chatUnreadStore';
 import { setThrottleAccount } from '../src/services/syncThrottle';
 import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -471,6 +472,18 @@ function RootLayout() {
     const currentUser = useAuthStore.getState().user;
     setCacheAccount(currentUser?.id);
     setThrottleAccount(currentUser?.id);
+    // ── RE-READ UNREAD STATE NOW THAT THE NAMESPACE IS CORRECT ────────────────
+    //
+    // `chatUnreadStore` is imported statically by CustomTabBar, RealtimeAccountBridge,
+    // messages.tsx and chatStore, so its body ran during module evaluation — before this
+    // effect, and therefore under `activeAccountId === 'anon'`. Both of its maps hydrated
+    // empty, and `reconcile` running against empty maps set every conversation to 1 and
+    // then persisted that (plus an empty readAt) over the real data. Every cold start.
+    //
+    // The store now self-heals inside its own mutators, so this call is not what makes it
+    // correct — it is what makes the OS icon badge correct promptly, instead of after the
+    // first message or the first chat open.
+    try { useChatUnread.getState().rehydrate(); } catch {}
 
     // Phase 2 — hydrate cached data so screens have content on first paint.
     useEntityStore.getState().hydrate();

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { kvGetJSONSync, kvSetJSON } from '../services/kvStore';
 import { isActiveThread } from '../services/activeThread';
+import { getCacheAccount } from '../services/cacheAccount';
 
 /**
  * Per-conversation unread counts — the thing that makes the badge on a chat-list row appear.
@@ -47,7 +48,43 @@ import { isActiveThread } from '../services/activeThread';
  *     a conversation's newest message is newer than our read watermark and the count is 0, show 1.
  *     "At least one new message" is right even when "exactly four" is not.
  *   • Counts are per install, not per account-on-device — the MMKV namespace is already
- *     per-account, so switching accounts does not mix them up.
+ *     per-account.
+ *
+ * ── THE NAMESPACE CLAIM ABOVE USED TO SAY "so switching accounts does not mix them up" ──
+ *
+ * It was wrong, and it was destroying data on EVERY cold start — push or no push. Reported as:
+ * "messages that arrive while the app is closed are not counted, and the counts I already had get
+ * reset to 1."
+ *
+ * The namespace is per-account, but the READ happened before the namespace was set.
+ *
+ *   1. This module is imported statically (CustomTabBar, RealtimeAccountBridge, messages.tsx,
+ *      chatStore), so its body runs during module evaluation.
+ *   2. `kvGetJSONSync` -> `kvGetStringSync` -> `accountKey(base)` -> `@acc:${activeAccountId}:...`,
+ *      and `activeAccountId` starts as the literal `'anon'` (src/services/cacheAccount.ts).
+ *   3. `setCacheAccount(uid)` runs in `app/_layout.tsx`, inside a useEffect gated on font loading —
+ *      strictly after all module evaluation.
+ *
+ * So both maps hydrated from `@acc:anon:...`, which is empty for any real user. Then `reconcile`
+ * ran, and with empty maps every guard in it is disarmed at once: the `counts[r.id] > 0` skip never
+ * trips, `readAt[r.id] || 0` is 0, so `last > seen` is true for every conversation — including ones
+ * read months ago. Every row got exactly 1.
+ *
+ * And then `persist(nextCounts, readAt)` wrote BOTH keys, now under the corrected namespace, over
+ * the real data. So the real counts were replaced by 1s and every read watermark was wiped, which
+ * compounds on the next launch.
+ *
+ * ── THE FIX IS AN INVARIANT, NOT A REMEMBERED CALL ──────────────────────────
+ *
+ * `blockedUsersStore` solves the same problem with a `hydrate()` that callers must remember to call
+ * after `setCacheAccount`. That works, and it is one forgotten call site away from breaking.
+ *
+ * Here the account the maps were read from is RECORDED, and every mutator checks it first
+ * (`ensureAccount`). If the pointer has moved since, the maps are re-read before anything is
+ * written. So `bump` / `clear` / `reconcile` cannot operate on another account's data — or on
+ * `anon`'s — regardless of who called what. `rehydrate()` is still exported for the explicit
+ * post-`setCacheAccount` call, because that is what re-seeds the OS badge promptly rather than on
+ * the first message.
  */
 
 const COUNTS_KEY = '@san:chat:unreadCounts';
@@ -88,6 +125,15 @@ interface ChatUnreadState {
     rows: ReadonlyArray<{ id: string; lastMessageAt?: string; participantId?: string; lastSenderId?: string }>,
     myUserId: string | undefined,
   ) => void;
+
+  /**
+   * Re-read both maps from the ACTIVE account's namespace, unconditionally.
+   *
+   * Call right after `setCacheAccount(...)`. The mutators self-heal via `ensureAccount`, so this is
+   * not required for correctness — it exists so the OS icon badge is seeded from the real counts at
+   * launch instead of waiting for the first message or the first chat open.
+   */
+  rehydrate: () => void;
 }
 
 /** MMKV writes are cheap but not free; this is called on every arriving message. */
@@ -124,14 +170,56 @@ function syncChatOsBadge(counts: CountMap): void {
   }
 }
 
-export const useChatUnread = create<ChatUnreadState>((set, get) => ({
-  counts: kvGetJSONSync<CountMap>(COUNTS_KEY, {}) || {},
-  readAt: kvGetJSONSync<ReadAtMap>(READ_AT_KEY, {}) || {},
+/** Read both maps from whatever namespace is active right now. */
+function readMaps(): { counts: CountMap; readAt: ReadAtMap } {
+  return {
+    counts: kvGetJSONSync<CountMap>(COUNTS_KEY, {}) || {},
+    readAt: kvGetJSONSync<ReadAtMap>(READ_AT_KEY, {}) || {},
+  };
+}
+
+/**
+ * The account whose namespace the in-memory maps were read from.
+ *
+ * At module evaluation this is necessarily `'anon'` — see the header. Recording it is what lets
+ * every mutator notice that the pointer has moved and re-read before writing.
+ */
+let hydratedAccount: string | null = null;
+
+export const useChatUnread = create<ChatUnreadState>((set, get) => {
+  const initial = readMaps();
+  hydratedAccount = getCacheAccount();
+
+  /**
+   * Guard at the top of every mutator.
+   *
+   * Cheap: one string compare in the overwhelmingly common case. It only does work on the first
+   * mutation after `setCacheAccount` moves the pointer — i.e. once per launch and once per account
+   * switch. That is the exact window in which the old code corrupted the store.
+   */
+  const ensureAccount = (): void => {
+    const active = getCacheAccount();
+    if (active === hydratedAccount) return;
+    hydratedAccount = active;
+    const m = readMaps();
+    set({ counts: m.counts, readAt: m.readAt });
+    syncChatOsBadge(m.counts);
+  };
+
+  return {
+  counts: initial.counts,
+  readAt: initial.readAt,
+
+  rehydrate: () => {
+    hydratedAccount = null;
+    ensureAccount();
+  },
 
   bump: (conversationId) => {
     if (!conversationId) return;
     // The thread on screen is being read as it arrives.
     if (isActiveThread('chat', conversationId)) return;
+    ensureAccount();
     const { counts, readAt } = get();
     const next = Math.min((counts[conversationId] || 0) + 1, MAX_COUNT);
     if (next === counts[conversationId]) return;
@@ -142,6 +230,7 @@ export const useChatUnread = create<ChatUnreadState>((set, get) => ({
 
   clear: (conversationId) => {
     if (!conversationId) return;
+    ensureAccount();
     const { counts, readAt } = get();
     const had = (counts[conversationId] || 0) > 0;
     const nextReadAt = { ...readAt, [conversationId]: Date.now() };
@@ -159,6 +248,9 @@ export const useChatUnread = create<ChatUnreadState>((set, get) => ({
   },
 
   reconcile: (rows, myUserId) => {
+    // FIRST LINE, and the most important of the three. This is the function that turned an empty
+    // anon-namespace hydration into an all-1s map written over the real data.
+    ensureAccount();
     const { counts, readAt } = get();
     let changed = false;
     const nextCounts = { ...counts };
@@ -206,12 +298,19 @@ export const useChatUnread = create<ChatUnreadState>((set, get) => ({
     set({ counts: nextCounts });
     persist(nextCounts, readAt);
   },
-}));
+  };
+});
 
-// Seed the icon from what MMKV restored, once, at import. Without this the chat component stays 0 until
-// the first message arrives or a chat is opened, so a cold start with unread DMs already on disk would
-// show an icon number that is missing them — the same blank icon this change is fixing, just narrower.
-syncChatOsBadge(useChatUnread.getState().counts);
+// ── THE IMPORT-TIME BADGE SEED IS GONE, AND IT WAS CLEARING THE REAL NUMBER ──
+//
+// This used to be `syncChatOsBadge(useChatUnread.getState().counts)`, with the intent "seed the icon
+// from what MMKV restored, once, at import". Under the namespace race that intent inverted: at import
+// the counts are the empty `anon` map, so the total is 0, and `osBadge`'s `lastWritten` starts at -1 so
+// the write always lands. The first thing the app did on launch was therefore actively CLEAR whatever
+// number the launcher was correctly showing from the last session.
+//
+// Seeding now happens in `rehydrate()`, called right after `setCacheAccount(...)`, which is the first
+// moment the real counts can be read at all.
 
 /**
  * Total across conversations — for the messages tab badge, so it can show real message counts

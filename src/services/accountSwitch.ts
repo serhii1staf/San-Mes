@@ -31,6 +31,7 @@ import { useEntityStore } from './entityStore';
 import { useFeedStore } from '../store/feedStore';
 import { useChatStore } from '../store/chatStore';
 import { useBlockedUsersStore } from '../store/blockedUsersStore';
+import { useChatUnread } from '../store/chatUnreadStore';
 import { disconnectRealtime } from './realtime/ably';
 
 export function switchAccount(accountId: string | null | undefined): void {
@@ -72,6 +73,11 @@ export function switchAccount(accountId: string | null | undefined): void {
   InteractionManager.runAfterInteractions(() => {
     try { useEntityStore.getState().hydrate(); } catch {}
     try { useBlockedUsersStore.getState().hydrate(); } catch {}
+    // Unread counts + read watermarks are namespaced too, and the previous account's are still in
+    // memory at this point. The store's own `ensureAccount` guard would catch this on the next
+    // mutation, but doing it here also re-seeds the OS icon badge for the account just switched to
+    // rather than leaving the old account's number on the icon until a message arrives.
+    try { useChatUnread.getState().rehydrate(); } catch {}
     // 4) Drop the realtime client. The next consumer (chat screen, global
     //    notification bridge) will lazily reopen it with the new auth.
     try { disconnectRealtime(); } catch {}
