@@ -48,13 +48,8 @@ const THROTTLE_MS = 3000;
  */
 const MAX_TRACKED = 64;
 
-interface Pending {
-  at: string;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 const lastSentAt = new Map<string, number>();
-const pending = new Map<string, Pending>();
+const pending = new Map<string, ReturnType<typeof setTimeout>>();
 
 function evictIfNeeded(): void {
   if (lastSentAt.size <= MAX_TRACKED) return;
@@ -64,17 +59,29 @@ function evictIfNeeded(): void {
   if (!oldest.done) lastSentAt.delete(oldest.value);
 }
 
-function send(conversationId: string, at: string): void {
+function send(conversationId: string): void {
   lastSentAt.delete(conversationId);
   lastSentAt.set(conversationId, Date.now());
   evictIfNeeded();
+  // ── NO TIMESTAMP IN THE BODY, AND THAT IS THE POINT ────────────────────────
+  //
+  // This used to send `{ at: new Date().toISOString() }`. End-to-end verification against the live
+  // database caught what that costs: the Android emulator's clock was 3h34m behind real time, so the
+  // watermark was written three and a half hours into the past and every message from those hours
+  // would have come back as unread on the next chat-list sync. That is the bug this whole feature
+  // exists to fix, reproduced by the fix, on any device whose clock has drifted.
+  //
+  // The server stamps its own `now`, which is the same clock that writes `messages.created_at` — the
+  // single-clock property that motivated moving read state off the device in the first place. The
+  // device's opinion about what time it is has no place in it.
+  //
   // Fire-and-forget. A failed read-sync must never surface to the user: the local watermark has
   // already zeroed the badge, so the visible state is right either way, and the next chat open
   // retries. `apiPost` resolves rather than throwing, so this cannot produce an unhandled rejection —
   // the catch is for a module-resolution failure only.
   void (async () => {
     try {
-      await apiPost(`/v1/conversations/${encodeURIComponent(conversationId)}/read`, { at });
+      await apiPost(`/v1/conversations/${encodeURIComponent(conversationId)}/read`);
     } catch {
       // best-effort
     }
@@ -82,50 +89,44 @@ function send(conversationId: string, at: string): void {
 }
 
 /**
- * Record that the user has read `conversationId` up to `at` (default: now).
+ * Record that the user has read `conversationId`, as of whenever the server processes the call.
  *
- * Safe to call from anywhere, as often as you like, in any order. The server clamps the timestamp to
- * now and refuses to move a watermark backwards, so a late-arriving request cannot resurrect a badge.
+ * Safe to call from anywhere, as often as you like, in any order. The server refuses to move a
+ * watermark backwards, so a late-arriving request cannot resurrect a badge.
  */
-export function markConversationRead(conversationId: string, at?: string): void {
+export function markConversationRead(conversationId: string): void {
   if (!conversationId) return;
-  const stamp = at || new Date().toISOString();
   const now = Date.now();
   const last = lastSentAt.get(conversationId) || 0;
 
   if (now - last >= THROTTLE_MS) {
-    // Outside the window. If a trailing send was queued, this supersedes it — the timestamp we are
-    // about to send is newer.
+    // Outside the window. A queued trailing send is redundant now — this call covers it.
     const queued = pending.get(conversationId);
     if (queued) {
-      clearTimeout(queued.timer);
+      clearTimeout(queued);
       pending.delete(conversationId);
     }
-    send(conversationId, stamp);
+    send(conversationId);
     return;
   }
 
-  const queued = pending.get(conversationId);
-  if (queued) {
-    // A trailing send is already scheduled; just carry the newer timestamp on it. Deliberately does
-    // NOT reset the timer — that would be a debounce, and a chat receiving a message every second
-    // would push the send out indefinitely.
-    queued.at = stamp;
-    return;
-  }
+  // Inside the window. If a trailing send is already scheduled there is nothing to add: the server
+  // stamps on receipt, so the queued call will carry a later time than this one would have.
+  // Deliberately does NOT reset the timer — that would make it a debounce, and a chat receiving a
+  // message every second would push the send out indefinitely.
+  if (pending.has(conversationId)) return;
 
   const wait = Math.max(0, THROTTLE_MS - (now - last));
   const timer = setTimeout(() => {
-    const p = pending.get(conversationId);
     pending.delete(conversationId);
-    if (p) send(conversationId, p.at);
+    send(conversationId);
   }, wait);
-  pending.set(conversationId, { at: stamp, timer });
+  pending.set(conversationId, timer);
 }
 
 /** Test seam: drop all throttle state and cancel pending timers. */
 export function __resetReadStateForTests(): void {
-  for (const p of pending.values()) clearTimeout(p.timer);
+  for (const t of pending.values()) clearTimeout(t);
   pending.clear();
   lastSentAt.clear();
 }
