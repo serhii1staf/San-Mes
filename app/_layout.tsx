@@ -773,7 +773,11 @@ function AppStack() {
       <Stack.Screen name="settings/widget" />
       <Stack.Screen name="settings/storage" />
       <Stack.Screen name="settings/device-key" />
-      <Stack.Screen name="settings/privacy" />
+      {/* `settings/privacy` was removed with its screen: it rendered the privacy POLICY a second
+          time (nine sections, EN/RU toggle), duplicating the Legal section's hosted link, and its
+          copy had gone stale — still naming Supabase and Vercel as the backend after the move to
+          Cloudflare Workers + D1. Two copies of a legal document means one of them drifts. */}
+      <Stack.Screen name="settings/devices" />
       <Stack.Screen name="settings/admin" />
       <Stack.Screen name="settings/fonts" />
       <Stack.Screen name="settings/fonts-size" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />

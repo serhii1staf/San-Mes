@@ -49,11 +49,33 @@ import { useSettingsStore } from '../../store/settingsStore';
  * A tonal fill is also not a compromise on Android's own terms: Material specifies elevated surfaces as
  * tonal colour, not as blur. So this reads as deliberate rather than as a missing effect.
  *
- * Real blur is still reachable. The `liquidGlassEnabled` setting currently does NOTHING on Android
- * (`NATIVE_GLASS_CAPABLE` is iOS-only by construction), so it is a switch the user already has and which
- * is currently inert on their platform. Turning it on now opts Android into `dimezisBlurView`, so the
- * effect can be judged on a real device and turned back off without a rebuild — no new setting, no
- * guesswork on my part about whether a given phone can afford it.
+ * ── THE OPT-IN FLAG WAS WRONG, AND IT COST EXACTLY WHAT THIS NOTE PREDICTED ──
+ *
+ * This block used to read: real blur is reachable by turning on `liquidGlassEnabled`, because that
+ * setting "currently does NOTHING on Android", so it is "a switch the user already has" — "no new
+ * setting, no guesswork".
+ *
+ * Both halves were wrong. `liquidGlassEnabled` DEFAULTS TO TRUE, so this was not an opt-in at all: it
+ * turned dimezis blur on for every Android install the moment this wrapper shipped. And it is not a
+ * switch the user has, because the settings row for it is gated on `isNativeGlassCapable()`, which is
+ * false off iOS — so on Android the row is hidden and the flag is unreachable. The effect could not be
+ * judged on a real device and could not be turned back off.
+ *
+ * The note above says turning blur on for all Android by default "would trade a legibility bug for an
+ * FPS bug, and 'no heavy blur that drops FPS' was a stated requirement." That is precisely what
+ * happened, on the very next line, by choosing a default-true flag.
+ *
+ * Measured with `dumpsys gfxinfo`, eight identical swipes on `(tabs)/profile`, monitor off:
+ *
+ *     36.84% janky frames | 42 ms median | Slow UI thread 91/91 | Slow bitmap uploads 56
+ *
+ * The bitmap-upload counter is the signature: this app's earlier documented baseline recorded it as
+ * ZERO. dimezis blur snapshots the view hierarchy beneath it and blurs it — UI-thread work that
+ * produces a bitmap upload, per frame, behind chrome that sits over a scrolling list.
+ *
+ * So the opt-in is now `androidBlurEnabled`, its OWN field, default FALSE, with its own settings row
+ * that is visible ON ANDROID. The lesson is not "pick a better default" — it is that a shared flag
+ * silently growing a second platform's meaning is how this happened.
  */
 
 export interface AppBlurViewProps {
@@ -106,10 +128,10 @@ export function androidSurfaceStyle(intensity: number, isDark: boolean): ViewSty
 
 function AppBlurViewComponent({ intensity = 50, tint = 'default', style, children, ...rest }: AppBlurViewProps) {
   const theme = useTheme();
-  // Read the same flag the iOS glass path uses. On Android it has never had an effect, so opting real
-  // blur behind it gives an existing, already-discoverable switch a meaning here rather than inventing a
-  // second one.
-  const blurOptIn = useSettingsStore((s) => s.liquidGlassEnabled);
+  // Android's own flag, default false. NOT `liquidGlassEnabled` — that one defaults to true and its
+  // settings row is hidden off iOS, which is how every Android install ended up running dimezis blur
+  // with no way to stop it. See the note above.
+  const blurOptIn = useSettingsStore((s) => s.androidBlurEnabled);
 
   if (Platform.OS !== 'android') {
     return (
