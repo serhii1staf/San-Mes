@@ -620,24 +620,6 @@ export default function SettingsScreen() {
             iconTint="blue"
             label={t('settings.device_key')}
             onPress={() => router.push('/settings/device-key')}
-          />
-          {/* ── DELETE ACCOUNT LIVES IN SECURITY NOW, NOT IN A FLOATING BUTTON ────
-              It was one of two hand-built Pressables under the whole list, side by side with Log
-              out: bare rounded rectangles, no icon, no separators, one of them outlined in
-              translucent red. Nothing else on this screen looks like that, which is what made it
-              read badly.
-
-              Inside the Security card it gets the same geometry as every other row and it sits next
-              to the privacy controls it belongs with — which is also where iOS and Telegram both put
-              account deletion. Still one tap away and still behind its confirmation Alert, so it
-              remains discoverable for App Review, which requires in-app account deletion. */}
-          <SettingsRow
-            icon="person-remove"
-            iconTint="red"
-            label={t('settings.delete_account')}
-            onPress={handleDeleteAccount}
-            showChevron={false}
-            destructive
             isLast
           />
         </View>
@@ -700,18 +682,24 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* ── LOG OUT: ONE ROW, IN A CARD, LIKE EVERYTHING ELSE HERE ───────────
-            The pair that used to be here was two hand-rolled Pressables in a flex row — bare
-            rounded rectangles with no icon, no separator and no shared geometry with any other row
-            on the screen, one of them outlined in translucent red and carrying grey text for an
-            irreversible action. That mismatch is what read as bad, not the colours.
+        {/* ── THE TWO ACCOUNT ACTIONS, TOGETHER, AS ROWS ───────────────────────
+            What was here was two hand-rolled Pressables in a flex row: bare rounded rectangles with
+            no icon, no separator and no shared geometry with any other row on the screen, one of
+            them outlined in translucent red and carrying GREY text for an irreversible action. The
+            mismatch is what read badly, not the pairing.
 
-            Delete account has moved into Security (see above). Log out stays at the bottom, where a
-            sign-out belongs, but as a real row in a real card: same height, same icon tile, same
-            press feedback. Exactly the shape iOS Settings and Telegram both use for it.
+            So the pairing is kept — asked for directly, they belong next to each other — and only
+            the presentation changes. One card, two rows, stacked: same height, same icon tile, same
+            separator and same press feedback as every other row on this screen. That is also how
+            iOS Settings stacks a sign-out next to a destructive account action.
 
-            No chevron: it acts immediately (behind its confirmation Alert) rather than pushing a
-            screen, and a chevron would claim otherwise. */}
+            Ordering is deliberate: Log out first, Delete account second. The reversible action is
+            the one people reach for, and putting the irreversible one under it means a mis-tap on
+            the row you wanted lands on the safer of the two.
+
+            Neither takes a chevron: both act immediately, behind their confirmation Alerts, rather
+            than pushing a screen — a chevron would claim otherwise. Delete account stays reachable
+            in-app, which App Review requires. */}
         <View style={[sectionCardStyle, { marginTop: 8 }]}>
           <SettingsRow
             icon="logout"
@@ -721,6 +709,14 @@ export default function SettingsScreen() {
             showChevron={false}
             destructive
             isFirst
+          />
+          <SettingsRow
+            icon="person-remove"
+            iconTint="red"
+            label={t('settings.delete_account')}
+            onPress={handleDeleteAccount}
+            showChevron={false}
+            destructive
             isLast
           />
         </View>
