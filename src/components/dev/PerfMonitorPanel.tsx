@@ -184,16 +184,31 @@ export function PerfMonitorPanel({ onClose }: Props) {
     });
   }, [groupedEvents]);
 
+  // ── THE EXPORT IS DERIVED FROM THE SNAPSHOT, NOT RE-LISTED BY HAND ─────────
+  //
+  // This payload used to name each field individually, and that quietly broke the only path by which
+  // a measurement reaches anyone. `idleGapCount` was added to distinguish a starved sampler from a
+  // blocked thread, and `uiSampleCount` to distinguish a DEAD UI sampler from a reading of zero —
+  // and neither ever appeared in a copied snapshot, because this list was written before they
+  // existed and nothing links the two.
+  //
+  // The cost of that was not theoretical. `uiFps: 0` was reported three times, I read it as a value
+  // rather than as an absent instrument, and spent three rounds optimising the thread I could see
+  // while the one that actually carries image decode and bitmap upload went unmeasured. The field
+  // that would have said so was added, shipped, and then dropped right here.
+  //
+  // So the shape is now `...snap` with only the presentation overrides applied on top. Any field
+  // added to `PerfSnapshot` from now on reaches the export automatically, and this class of bug
+  // cannot recur. `events` is renamed rather than duplicated so the payload stays the same size.
   const onSnapshot = async () => {
     try {
+      const { events, jsFps, uiFps, jsP1Min, uiP1Min, ...rest } = snap;
       const payload = {
-        capturedAt: snap.capturedAt,
-        currentRoute: snap.currentRoute,
-        fps: { js: snap.jsFps, ui: snap.uiFps, jsP1Min: snap.jsP1Min, uiP1Min: snap.uiP1Min },
-        pendingDecodes: snap.pendingDecodes,
-        lastLongTaskMs: snap.lastLongTaskMs,
-        hotspots: snap.hotspots,
-        recentEvents: snap.events,
+        ...rest,
+        // Kept nested because it reads better in a pasted snapshot, and `uiSampleCount` sits beside
+        // it in `rest` as the thing to check before believing `ui`.
+        fps: { js: jsFps, ui: uiFps, jsP1Min, uiP1Min },
+        recentEvents: events,
       };
       await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
       Alert.alert(
