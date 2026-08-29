@@ -17,6 +17,7 @@
 // so we can swap them seamlessly.
 
 import { kvDeleteRaw, kvGetStringRawSync, kvSetStringRaw } from './kvStore';
+import { getInstallId } from './installId';
 import { perfMonitor } from './perfMonitor';
 import { getApiHost, isTransportFailure, rotateApiHost } from './apiHost';
 import { t } from '../i18n/store';
@@ -54,6 +55,29 @@ export interface DBProfileLike {
 interface AuthResponse {
   profile: DBProfileLike;
   token: string;
+}
+
+/**
+ * This install's opaque id, or `undefined` if it cannot be read.
+ *
+ * Statically imported. This was briefly a lazy `require()`, on the reasoning that this module sits on
+ * the cold-start path and should not pull `installId` — and through it `kvStore` — into its import
+ * graph any earlier than the first auth call. That reasoning does not survive reading the file: this
+ * module ALREADY imports `./kvStore` on line 19 for the token itself, and `installId.ts` imports
+ * nothing but `./kvStore`. So the lazy form deferred nothing, cost the type checker its normal view of
+ * the module, and tripped `@typescript-eslint/no-require-imports`.
+ *
+ * The try/catch is the part that does matter. `getInstallId()` already swallows its own storage
+ * failures and falls back to a freshly minted id, but it is on the sign-in path, and an unattributed
+ * token — the pre-existing behaviour — is strictly better than a sign-in that fails because MMKV
+ * hiccupped.
+ */
+function safeInstallId(): string | undefined {
+  try {
+    return getInstallId();
+  } catch {
+    return undefined;
+  }
 }
 
 // ─── Token storage (synchronous, MMKV-backed) ──────────────────────────
@@ -181,9 +205,19 @@ export async function register(params: {
   pin: string;
   deviceKey: string;
 }): Promise<{ profile: DBProfileLike | null; error: string | null }> {
+  // ── EVERY AUTH CALL CARRIES THE INSTALL ID ────────────────────────────────
+  //
+  // The Worker puts it into the token as an `install` claim, and the request path uses that to enforce
+  // "disconnect this device" (see `workers/api/src/revocation.ts`). A token WITHOUT the claim cannot be
+  // attributed to a device and therefore cannot be revoked, so omitting this here would silently make
+  // the feature unenforceable for this install for the next thirty days.
+  //
+  // Read through the helper rather than passed in by the caller, so no screen can forget it. The
+  // try/catch keeps a storage failure from blocking sign-in: the worst case is an unattributed token,
+  // which is exactly the pre-existing behaviour.
   const { data, error } = await call<AuthResponse>('/v1/auth/register', {
     method: 'POST',
-    body: params,
+    body: { ...params, installId: safeInstallId() },
   });
   if (error) {
     if (error === 'username_taken') {
@@ -202,9 +236,12 @@ export async function login(params: {
   deviceKey: string;
   pin: string;
 }): Promise<{ profile: DBProfileLike | null; error: string | null }> {
+  // Also clears a previous revocation for this install on this account — see the note on the login
+  // handler. Presenting the device key and the PIN is the account's own credential, so it is the right
+  // gate for undoing a disconnect; without it, removing your own phone by mistake would be permanent.
   const { data, error } = await call<AuthResponse>('/v1/auth/login', {
     method: 'POST',
-    body: params,
+    body: { ...params, installId: safeInstallId() },
   });
   if (error) {
     if (error === 'invalid_key_or_pin') {
@@ -241,8 +278,13 @@ export async function refresh(): Promise<{ token: string | null; error: string |
   if (!getAuthToken()) return { token: null, error: 'no_token' };
   // Don't burn a refresh attempt while the OS reports offline.
   if (!(await isOnline())) return { token: null, error: 'offline' };
+  // The claim has to survive a refresh, or revocation has a hole: a revoked device is refused, its
+  // client tries one silent refresh, and a refresh that minted an unattributed token would hand it
+  // thirty more days. This cannot be used to ESCAPE a revocation — the handler is only reached if the
+  // incoming token was already accepted, which means its install was not revoked.
   const { data, error } = await call<{ token: string }>('/v1/auth/refresh', {
     method: 'POST',
+    body: { installId: safeInstallId() },
     authed: true,
   });
   if (error) return { token: null, error };

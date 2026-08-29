@@ -728,15 +728,23 @@ const en: Record<string, string> = {
   'device_key.reminder': 'Sign-in requires the key + 4-digit PIN',
 
   // ─── Settings → Devices ────────────────────────────────────────────────
-  // The subtitle and note deliberately say "notifications" rather than "sign-ins":
-  // the only per-device record the backend keeps is push_tokens. There is no login
-  // log, the auth token is stateless, and there is nothing else to enumerate.
-  // Promising a session list would be a claim this cannot back up.
+  // The note above these two used to explain that only `push_tokens` existed, so the screen
+  // could honestly promise notifications and nothing else. That is no longer the shape of the
+  // feature: the `devices` table records a row at SIGN-IN (migration 0007), and the token now
+  // carries the install id inside its signature, so access really can be withdrawn.
   'devices.subtitle': 'Devices that have signed into this account',
-  // The footnote says exactly what happens and promises nothing more: notifications stop
-  // at once, sign-out happens the next time that device reaches the network. Without it
-  // there is no way to tell whether the button worked.
-  'devices.note': 'Notifications stop immediately on a disconnected device. It signs out the next time it connects.',
+  // ── THIS FOOTNOTE IS A PROMISE, SO IT STATES THE ACTUAL BOUND ──────────
+  //
+  // It read "It signs out the next time it connects", which described the old enforcement
+  // honestly: the only mechanism was the heartbeat telling a revoked install to sign itself
+  // out, so a device that never came back kept its 30-day token.
+  //
+  // Enforcement now happens on the request path (`workers/api/src/revocation.ts`), where the
+  // answer is cached per isolate for one minute. So the true bound is about a minute, it does
+  // not depend on the removed device cooperating, and the copy says that instead of the old,
+  // weaker guarantee. Do not tighten this to "immediately" — the cache is what keeps this off
+  // the per-request database path, and a minute is what it costs.
+  'devices.note': 'Notifications stop immediately on a disconnected device, and it loses access to the account within about a minute — even if it never opens the app again.',
   'devices.empty': 'No devices yet',
   'devices.empty_hint': 'Devices appear here after they sign in',
   'devices.this_device': 'This device',

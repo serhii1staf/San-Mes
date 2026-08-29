@@ -22,6 +22,7 @@ import { fail, ok } from '../http';
 import { register } from '../router';
 import { exec, query, queryOne } from '../db';
 import { readJson } from '../validate';
+import { forgetInstallDecision } from '../revocation';
 
 /** Cap on rows returned. An account holds a handful; this bounds a pathological case. */
 const DEVICES_PAGE_LIMIT = 50;
@@ -171,5 +172,9 @@ register('POST', '/v1/devices/revoke', async (req, env, _ctx, _params, authedUse
     `DELETE FROM push_tokens WHERE install_id = ? AND user_id = ?`,
     [installId, authedUserId],
   );
+  // Drop this isolate's cached "allowed" answer so the revoked device is refused on its very next
+  // request rather than up to a minute later. Only helps the isolate that served the revoke — other
+  // isolates expire their own copy on the normal TTL, which is the bound the UI promises.
+  forgetInstallDecision(authedUserId, installId);
   return ok(req, { revoked: true });
 });

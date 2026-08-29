@@ -15,7 +15,7 @@ import { FormattedText } from '../ui/FormattedText';
 import { SpoilerImage } from '../ui/SpoilerImage';
 import { LinkPreview } from '../ui/LinkPreview';
 import { extractFirstUrl } from '../../services/linkPreview';
-import { isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
+import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
@@ -264,14 +264,27 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   // Memoize the URL extraction so the regex only runs when the post text
   // actually changes. The IIFE below previously ran extractFirstUrl on every
   // render of every plain-text card on the feed.
+  // ── OUR OWN LINK WINS THE PREVIEW SLOT ────────────────────────────────────
+  //
+  // This was `extractFirstUrl(post.content)` — literally the first http(s) match. When a post
+  // contains both a third-party link and one of ours, the first one positionally took the preview and
+  // ours was left in the body as a bare elided link. `extractInAppCardUrl` scans for OUR shapes
+  // first, so the in-app card is chosen whenever the text carries one; anything else falls back to the
+  // old behaviour unchanged. See the long note on that function.
   const linkPreviewUrl = useMemo<string | null>(
-    () => (!post.isRepost && !hasImages && !hasSpoiler ? extractFirstUrl(post.content) : null),
+    () =>
+      !post.isRepost && !hasImages && !hasSpoiler
+        ? extractInAppCardUrl(post.content) ?? extractFirstUrl(post.content)
+        : null,
     [post.isRepost, hasImages, hasSpoiler, post.content],
   );
 
-  // Body text with our own share URL removed when the preview below renders it as a full card.
+  // Body text with our own share URLs removed when the preview below renders one as a full card.
   // Memoised alongside `linkPreviewUrl` because it depends on the same two inputs and this runs for
   // every card on the feed.
+  //
+  // `stripInAppCardUrl` now removes EVERY one of our links, not just the previewed one, so a post
+  // carrying two of them cannot print the second as a bare link beside the card.
   const bodyText = useMemo<string>(
     () => (isInAppCardUrl(linkPreviewUrl) ? stripInAppCardUrl(post.content, linkPreviewUrl) : (post.content || '')),
     [post.content, linkPreviewUrl],

@@ -18,7 +18,7 @@ import Skeleton from '../../src/components/ui/Skeleton';
 import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
-import { isInAppCardUrl, stripInAppCardUrl } from '../../src/utils/appLinks';
+import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../src/utils/appLinks';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
@@ -1218,8 +1218,18 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // Link preview target. `hasCodeBlock` guards against unfurling a URL that is part of a
   // fenced code block, so both regexes belong to the same decision and are memoized together.
   // Reuses the `hasImages` computed further up rather than recomputing the same test.
+  // ── OUR OWN LINK WINS THE PREVIEW SLOT ────────────────────────────────────
+  //
+  // Was `extractFirstUrl(message.text)`. The share sheet sends `caption + "\n" + shareUrl` where the
+  // caption is the shared post's own text, so a post that itself quoted a link put THAT url first —
+  // and the bubble then previewed the third party while printing our `san-m-app.com/post` in the body
+  // as a bare elided link, with the OG card arriving late over the network. That is the reported
+  // "сначала появляется ссылка, и после этого уже идёт контейнер". See `extractInAppCardUrl`.
   const previewLink = useMemo(
-    () => (!hasImages && !hasCodeBlock(message.text) ? extractFirstUrl(message.text) : null),
+    () =>
+      !hasImages && !hasCodeBlock(message.text)
+        ? extractInAppCardUrl(message.text) ?? extractFirstUrl(message.text)
+        : null,
     [hasImages, message.text],
   );
 
