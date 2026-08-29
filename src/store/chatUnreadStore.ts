@@ -115,14 +115,24 @@ interface ChatUnreadState {
 
   /**
    * Fill in counts for conversations whose newest message is newer than our watermark but which we
-   * never saw an event for — the app-was-closed case. Only ever raises a 0 to a 1; never overwrites
-   * a real observed count, and never invents unread for a message the user sent.
+   * never saw an event for — the app-was-closed case. Never invents unread for a message the user
+   * sent, and never lowers a count.
+   *
+   * Takes the LARGER of what this device observed and what the server counted. See the long note on
+   * the implementation for why neither source can be trusted alone.
    *
    * Safe to call on every chat-list render pass: it returns the SAME state object when nothing
    * changed, so it cannot loop a subscriber.
    */
   reconcile: (
-    rows: ReadonlyArray<{ id: string; lastMessageAt?: string; participantId?: string; lastSenderId?: string }>,
+    rows: ReadonlyArray<{
+      id: string;
+      lastMessageAt?: string;
+      participantId?: string;
+      lastSenderId?: string;
+      /** Server-counted unread; see the merge rule in the implementation. */
+      serverUnread?: number;
+    }>,
     myUserId: string | undefined,
   ) => void;
 
@@ -256,7 +266,18 @@ export const useChatUnread = create<ChatUnreadState>((set, get) => {
     const nextCounts = { ...counts };
     for (const r of rows) {
       if (!r?.id || !r.lastMessageAt) continue;
-      if ((counts[r.id] || 0) > 0) continue; // already have an observed count, trust it
+      // ── THE `> 0` EARLY RETURN IS GONE, AND IT WAS HIDING THE SERVER'S NUMBER ──
+      //
+      // This used to read `if ((counts[r.id] || 0) > 0) continue;` — "already have an observed
+      // count, trust it". That was the right call when the only alternative was writing a
+      // fabricated 1 over a real number. It is the wrong call now that the server can say 9.
+      //
+      // Concretely, what it broke: the counts map is PERSISTED. Close the app holding 5 unread,
+      // receive 4 more while it is dead, reopen. The store rehydrates 5 from MMKV, the server
+      // reports 9, and this line returned before the 9 could be read — so the row sat at 5 for
+      // the rest of the session, and no amount of syncing moved it. The merge below replaces the
+      // early return: it can only ever raise, so the property this line was protecting
+      // ("a real observed count is never lowered by a reconcile") is still guaranteed.
       // ── NEVER RAISE A BADGE FOR OUR OWN MESSAGE ─────────────────────────────
       //
       // This used to read `r.participantId === myUserId`, which cannot ever be true:
@@ -289,8 +310,34 @@ export const useChatUnread = create<ChatUnreadState>((set, get) => {
       const seen = readAt[r.id] || 0;
       // No watermark at all means we have never opened this conversation on this install. Its
       // newest message is genuinely unread from this device's point of view.
-      if (last > seen) {
-        nextCounts[r.id] = 1;
+      if (last <= seen) continue;
+      // ── MERGE: THE LARGER OF WHAT WE SAW AND WHAT THE SERVER COUNTED ─────────
+      //
+      // This line is the fix for "те, которые у меня были до этого, они сбрасываются, типа на один".
+      // It used to be `nextCounts[r.id] = 1`, and there was no arithmetic anywhere else that could
+      // produce anything but 1 for a conversation this device had not personally witnessed. Nine
+      // messages arriving while the app was closed rendered as "1", every time, by construction.
+      //
+      // MAX, not "prefer the server", because each source is stale in exactly the case the other
+      // covers:
+      //
+      //   server higher — the app was killed, or the socket dropped, and the device never saw those
+      //                   messages. This is the reported bug.
+      //   local higher  — messages just arrived over the socket and bumped the count, but the
+      //                   conversations sync is throttled at 3 minutes, so the server's number is up
+      //                   to 3 minutes old. Preferring the server here would visibly ERASE counts
+      //                   the user is watching arrive.
+      //
+      // The `|| 1` floor keeps the old behaviour as the fallback rather than a special case: we have
+      // already established above that `last > seen`, i.e. something newer than our watermark exists
+      // and we did not write it. So "at least one" is true even when the server reports 0 because its
+      // snapshot predates the message, and even when `serverUnread` is absent entirely — which is
+      // what a row cached by an older build looks like.
+      const observed = counts[r.id] || 0;
+      const fromServer = typeof r.serverUnread === 'number' && r.serverUnread > 0 ? r.serverUnread : 0;
+      const next = Math.min(Math.max(observed, fromServer, 1), MAX_COUNT);
+      if (next !== observed) {
+        nextCounts[r.id] = next;
         changed = true;
       }
     }

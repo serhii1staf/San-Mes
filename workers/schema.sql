@@ -137,9 +137,15 @@ CREATE TABLE IF NOT EXISTS conversations (
 -- conversation_participants ──────────────────────────────────────────────
 -- Columns: conversation_id, user_id. Composite PK so a user can't be added
 -- to a conversation twice.
+-- `last_read_at` (migration 0005) is this participant's read watermark: the
+-- created_at of the newest message they have acknowledged. Unread is counted
+-- forward from it via idx_messages_conv_created. NULL means "never read".
+-- Lives here rather than in its own table because this row already IS the
+-- (conversation, user) pair, so the list query has it without an extra join.
 CREATE TABLE IF NOT EXISTS conversation_participants (
   conversation_id  TEXT NOT NULL,
   user_id          TEXT NOT NULL,
+  last_read_at     TEXT,
   PRIMARY KEY (conversation_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_cp_user_id          ON conversation_participants(user_id);
