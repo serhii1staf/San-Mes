@@ -45,6 +45,7 @@ import './routes/notifications';
 import './routes/reports';
 import './routes/admin';
 import './routes/push';
+import './routes/devices';
 import './routes/stickers';
 
 // ─── Worker fetch handler ──────────────────────────────────────────────────

@@ -732,19 +732,23 @@ const en: Record<string, string> = {
   // the only per-device record the backend keeps is push_tokens. There is no login
   // log, the auth token is stateless, and there is nothing else to enumerate.
   // Promising a session list would be a claim this cannot back up.
-  'devices.subtitle': 'Devices receiving notifications for this account',
-  'devices.note': 'This is not a sign-in log. A device appears here once it allows notifications, and disappears when it signs out.',
+  'devices.subtitle': 'Devices that have signed into this account',
+  // The footnote says exactly what happens and promises nothing more: notifications stop
+  // at once, sign-out happens the next time that device reaches the network. Without it
+  // there is no way to tell whether the button worked.
+  'devices.note': 'Notifications stop immediately on a disconnected device. It signs out the next time it connects.',
   'devices.empty': 'No devices yet',
-  'devices.empty_hint': 'A device shows up here as soon as it allows notifications',
+  'devices.empty_hint': 'Devices appear here after they sign in',
   'devices.this_device': 'This device',
-  'devices.registered': 'Added {date}',
-  'devices.registered_unknown': 'Date unknown',
+  'devices.registered': 'joined {date}',
+  'devices.last_active': 'Active {date}',
+  'devices.registered_unknown': 'Time unknown',
   'devices.platform_ios': 'iPhone or iPad',
   'devices.platform_android': 'Android',
   'devices.platform_unknown': 'Unknown device',
   'devices.revoke_title': 'Disconnect this device?',
-  'devices.revoke_msg': 'It will stop receiving notifications. The account stays signed in on it — this does not sign it out.',
-  'devices.revoke_current_msg': 'This is the device you are using. Notifications will be turned off here until you enable them again in Settings.',
+  'devices.revoke_msg': 'It will be signed out and will stop receiving notifications. Signing back in needs the device key and PIN.',
+  'devices.revoke_current_msg': 'This is the device you are using. You will be signed out right here, and signing back in needs the device key and PIN.',
   'devices.revoke_action': 'Disconnect',
   'devices.revoked': 'Device disconnected',
   'devices.error': "Couldn't load the device list",

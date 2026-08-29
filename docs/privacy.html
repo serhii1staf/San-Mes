@@ -58,6 +58,7 @@
         <li>The posts, comments, and chat messages you choose to create.</li>
         <li>A salted hash of the 4-digit PIN you set for app unlock — never the PIN itself.</li>
         <li>For each of your conversations, the time you last read it. This is one timestamp per conversation, and it exists so unread counts are correct on every device you sign in on and survive reinstalling the app. It is not a log of when you opened the app or of which individual messages you looked at.</li>
+        <li>For each device that signs into your account: a random identifier the app generates for itself on first launch, the platform (iOS or Android), the device model as the operating system reports it (for example &ldquo;iPhone 15&rdquo;), the OS version, the app version, and when that device first and most recently used the account. This exists so the Devices screen in Settings can show you who is signed in and let you remove them. The identifier is random and is <strong>not</strong> derived from your device or from any of the values listed beside it; reinstalling the app produces a new one. We do not collect your IP address, location, carrier, or an advertising identifier. Removing a device deletes its entry.</li>
         <li>An opaque per-install token issued by our authentication backend (Supabase). It is not derived from any device characteristic.</li>
       </ul>
 
@@ -123,6 +124,7 @@
         <li>Посты, комментарии и сообщения, которые вы создаёте.</li>
         <li>Соль и хеш 4-значного PIN, которым вы разблокируете приложение — сам PIN мы не храним.</li>
         <li>Время последнего прочтения каждого вашего чата. Это одна отметка времени на чат, и она нужна, чтобы счётчики непрочитанного были верными на всех устройствах, где вы входите в аккаунт, и не сбрасывались после переустановки. Это не журнал того, когда вы открывали приложение или какие именно сообщения читали.</li>
+        <li>По каждому устройству, которое входит в ваш аккаунт: случайный идентификатор, который приложение создаёт само себе при первом запуске, платформу (iOS или Android), модель устройства в том виде, как её сообщает операционная система (например, &laquo;iPhone 15&raquo;), версию ОС, версию приложения и время первого и последнего использования аккаунта с этого устройства. Это нужно, чтобы раздел &laquo;Устройства&raquo; в настройках показывал, кто вошёл в аккаунт, и позволял отключить лишнее. Идентификатор случайный и <strong>не</strong> выводится из вашего устройства или из перечисленных рядом значений; после переустановки приложения он становится новым. Мы не собираем ваш IP-адрес, геолокацию, оператора связи и рекламный идентификатор. При отключении устройства его запись удаляется.</li>
         <li>Непрозрачный токен сессии от нашей системы авторизации (Supabase). Он не привязан к характеристикам устройства.</li>
       </ul>
 
