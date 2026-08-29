@@ -25,74 +25,45 @@ const DEVICES_PAGE_LIMIT = 50;
 
 register('POST', '/v1/push/register', async (req, env, _ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
-  const body = await readJson<{ token?: unknown; platform?: unknown }>(req);
+  const body = await readJson<{ token?: unknown; platform?: unknown; installId?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
   const token = typeof body.value.token === 'string' ? body.value.token.slice(0, 256) : '';
   if (!token || token.indexOf('ExponentPushToken') !== 0) return fail(req, 'invalid token', 400);
   const platform = typeof body.value.platform === 'string' ? body.value.platform.slice(0, 16) : '';
+  // Which install this token belongs to (migration 0007). Optional and unvalidated beyond a length
+  // cap: an older client sends nothing and keeps working exactly as before, and the only thing this
+  // column does is let `POST /v1/devices/revoke` delete the right row. A wrong value costs the
+  // revoking user one notification cut that misses; it cannot expose or destroy anything, because
+  // every statement touching it is also scoped by `user_id`.
+  const installId = typeof body.value.installId === 'string' ? body.value.installId.slice(0, 64) : null;
   const now = new Date().toISOString();
   await exec(
     env,
-    `INSERT INTO push_tokens (token, user_id, platform, created_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, platform = excluded.platform`,
-    [token, authedUserId, platform, now],
+    `INSERT INTO push_tokens (token, user_id, platform, install_id, created_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(token) DO UPDATE SET
+            user_id    = excluded.user_id,
+            platform   = excluded.platform,
+            -- COALESCE so a client that does not send an install id cannot BLANK one that a newer
+            -- build already recorded. Re-registration happens whenever the Expo token rotates, and
+            -- losing the link would silently break revocation for that device.
+            install_id = COALESCE(excluded.install_id, push_tokens.install_id)`,
+    [token, authedUserId, platform, installId, now],
   );
   return ok(req, { registered: true });
 });
 
-// ── GET /v1/push/devices ──────────────────────────────────────────────
+// ── GET /v1/push/devices — REMOVED ────────────────────────────────────
 //
-// The caller's own registered devices, newest first. Backs the Devices screen in Settings.
+// It listed `push_tokens` and backed the first Devices screen. Reported: two people share the account
+// and the screen showed one device. A device only reaches `push_tokens` if it granted notification
+// permission and has not signed out since, so the list was structurally incomplete for the one job it
+// has — and a careful subtitle explaining that does not make the screen do its job.
 //
-// WHAT THIS LIST IS, AND WHAT IT IS NOT
+// Replaced by `GET /v1/devices` in `routes/devices.ts`, backed by the `devices` table (migration
+// 0007), which records a row at SIGN-IN. That is the event the feature is about.
 //
-// It is every device that has REGISTERED FOR NOTIFICATIONS on this account. It is NOT "every device
-// that ever signed in", which is what a Telegram-style sessions screen shows, and the UI must not
-// claim otherwise. Nothing in this backend records a login: there is no sessions table, and the auth
-// token is a stateless JWT with nothing to enumerate. `push_tokens` is the only per-install record
-// that exists.
-//
-// So the honest gap: a device where the user declined the notification permission, or an iOS
-// simulator, never registers and therefore never appears — while a device that granted it and was
-// later signed out of does not appear either, because logout deletes the row. The screen's subtitle
-// says this in both languages rather than implying a completeness it cannot have.
-//
-// Building the real thing would mean recording a row per sign-in with whatever identifies the device.
-// That is new device-data collection, it needs consent under the compliance rules, and deriving a
-// stable per-device identifier is explicitly forbidden — so it is deliberately not what this does.
-// This endpoint exposes data we ALREADY hold, to the person it is about, with a delete control. That
-// direction is a transparency improvement, not a new collection.
-//
-// ON RETURNING THE RAW TOKEN
-//
-// The token is the primary key, so it is what `POST /v1/push/unregister` needs to revoke a row — and
-// reusing that existing, already-scoped endpoint is better than inventing a second delete path with a
-// second authorisation check to get wrong.
-//
-// It is not an escalation. A caller reaching this handler is already authenticated AS the owner of
-// these rows; someone in that position can read every message in the account, so learning the account's
-// other push tokens adds nothing they could not already do far worse with. The UI still never renders
-// the full value — it shows platform, date, and a short suffix — so the string does not end up on a
-// screen or in a screenshot.
-register('GET', '/v1/push/devices', async (req, env, _ctx, _params, authedUserId) => {
-  if (!authedUserId) return fail(req, 'unauthorised', 401);
-  // `idx_push_tokens_user` covers the WHERE; the ORDER BY is over a handful of rows.
-  //
-  // `created_at` is nullable and the register upsert's DO UPDATE deliberately does NOT touch it, so a
-  // re-registering device keeps its ORIGINAL date — which is the useful one ("since when has this
-  // device been on my account") rather than "when did the token last refresh". NULLs sort last under
-  // DESC in SQLite, which puts undated legacy rows at the bottom where they belong.
-  const rows = await query<{ token: string; platform: string | null; created_at: string | null }>(
-    env,
-    `SELECT token, platform, created_at
-       FROM push_tokens
-      WHERE user_id = ?
-   ORDER BY created_at DESC
-      LIMIT ?`,
-    [authedUserId, DEVICES_PAGE_LIMIT],
-  );
-  return ok(req, rows);
-});
+// `push_tokens` keeps its narrow purpose: which tokens to fan a notification out to. It gained an
+// `install_id` column so revoking a device can also cut its notifications immediately.
 
 register('POST', '/v1/push/unregister', async (req, env, _ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);

@@ -202,6 +202,43 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(tid);
   }, [isAuthenticated, hasHydrated]);
 
+  // ── RECORD THIS INSTALL SO THE OWNER CAN SEE IT AND REMOVE IT ─────────────
+  //
+  // This is what makes the Devices screen list every device that has signed in, rather than only the
+  // ones that granted notification permission. The first version of that screen was backed by
+  // `push_tokens`, and the report was exact: two people share the account and it showed one device.
+  //
+  // Deliberately NOT folded into the push effect above. That one is gated on the notification master
+  // switch and bails when permission is denied, which is the precise condition that made the list
+  // incomplete. Sharing its lifecycle would reproduce the bug.
+  //
+  // `force: true`, and only 300 ms out rather than 1500: the point of a sign-in heartbeat is that the
+  // device appears in its owner's list straight away. The service throttles subsequent calls to ten
+  // minutes on its own.
+  //
+  // Also runs on every return to the foreground, because that is when a revocation issued elsewhere
+  // is discovered — the heartbeat's reply is the channel the server uses to tell a removed device to
+  // sign itself out. See `deviceRegistry.ts` for why that is the enforcement point and what its
+  // limits are.
+  useEffect(() => {
+    if (!isAuthenticated || !hasHydrated) return;
+    let disposed = false;
+    const beat = (force: boolean) => {
+      import('../src/services/deviceRegistry')
+        .then((m) => { if (!disposed) void m.heartbeatDevice({ force }); })
+        .catch(() => {});
+    };
+    const tid = setTimeout(() => beat(true), 300);
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') beat(false);
+    });
+    return () => {
+      disposed = true;
+      clearTimeout(tid);
+      try { sub.remove(); } catch {}
+    };
+  }, [isAuthenticated, hasHydrated]);
+
   // ── Tapping a push must open the thread it came from ──────────────────────
   //
   // Installed here rather than inside `registerForPush` because it must exist even when

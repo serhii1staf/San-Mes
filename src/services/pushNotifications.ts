@@ -280,7 +280,18 @@ export async function registerForPush(): Promise<void> {
 
     // Avoid redundant network writes when the token is unchanged.
     if (kvGetStringRawSync(TOKEN_SENT_KEY) === token) return;
-    const { error } = await apiPost('/v1/push/register', { token, platform: Platform.OS });
+    // `installId` ties this token to the row the Devices screen lists, so revoking a device can also
+    // cut its notifications — and that half of revocation is immediate, because the push fan-out reads
+    // `push_tokens` directly. Without the link the revoke would have no way to know which token row
+    // belongs to the device being removed.
+    let installId: string | undefined;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      installId = (require('./installId') as typeof import('./installId')).getInstallId();
+    } catch {
+      // A missing install id costs the revoke-cuts-notifications link, not the registration.
+    }
+    const { error } = await apiPost('/v1/push/register', { token, platform: Platform.OS, installId });
     if (!error) kvSetStringRaw(TOKEN_SENT_KEY, token);
   } catch {}
 }

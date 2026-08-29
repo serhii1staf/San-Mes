@@ -1,34 +1,38 @@
 // Settings → Devices
 //
-// ── WHAT THIS SCREEN IS ALLOWED TO CLAIM ────────────────────────────────────
+// ── WHAT CHANGED, AND WHY THE FIRST VERSION WAS NOT ACCEPTABLE ──────────────
 //
-// Asked for: "в разделе устройства должно отображаться устройство, то есть все устройства, когда либо
-// заходили на этот аккаунт... и кнопочка покинуть устройство... можно сделать такую же самую систему,
-// как в Телеграме."
+// This screen used to list rows from `push_tokens`, and its subtitle carefully explained that it
+// therefore showed only devices that had granted notification permission. Reported:
 //
-// What Telegram shows is a SESSION list, and this backend has no sessions. The auth token is a
-// stateless JWT — there is no row to enumerate and nothing records a sign-in. The only per-install
-// record that exists anywhere is `push_tokens (token, user_id, platform, created_at)`.
+//   "я знаю, что на одном аккаунте может пользоваться и я, и мой друг... Но всё равно я смотрю
+//    в настройках, и показывается, что только я, то есть моё устройство. Хотя это не так."
 //
-// So this screen shows what we actually have: the devices registered to receive notifications, with a
-// revoke control. It says so, in both languages, in the subtitle AND in a footnote — because a list
-// captioned "every device that ever signed in" which silently omits any device that declined the
-// notification permission would be worse than no screen. The shape the user asked for, with an honest
-// label instead of an invented one.
+// Two people share the account and the screen showed one device. A carefully-worded subtitle does not
+// make that a working feature — a Devices screen that cannot show the other person on your account
+// has failed at the only thing it exists for. Documenting the limitation instead of removing it was
+// the wrong call.
 //
-// Building the real thing means writing a row per sign-in with something that identifies the device.
-// That is new device-data collection, which the compliance rules require consent for, and it must not
-// derive a stable device identifier. This screen goes the other way: it exposes data we already hold,
-// to the person it is about, and gives them a delete button for it.
+// It now reads `GET /v1/devices`, backed by the `devices` table (migration 0007), which records a row
+// at SIGN-IN. Every install that has signed into the account appears, whatever it decided about
+// notifications.
 //
-// ── WHY THE ROWS ARE HAND-BUILT ─────────────────────────────────────────────
+// ── WHAT "DISCONNECT" ACTUALLY DOES, STATED PRECISELY ──────────────────────
 //
-// `SettingsRow` lives inside `app/settings/index.tsx` and is not exported, so every sub-screen builds
-// its own presentation (`device-key.tsx` does the same). The card styling here mirrors the root
-// screen's `sectionCardStyle` so the two read as one settings surface.
+// Two effects with two different timings, and the copy says so rather than implying one:
+//
+//   immediately        the device's push token row is deleted, so the notification fan-out stops
+//                      reaching it. This does not depend on that device doing anything.
+//   next time it runs  it heartbeats, the server answers `revoked: true`, and it signs itself out.
+//
+// The reason sign-out is not instant is structural: token verification in the Worker is pure HMAC
+// with zero database reads per request, so enforcing revocation on the request path would add a D1
+// read to every call in the app. The heartbeat already talks to the database, so that is where the
+// news is delivered. A device that never reaches the network keeps what it has cached until it does —
+// which is true of every token-based session, and is why the footnote says it out loud.
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, View, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -36,54 +40,44 @@ import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useT, useI18nStore } from '../../src/i18n/store';
 import { apiGet, apiPost } from '../../src/services/apiClient';
-import { getRegisteredPushToken, unregisterPush } from '../../src/services/pushNotifications';
+import { getInstallId } from '../../src/services/installId';
 import { formatDaySeparator } from '../../src/utils/chatDaySeparators';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
 
 interface DeviceRow {
-  token: string;
+  install_id: string;
   platform: string | null;
-  created_at: string | null;
-}
-
-/**
- * Last few characters of the push token, for telling two same-platform devices apart.
- *
- * The full token is never rendered. It is a value that lets anyone holding it push a notification to
- * that device, so it has no business being on screen or in a screenshot — but the user still needs
- * SOME way to distinguish "Android" from "Android". Six characters is enough to differ in practice
- * and useless on its own.
- *
- * The token is `ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]`, so the closing bracket is trimmed first.
- */
-function tokenSuffix(token: string): string {
-  const inner = token.replace(/\]$/, '');
-  return inner.slice(-6).toUpperCase();
+  model: string | null;
+  os_version: string | null;
+  app_version: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
 }
 
 export default function DevicesScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  // The absolute-date formatter is locale-aware, so the label follows the app language rather than the
-  // OS one — the user can read the app in English on a Russian phone.
+  // The date formatter is locale-aware, so labels follow the APP language rather than the OS one —
+  // the user reads the app in English on a Russian phone.
   const locale = useI18nStore((s) => s.locale);
 
   const [rows, setRows] = useState<DeviceRow[] | null>(null);
   const [error, setError] = useState(false);
-  const [busyToken, setBusyToken] = useState<string | null>(null);
-  // Read once per mount rather than per render: it is a synchronous MMKV read, and the value cannot
-  // change while this screen is open (registration happens at app start).
-  const [myToken] = useState(() => getRegisteredPushToken());
+  const [busyId, setBusyId] = useState<string | null>(null);
+  // Read once per mount: it is a synchronous MMKV read and cannot change while this screen is open.
+  // Unlike the push token this used to compare against, it is ALWAYS present — which is what lets the
+  // "this device" marker be reliable instead of silently absent whenever notifications were declined.
+  const [myInstallId] = useState(() => getInstallId());
 
   const load = useCallback(async () => {
     setError(false);
     setRows(null);
-    const { data, error: err } = await apiGet<DeviceRow[]>('/v1/push/devices');
+    const { data, error: err } = await apiGet<DeviceRow[]>('/v1/devices');
     // `apiGet` resolves with an error string rather than throwing, so this is the whole failure
-    // surface. An empty array is a legitimate success (no device has registered yet) and must not be
-    // shown as an error — hence the separate `error` flag rather than treating `!data` as failure.
+    // surface. An empty array is a legitimate success and must not read as an error — hence a separate
+    // flag rather than treating `!data` as failure.
     if (err) {
       setError(true);
       setRows([]);
@@ -96,36 +90,36 @@ export default function DevicesScreen() {
     void load();
   }, [load]);
 
-  const platformLabel = useCallback(
-    (p: string | null): string => {
-      if (p === 'ios') return t('devices.platform_ios');
-      if (p === 'android') return t('devices.platform_android');
+  /** Platform + model, falling back through what the row actually has. */
+  const deviceTitle = useCallback(
+    (row: DeviceRow): string => {
+      if (row.model) return row.model;
+      if (row.platform === 'ios') return t('devices.platform_ios');
+      if (row.platform === 'android') return t('devices.platform_android');
       return t('devices.platform_unknown');
     },
     [t],
   );
 
   const dateLabel = useCallback(
-    (iso: string | null): string => {
-      if (!iso) return t('devices.registered_unknown');
-      const day = formatDaySeparator(iso, Date.now(), locale, t);
-      // `formatDaySeparator` returns null for an unparseable timestamp, which is exactly the
-      // "we do not know" case the dedicated string covers.
-      if (!day) return t('devices.registered_unknown');
-      return t('devices.registered', undefined, { date: day });
+    (iso: string | null): string | null => {
+      if (!iso) return null;
+      // Returns null for an unparseable timestamp, which the caller renders as nothing rather than as
+      // a broken date.
+      return formatDaySeparator(iso, Date.now(), locale, t);
     },
     [locale, t],
   );
 
   const revoke = useCallback(
     (row: DeviceRow) => {
-      const isCurrent = !!myToken && row.token === myToken;
+      const isCurrent = row.install_id === myInstallId;
       triggerHaptic('medium');
       Alert.alert(
         t('devices.revoke_title'),
-        // Two different messages, because the consequence is genuinely different. Revoking another
-        // device is remote housekeeping; revoking THIS one silently turns your own notifications off,
-        // and a confirmation that did not say so would be a trap.
+        // Two messages, because the consequence genuinely differs. Removing another device signs that
+        // person out; removing THIS one signs you out of the app you are holding, and a confirmation
+        // that did not say so would be a trap.
         isCurrent ? t('devices.revoke_current_msg') : t('devices.revoke_msg'),
         [
           { text: t('common.cancel'), style: 'cancel' },
@@ -133,42 +127,32 @@ export default function DevicesScreen() {
             text: t('devices.revoke_action'),
             style: 'destructive',
             onPress: async () => {
-              setBusyToken(row.token);
-              // ── THE CURRENT DEVICE GOES THROUGH `unregisterPush`, NOT A RAW POST ──
-              //
-              // Both paths hit the same endpoint, but `unregisterPush` ALSO clears the local
-              // "token already sent" marker in MMKV. Without that clear, `registerForPush` on the
-              // next launch compares the live Expo token against the stored one, finds them equal,
-              // and returns before re-registering — so this device would stay silently unregistered
-              // for ever, with nothing in the UI to explain why notifications stopped. Deleting the
-              // server row without forgetting the client marker is a one-way door.
-              //
-              // For any OTHER device the marker is irrelevant (it belongs to that install), so the
-              // plain call is correct there.
+              setBusyId(row.install_id);
+              await apiPost('/v1/devices/revoke', { installId: row.install_id });
+              setBusyId(null);
               if (isCurrent) {
-                await unregisterPush();
-              } else {
-                await apiPost('/v1/push/unregister', { token: row.token });
+                // Do not wait for our own heartbeat to tell us what we just did. Same teardown the
+                // heartbeat performs, so there is one path rather than two.
+                try {
+                  const { heartbeatDevice } = await import('../../src/services/deviceRegistry');
+                  await heartbeatDevice({ force: true });
+                } catch {}
+                return;
               }
-              setBusyToken(null);
-              // Optimistic removal. The endpoint is idempotent and scoped by `user_id`, so a failed
-              // call leaves the row on the server and the next open of this screen shows it again —
-              // which is a truthful outcome, and better than blocking the list on a spinner.
-              setRows((prev) => (prev ? prev.filter((r) => r.token !== row.token) : prev));
+              // Optimistic removal. The endpoint is idempotent and scoped by `user_id`, so if the call
+              // failed the row reappears on the next open — a truthful outcome, and better than
+              // blocking the list behind a spinner.
+              setRows((prev) => (prev ? prev.filter((r) => r.install_id !== row.install_id) : prev));
               showToast(t('devices.revoked'), 'trash-2');
             },
           },
         ],
       );
     },
-    [myToken, t],
+    [myInstallId, t],
   );
 
-  const containerStyle: ViewStyle = {
-    flex: 1,
-    backgroundColor: theme.colors.background.primary,
-  };
-
+  const containerStyle: ViewStyle = { flex: 1, backgroundColor: theme.colors.background.primary };
   const cardStyle: ViewStyle = {
     backgroundColor: theme.colors.background.elevated,
     borderRadius: 24,
@@ -177,7 +161,7 @@ export default function DevicesScreen() {
 
   return (
     <View style={containerStyle}>
-      {/* Header — same geometry as device-key.tsx, plus a refresh affordance on the right. */}
+      {/* Header — same geometry as device-key.tsx, plus a refresh affordance. */}
       <View
         style={{
           flexDirection: 'row',
@@ -252,14 +236,16 @@ export default function DevicesScreen() {
         ) : (
           <View style={cardStyle}>
             {rows.map((row, i) => {
-              const isCurrent = !!myToken && row.token === myToken;
-              const isBusy = busyToken === row.token;
-              // iOS and Android get the platform's own accent rather than one shared colour, so two
-              // rows are distinguishable at a glance before reading either label.
+              const isCurrent = row.install_id === myInstallId;
+              const isBusy = busyId === row.install_id;
+              // Platform accent rather than one shared colour, so two rows are distinguishable before
+              // reading either label.
               const tint = row.platform === 'ios' ? '#0A84FF' : row.platform === 'android' ? '#30D158' : '#8E8E93';
+              const seen = dateLabel(row.last_seen_at);
+              const added = dateLabel(row.first_seen_at);
               return (
                 <View
-                  key={row.token}
+                  key={row.install_id}
                   style={{
                     flexDirection: 'row',
                     alignItems: 'center',
@@ -285,7 +271,7 @@ export default function DevicesScreen() {
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <Text variant="body" numberOfLines={1} style={{ flexShrink: 1 }}>
-                        {platformLabel(row.platform)}
+                        {deviceTitle(row)}
                       </Text>
                       {isCurrent ? (
                         <View
@@ -302,9 +288,19 @@ export default function DevicesScreen() {
                         </View>
                       ) : null}
                     </View>
+                    {/* Last active is the line that answers "is someone else on my account RIGHT
+                        NOW", which is the question this screen is opened to answer. "Added" is
+                        secondary and only shown when it differs, so a device that signed in today
+                        does not print the same date twice. */}
                     <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>
-                      {dateLabel(row.created_at)} · {tokenSuffix(row.token)}
+                      {seen ? t('devices.last_active', undefined, { date: seen }) : t('devices.registered_unknown')}
+                      {added && added !== seen ? ` · ${t('devices.registered', undefined, { date: added })}` : ''}
                     </Text>
+                    {row.os_version || row.app_version ? (
+                      <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 10 }}>
+                        {[row.os_version, row.app_version ? `v${row.app_version}` : null].filter(Boolean).join(' · ')}
+                      </Text>
+                    ) : null}
                   </View>
                   {isBusy ? (
                     <ActivityIndicator size="small" color={theme.colors.text.tertiary} />
@@ -316,7 +312,7 @@ export default function DevicesScreen() {
                       accessibilityRole="button"
                       accessibilityLabel={t('devices.revoke_action')}
                     >
-                      <Feather name="trash-2" size={17} color={theme.colors.status.error} />
+                      <Feather name="log-out" size={17} color={theme.colors.status.error} />
                     </Pressable>
                   )}
                 </View>
@@ -325,10 +321,10 @@ export default function DevicesScreen() {
           </View>
         )}
 
-        {/* The honesty footnote. Deliberately below the list rather than in the subtitle only: someone
-            who scrolls looking for a device that is not here needs the explanation at the point they
-            notice it is missing. */}
-        {rows !== null && !error ? (
+        {/* The footnote about timing. Below the list rather than in the subtitle, because it is the
+            thing someone wants to read at the moment they have just tapped disconnect and are
+            wondering whether it worked. */}
+        {rows !== null && !error && rows.length > 0 ? (
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 16, paddingHorizontal: 4 }}>
             <Feather name="info" size={14} color={theme.colors.text.tertiary} style={{ marginTop: 2 }} />
             <Text variant="caption" color={theme.colors.text.tertiary} style={{ flex: 1 }}>
