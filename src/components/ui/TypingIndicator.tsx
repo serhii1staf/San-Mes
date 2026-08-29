@@ -29,6 +29,8 @@ import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { useTypingPeers } from '../../services/realtime/typing';
 import { GlassBg, useLiquidGlassActive } from './LiquidGlass';
+import { perfMonitor } from '../../services/perfMonitor';
+import { useSettingsStore } from '../../store/settingsStore';
 
 /**
  * Cap on rendered emoji. A comment thread can have many simultaneous typists and the strip
@@ -41,6 +43,40 @@ function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
   const peers = useTypingPeers(channelName);
+
+  // ── INSTRUMENTED, BECAUSE THIS IS A SUSPECT AND GUESSING HAS COST US ROUNDS ─
+  //
+  // A device trace shows `chat/[id]` blocked for 320-530 ms roughly every 2.0-2.7 s, sustained
+  // for 18 s, with all image loading finished and `pendingDecodes` 0-2. The only exact 2 s
+  // cadence left in the codebase is `PUBLISH_THROTTLE_MS` in services/realtime/typing.ts, and a
+  // keystroke-gated throttle is the one mechanism that produces a SPREAD like that rather than
+  // clean 2.0 s ticks.
+  //
+  // The plausible chain: `IDLE_STOP_MS` (2600) makes the publisher emit a STOP after a short
+  // silence, so a peer typing in ordinary bursts drives this component between `null` and the
+  // strip repeatedly. Each transition changes the composer's height, and the transcript above it
+  // is a FlashList with `maintainVisibleContentPosition`, which anchors on items.
+  //
+  // That is a hypothesis, not a finding, and the honest thing is to make the next snapshot
+  // answer it instead of changing behaviour on a guess. If these marks land immediately before
+  // the long tasks, the chain is real; if they do not appear at all, typing is exonerated and
+  // the remaining candidate is the older-chunk prepend loop.
+  //
+  // The flag is checked HERE, not inside `mark`. I first wrote that `mark` guards itself; it does
+  // not — it goes straight to `_record` + `_notify` with no check, unlike `markImageDecode` and
+  // `markScreenMount`. So an unguarded call would write into the event ring for every user, forever,
+  // to serve a diagnostic. Read non-reactively (`getState`), the same way `MessageBubble` does it, so
+  // toggling the monitor cannot re-render this strip.
+  //
+  // The count is in the label because 0 -> N and N -> 0 are the transitions that move layout, while
+  // N -> N does not: `flush` in the typing service returns the PREVIOUS array when membership is
+  // unchanged, so this effect should not even fire for a steadily-typing peer. If it fires every two
+  // seconds anyway, that itself is the finding.
+  const peerCount = peers.length;
+  React.useEffect(() => {
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
+    perfMonitor.mark(`typing.peers(${peerCount})`);
+  }, [peerCount]);
 
   if (peers.length === 0) return null;
 
