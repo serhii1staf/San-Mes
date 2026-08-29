@@ -49,6 +49,34 @@ interface SettingsState {
   // devices get the look out of the box; flipping it OFF fully unmounts every
   // GlassView (no residual layer).
   liquidGlassEnabled: boolean;
+  /**
+   * Real blur on ANDROID (`expo-blur`'s `experimentalBlurMethod: 'dimezisBlurView'`).
+   *
+   * ── WHY THIS FIELD HAD TO EXIST ───────────────────────────────────────────
+   *
+   * `AppBlurView` used to gate the Android blur path on `liquidGlassEnabled` above, on the reasoning
+   * that it was "a switch the user already has and which is currently inert on their platform".
+   *
+   * That flag defaults to TRUE, and the comment on it says the effect is "a no-op everywhere else" —
+   * which stopped being true the moment it acquired a second meaning. So every Android install was
+   * running `dimezisBlurView` on every piece of chrome, which the Expo docs describe as experimental
+   * and liable to decrease performance, and the settings row that would switch it off is hidden on
+   * Android because it is gated on `isNativeGlassCapable()` (iOS-only). No Android user could turn it
+   * off, and nothing in the UI said it was on.
+   *
+   * Measured on the emulator with `dumpsys gfxinfo`, eight identical swipes on the profile screen:
+   * 36.84% janky frames, a 42 ms median frame time, 91 of 91 janky frames flagged `Slow UI thread`,
+   * and 56 frames blocked on `Slow bitmap uploads` — a counter the earlier documented baseline for
+   * this app recorded as ZERO. dimezis blur works by snapshotting the view hierarchy beneath it and
+   * blurring it, which is UI-thread work producing a bitmap upload, per frame, behind chrome that
+   * sits over a scrolling list.
+   *
+   * Default FALSE, and deliberately its OWN field rather than a condition added to the existing one:
+   * the failure was a shared flag quietly growing a second meaning, so giving Android its own switch
+   * is the fix and not just a different default. Android's default surface stays the tonal fill, which
+   * is what Material specifies for an elevated surface anyway.
+   */
+  androidBlurEnabled: boolean;
   // Push notifications master switch. Default ON (the app registers a token
   // after login). Flipping it OFF unregisters the device token from the
   // backend so the server stops fanning pushes to this device, and prevents
@@ -106,6 +134,7 @@ interface SettingsState {
   setProfileTabCustom: (key: string, value: { label?: string; emoji?: string }) => void;
   clearProfileTabCustom: (key: string) => void;
   setLiquidGlassEnabled: (enabled: boolean) => void;
+  setAndroidBlurEnabled: (enabled: boolean) => void;
   setPushNotificationsEnabled: (enabled: boolean) => void;
   setNotifyCategory: (kind: 'message' | 'comment' | 'follow' | 'like', enabled: boolean) => void;
   setChatBubble: (style: import('../constants/bubbleColors').BubbleStyle | null) => void;
@@ -168,9 +197,15 @@ export const useSettingsStore = create<SettingsState>()(
       // No tab customizations until the user long-presses a tab and applies
       // one. Empty record reads as "every tab uses its default i18n label".
       profileTabsCustom: {},
-      // Liquid glass ON by default — only visible/active on iOS 26+ where the
-      // effect is available; a no-op everywhere else.
+      // Liquid glass ON by default. Reaches the screen only on iOS 26+, where the effect exists:
+      // `useLiquidGlassActive()` requires `NATIVE_GLASS_CAPABLE`, which is false off iOS by
+      // construction. It no longer means anything on Android — see `androidBlurEnabled` for the
+      // damage done while it did.
       liquidGlassEnabled: true,
+      // Android real blur OFF by default. See the long note on the field: gating it on the flag above
+      // silently enabled an experimental, UI-thread-bound blur for every Android install, with no
+      // reachable way to switch it off.
+      androidBlurEnabled: false,
       // Push notifications ON by default — matches the existing behaviour
       // where the app registers a push token after login.
       pushNotificationsEnabled: true,
@@ -219,6 +254,7 @@ export const useSettingsStore = create<SettingsState>()(
           return { profileTabsCustom: next };
         }),
       setLiquidGlassEnabled: (liquidGlassEnabled) => set({ liquidGlassEnabled }),
+      setAndroidBlurEnabled: (androidBlurEnabled) => set({ androidBlurEnabled }),
       setPushNotificationsEnabled: (pushNotificationsEnabled) => set({ pushNotificationsEnabled }),
       setNotifyCategory: (kind, enabled) =>
         set((s) => ({ notifyCategories: { ...s.notifyCategories, [kind]: enabled } })),

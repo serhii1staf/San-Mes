@@ -749,6 +749,13 @@ const en: Record<string, string> = {
   'devices.revoked': 'Device disconnected',
   'devices.error': "Couldn't load the device list",
 
+  // Android blur. Off by default: expo-blur's dimezisBlurView path works by
+  // snapshotting the content beneath it and blurring it, per frame — UI-thread
+  // work that dropped scrolling to ~24 fps. Material specifies tonal colour for
+  // an elevated surface rather than blur, so the plain look is not a compromise.
+  'settings.android_blur': 'Surface blur',
+  'settings.android_blur_off_hint': 'Off',
+
   // ─── Settings → Mini apps ──────────────────────────────────────────────
   'mini_apps.title': 'Mini apps',
   'mini_apps.error.fill_fields': 'Fill in the name and URL',

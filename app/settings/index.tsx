@@ -210,6 +210,8 @@ export default function SettingsScreen() {
 
   const liquidGlassEnabled = useSettingsStore((s) => s.liquidGlassEnabled);
   const setLiquidGlassEnabled = useSettingsStore((s) => s.setLiquidGlassEnabled);
+  const androidBlurEnabled = useSettingsStore((s) => s.androidBlurEnabled);
+  const setAndroidBlurEnabled = useSettingsStore((s) => s.setAndroidBlurEnabled);
   // The liquid-glass toggle is only meaningful on iOS 26+ devices where the
   // effect can actually render. Hide it everywhere else — a toggle that does
   // nothing is worse than no toggle. Computed once (capability is static).
@@ -230,6 +232,7 @@ export default function SettingsScreen() {
   // Module-scope would be nicer, but this file's imports are already ordered around the lazy requires
   // below; a const here is evaluated once per mount and `Platform.OS` is a static string.
   const IS_IOS = Platform.OS === 'ios';
+  const IS_ANDROID = Platform.OS === 'android';
   const [AppIconModalLazy, setAppIconModalLazy] = useState<null | React.ComponentType<{ visible: boolean; onClose: () => void }>>(null);
   useEffect(() => {
     const handle = InteractionManager.runAfterInteractions(() => {
@@ -562,7 +565,7 @@ export default function SettingsScreen() {
             iconTint="pink"
             label={t('settings.mini_app_preview')}
             onPress={() => router.push('/settings/mini-app-preview' as any)}
-            isLast={!glassCapable}
+            isLast={!glassCapable && !IS_ANDROID}
           />
           {glassCapable && (
             <SettingsRow
@@ -581,6 +584,38 @@ export default function SettingsScreen() {
               isLast
             />
           )}
+          {/* ── THE ANDROID BLUR SWITCH, WHICH ANDROID NEVER HAD ──────────────────
+              `AppBlurView` gated its `dimezisBlurView` path on `liquidGlassEnabled` — a flag that
+              defaults to TRUE and whose row, right above this one, only renders when
+              `isNativeGlassCapable()` is true, i.e. on iOS. So Android ran an experimental,
+              UI-thread-bound blur on every piece of chrome, and the only switch for it was invisible
+              on the platform it affected.
+
+              Measured cost on the emulator (8 identical swipes on the profile, perf monitor off, so
+              the numbers are not diluted by its own frames): 36.84% janky frames, 42 ms median, and
+              56 frames blocked on bitmap uploads against a documented earlier baseline of zero.
+
+              The default is now OFF and the switch lives here, on Android, so the effect is both
+              reversible and discoverable. Android's default surface is the tonal fill, which is what
+              Material specifies for an elevated surface — not a compromise. */}
+          {IS_ANDROID && (
+            <SettingsRow
+              icon="blur-on"
+              iconTint="cyan"
+              label={t('settings.android_blur')}
+              value={androidBlurEnabled ? undefined : t('settings.android_blur_off_hint')}
+              showChevron={false}
+              rightElement={
+                <Switch
+                  value={androidBlurEnabled}
+                  onValueChange={setAndroidBlurEnabled}
+                  trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                  thumbColor="#FFFFFF"
+                />
+              }
+              isLast
+            />
+          )}
         </View>
 
         {/* Security */}
@@ -590,16 +625,25 @@ export default function SettingsScreen() {
           </Text>
         </Pressable>
         <View style={sectionCardStyle}>
-          {/* In-app privacy controls. `privacy.tsx` existed with NO entry point anywhere in the
-              settings root, while the root instead linked out to the hosted privacy POLICY — two
-              different things, and only the document was reachable. */}
-          <SettingsRow
-            icon="shield"
-            iconTint="indigo"
-            label={t('settings.privacy', 'Приватность')}
-            onPress={() => router.push('/settings/privacy' as any)}
-            isFirst
-          />
+          {/* ── THE "ПРИВАТНОСТЬ" ROW IS GONE, AND IT WAS A THIRD COPY ────────────
+              It pushed `/settings/privacy`, and the note here used to call that screen "in-app privacy
+              controls" as opposed to the hosted privacy POLICY — "two different things". Reading the
+              file settles it: `app/settings/privacy.tsx` is a bilingual rendering of the privacy
+              policy itself, nine numbered sections, EN/RU toggle. It is not controls. It is the same
+              document as the Legal section's `privacy_policy` link, written a second time.
+
+              Reported as: "вот этот раздел приватность не нужен, потому что у нас есть два раздела
+              там, где политика конфиденциальности и условия использования." Correct on both counts.
+
+              And the duplicate had gone stale in a way that matters more than the redundancy: its
+              sections 3 and 4 state that the app uses "Supabase as our database/auth backend and
+              Vercel for our HTTP API". The backend is Cloudflare Workers + D1. An inaccurate privacy
+              policy is a compliance liability, and two copies means one of them drifts — this one had.
+
+              App Review's requirement is an in-app ACCESSIBLE privacy policy URL, which the Legal
+              section satisfies and which is now the single source of truth. The admin panel is not
+              orphaned by this: its other entrance is the six-tap handler on the Security section title
+              directly above (`handleAdminTap`). */}
           {/* ── THE DEVICE LIST NOW EXISTS, SO THIS ROW IS BACK ───────────────────
               History, because it matters for what the label is allowed to say. This row once read
               `settings.devices` but pushed `/settings/device-key`, a screen showing ONE value — this
@@ -627,6 +671,7 @@ export default function SettingsScreen() {
             iconTint="teal"
             label={t('settings.devices')}
             onPress={() => router.push('/settings/devices' as any)}
+            isFirst
           />
           <SettingsRow
             icon="vpn-key"
