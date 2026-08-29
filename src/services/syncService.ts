@@ -95,8 +95,45 @@ export async function syncProfile(profileId: string): Promise<void> {
   try {
     await syncWithThrottle(`profile:${profileId}`, 10 * 60 * 1000, async () => {
       const { profile, error } = await getProfile(profileId);
+      // ── A DELETED ACCOUNT HAS TO LEAVE THE CACHE ──────────────────────────
+      //
+      // Reported: "я удалил аккаунт, публикации исчезли, но я открываю этот профиль удалённый, а он
+      // всё равно есть".
+      //
+      // The deletion was working the whole time — verified against production by registering a
+      // throwaway account, deleting it, and confirming the row was gone from `profiles`. What survived
+      // was the cache, and TWO things kept it alive:
+      //
+      //   the Worker returned 200 with a null body for a missing profile, so the client could not tell
+      //   "this person is gone" from "the fetch came back empty" (fixed in routes/profiles.ts);
+      //
+      //   and this line, which treated that emptiness as success and returned — leaving the stale
+      //   entity-store row and the MMKV copy exactly where they were, for ever, because the
+      //   ten-minute throttle was then stamped and the screen renders `cachedProfile` in preference
+      //   to anything else.
+      //
+      // Purging here rather than in the screen is deliberate: every surface that renders a profile
+      // reads the same entity store, so a mention, a comment author, a search result and a chat
+      // header all stop showing a deleted person from one place. `app/profile/[id].tsx` needs no new
+      // state — its `cachedProfile` is a store selector, so the removal re-renders it into the
+      // existing "user not found" branch.
+      //
+      // `404` and `not found` are both matched because the Worker's `fail()` puts the message in the
+      // body while `apiClient` surfaces it verbatim; matching the text as well as the status keeps
+      // this correct if either side is reworded.
+      const notFound =
+        !!error && /not[ _-]?found|404/i.test(error);
+      if (notFound || (!error && !profile)) {
+        try {
+          useEntityStore.getState().removeProfile(profileId);
+        } catch {}
+        try {
+          await cacheProfile(profileId, null);
+        } catch {}
+        return;
+      }
       if (error) throw error; // transport/fetch failure → don't stamp, allow retry
-      if (!profile) return; // fetch succeeded, profile not found → treat as success (no retry storm)
+      if (!profile) return;
 
       const localProfile: LocalProfile = {
         id: profile.id,

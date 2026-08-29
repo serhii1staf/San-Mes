@@ -225,6 +225,8 @@ interface EntityState {
   upsertPost: (post: LocalPost) => void;
   upsertPosts: (posts: LocalPost[]) => void;
   upsertProfile: (profile: LocalProfile) => void;
+  /** Drop a cached profile — used when the server reports the account no longer exists. */
+  removeProfile: (id: string) => void;
   removePost: (id: string) => void;
   setLike: (userId: string, postId: string) => void;
   removeLike: (userId: string, postId: string) => void;
@@ -374,6 +376,29 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
     schedulePostsFlush(() => {
       const all = Object.values(get().posts) as LocalPost[];
       return all.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    });
+  },
+
+  /**
+   * Drop a profile from the cache.
+   *
+   * Exists for one reason: a DELETED account has to stop being rendered. The screens that show a
+   * person all read this map, and `app/profile/[id].tsx` renders `cachedProfile` in preference to any
+   * fetch result — so without a removal a deleted profile stayed on screen for ever, which is exactly
+   * what was reported ("я удалил аккаунт... а он всё равно есть"). See the note in
+   * `syncService.syncProfile`, which is the only caller and which purges when the server 404s.
+   *
+   * Bails when the id is absent so a purge for someone who was never cached cannot mint a new
+   * `profiles` object — that would re-render every subscriber and schedule an MMKV flush of the whole
+   * map for no change, which is the cost `upsertProfile`'s equality guard below exists to avoid.
+   */
+  removeProfile: (id: string) => {
+    if (!id) return;
+    if (!get().profiles[id]) return;
+    set((state) => {
+      const next = { ...state.profiles };
+      delete next[id];
+      return { profiles: next };
     });
   },
 
