@@ -18,6 +18,7 @@
 // the route's shape.
 
 import { extractBearer, verifyToken } from './auth';
+import { isInstallAllowed } from './revocation';
 import { Env } from './db';
 import { ROUTES } from './router';
 import { corsHeaders, fail } from './http';
@@ -61,7 +62,32 @@ export default {
     // Anonymous endpoints (e.g. read profile) can serve anyway.
     const token = extractBearer(req);
     const verified = await verifyToken(env, token);
-    const authedUserId = verified?.userId ?? null;
+    let authedUserId = verified?.userId ?? null;
+
+    // ── A DISCONNECTED DEVICE LOSES ACCESS HERE, NOT WHEN IT FEELS LIKE IT ────
+    //
+    // "Отключить устройство" used to be enforced only by the device heartbeat telling a revoked
+    // install to sign itself out. That works for the normal app and is cooperative — a client that
+    // simply never heartbeats keeps its 30-day token. Cooperative is not a sign-out, and the whole
+    // point of the button is removing someone who has your account.
+    //
+    // The token now carries an `install` claim inside the signature, so the request path can check it
+    // and the client cannot forge or strip it.
+    //
+    // This is NOT a database read per request: `isInstallAllowed` caches its answer per isolate for a
+    // minute, so it costs one PK lookup per install per minute rather than one per call. That bound is
+    // what the Devices screen's footnote promises — notifications stop at once, access within about a
+    // minute.
+    //
+    // Downgrading to anonymous rather than returning 401 from here: every handler already treats a
+    // null `authedUserId` as unauthorised with its own message and status, so this keeps one rule for
+    // "not signed in" instead of adding a second early-exit path with its own error shape. The client's
+    // existing 401 handling then runs — one silent refresh, which mints a token carrying the same
+    // revoked install and is refused again, then logout.
+    if (authedUserId && verified?.installId) {
+      const allowed = await isInstallAllowed(env, authedUserId, verified.installId);
+      if (!allowed) authedUserId = null;
+    }
 
     const url = new URL(req.url);
     const path = url.pathname.replace(/\/+$/, '') || '/';

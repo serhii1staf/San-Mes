@@ -57,6 +57,7 @@ import { CachedImage } from '../../src/components/ui/CachedImage';
 import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
+import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../src/utils/appLinks';
 import { useChatStore, useAuthStore } from '../../src/store';
 import { usePinnedMessagesStore, selectPinnedIds } from '../../src/store/pinnedMessagesStore';
 import { useT, useI18nStore } from '../../src/i18n/store';
@@ -490,9 +491,25 @@ const FullscreenPage = React.memo(function FullscreenPage({
   // Written as one expression matching `previewLink` in the bubble, so the two are diffable by
   // eye. They drifted because the decision was duplicated rather than shared, and duplicating it
   // is what let one copy grow two guards while the other kept none.
+  // ── OUR OWN LINK WINS THE PREVIEW SLOT, HERE TOO ──────────────────────────
+  //
+  // The note above says this expression is written to be diffable by eye against the bubble's
+  // `previewLink`, and that they drifted once because the decision was duplicated. So it gets the same
+  // change: scan for OUR shapes before falling back to "the first url in the text". See
+  // `extractInAppCardUrl` for why the positional first match was the wrong question.
   const linkUrl = !images.length && message.text && !hasCodeBlock(message.text)
-    ? extractFirstUrl(message.text)
+    ? extractInAppCardUrl(message.text) ?? extractFirstUrl(message.text)
     : null;
+
+  // ── AND THE BODY LOSES THE URL, WHICH IT DID NOT BEFORE ───────────────────
+  //
+  // The bubble has stripped our own share URLs out of its body text for a long time, because the card
+  // below already shows everything the link points at. This screen rendered `{message.text}` RAW, so
+  // opening a shared post in fullscreen printed the bare elided `san-m-app.com/post` above the card —
+  // the exact duplication the transcript fixed, still present one tap away.
+  //
+  // Same helper, same rule: only OUR links go, a third-party URL keeps its text.
+  const bodyText = isInAppCardUrl(linkUrl) ? stripInAppCardUrl(message.text, linkUrl) : (message.text || '');
 
   const textColor = isOwn ? ownTextColor : theme.colors.text.primary;
   const bubbleBg = isOwn ? ownBg : theme.colors.background.elevated;
@@ -525,7 +542,7 @@ const FullscreenPage = React.memo(function FullscreenPage({
         <ViewerPhoto key={uri} uri={uri} />
       ))}
 
-      {message.text ? (
+      {bodyText ? (
         <View
           style={[
             styles.textWrap,
@@ -537,7 +554,7 @@ const FullscreenPage = React.memo(function FullscreenPage({
             linkColor={isOwn ? textColor : theme.colors.accent.primary}
             style={styles.bodyText}
           >
-            {message.text}
+            {bodyText}
           </FormattedText>
         </View>
       ) : null}
@@ -763,7 +780,23 @@ const styles = StyleSheet.create({
     borderRadius: 18,
   },
   bodyText: { fontSize: 16, lineHeight: 22 },
-  previewWrap: { maxWidth: '92%', marginTop: 10 },
+  // ── THE CARD NEEDS A WIDTH, NOT JUST A CEILING ────────────────────────────
+  //
+  // This was `{ maxWidth: '92%' }` with no `width`, and that is why the previews looked wrong here:
+  // reported as "из-за того, что превьюшки или контейнеры маленькие... контент как будто не
+  // помещается".
+  //
+  // A `maxWidth` alone does not give a child any room — the wrapper shrink-wraps to the content's
+  // intrinsic size, and these cards (`PostPreviewCard`, `ProfilePreviewCard`, `MiniAppPreviewCard`,
+  // the OG row) are all built to fill the width they are handed: 56 px thumbnail, then a flexing text
+  // column beside it. Handed no width, the text column collapses toward zero and every line wraps or
+  // clips. The transcript never showed this because its wrapper states `width: 280` outright
+  // (`bubbleStyles.linkPreviewWrap`).
+  //
+  // 320 rather than 280: this screen exists to look at content on a full page, so the card can be
+  // wider than it is in a bubble. `maxWidth` keeps it inside the page gutters on a narrow device,
+  // which is the job that attribute was doing correctly all along.
+  previewWrap: { width: 320, maxWidth: '92%', marginTop: 10 },
   header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
   headerRow: {
     flexDirection: 'row',

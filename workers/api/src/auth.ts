@@ -36,6 +36,19 @@ function getSecret(env: Env): Uint8Array {
 
 export interface VerifiedToken {
   userId: string;
+  /**
+   * The install this token was issued to, when it carries one.
+   *
+   * Added so "disconnect this device" can actually sign a device out. `null` for every token minted
+   * before this claim existed — those cannot be attributed to an install, so they are not checked
+   * against the revocation list and simply expire (30 days). Any token issued from now on carries it,
+   * because register / login / refresh all pass the client's install id through.
+   *
+   * It is a CLAIM, so the client cannot change it: the value is inside the HMAC signature. That is what
+   * makes the check meaningful rather than cooperative — a revoked device cannot present someone
+   * else's install id, and cannot strip its own without invalidating the token.
+   */
+  installId: string | null;
   raw: Record<string, unknown>;
 }
 
@@ -62,7 +75,8 @@ export async function verifyToken(
     });
     const sub = typeof payload.sub === 'string' ? payload.sub : null;
     if (!sub) return null;
-    return { userId: sub, raw: payload as Record<string, unknown> };
+    const inst = typeof payload.install === 'string' && payload.install.length > 0 ? payload.install : null;
+    return { userId: sub, installId: inst, raw: payload as Record<string, unknown> };
   } catch {
     return null;
   }
@@ -71,10 +85,17 @@ export async function verifyToken(
 /**
  * Sign a fresh 30-day JWT for the given user id. Used by the
  * register / login / refresh endpoints in `routes/auth.ts`.
+ *
+ * `installId` binds the token to one install so revocation can be enforced. Optional because an old
+ * client does not send one and must keep working; a token without it is simply unattributable and
+ * therefore unrevokable, which is why the client sends it on every auth call.
  */
-export async function signToken(env: Env, userId: string): Promise<string> {
+export async function signToken(env: Env, userId: string, installId?: string | null): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  return await new SignJWT({})
+  // A short claim name. This goes in every request header for 30 days, so the byte matters more here
+  // than the readability does.
+  const claims: Record<string, unknown> = installId ? { install: installId } : {};
+  return await new SignJWT(claims)
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setIssuer(ISSUER)
     .setSubject(userId)

@@ -85,6 +85,50 @@ export function extractUsernameShareRef(url: string | null | undefined): string 
   return m ? m[1] : null;
 }
 
+/** Every http(s) URL in a string. Global counterpart to `linkPreview`'s single-match pattern. */
+const ALL_URLS_RE = /https?:\/\/[^\s<>"')]+/gi;
+
+/**
+ * The first of OUR OWN links inside a block of text, or `null`.
+ *
+ * ── WHY "THE FIRST URL" WAS THE WRONG QUESTION ──────────────────────────────
+ *
+ * Both the feed card and the chat bubble picked their preview target with
+ * `extractFirstUrl(text)` — literally the first http(s) match — and then asked whether THAT was one of
+ * ours. The share sheet sends `caption + "\n" + shareUrl`, and the caption is the shared post's own
+ * text (`ShareToChatSheet`: `const body = caption?.trim() ? caption.trim() + "\n" + shareUrl : shareUrl`).
+ *
+ * So when the shared post itself contained a link — someone sharing a post that quotes a YouTube video,
+ * which is completely ordinary — the first URL in the message was the CAPTION'S link, not ours. Three
+ * consequences, all at once:
+ *
+ *   `isInAppCardUrl(previewLink)` was false, so nothing stripped our URL and the bare
+ *   `san-m-app.com/post` was printed in the body in green underlined link style;
+ *
+ *   the preview rendered the third party's OG card instead of the post being shared, so the card did
+ *   not show the thing the sender sent;
+ *
+ *   and because the OG unfurl is a network fetch, that card arrived LATE — which is the "сначала
+ *   появляется ссылка, и после этого уже идёт контейнер" in the report.
+ *
+ * Scanning for our own shape first fixes all three: the thing being SHARED is what the message is
+ * about, so it wins the preview slot regardless of where it sits in the text, and it always gets
+ * stripped because it is always the matched url.
+ *
+ * Returns the raw matched substring, not a normalised form, so callers can strip it from the text by
+ * exact comparison.
+ */
+export function extractInAppCardUrl(text: string | null | undefined): string | null {
+  if (!text) return null;
+  // `matchAll` needs the global flag and a fresh iterator each call; the regex is module-level, so
+  // `lastIndex` must not be allowed to leak between calls — `matchAll` handles that by throwing if the
+  // pattern is not global and by not mutating `lastIndex` on the original.
+  for (const m of text.matchAll(ALL_URLS_RE)) {
+    if (isInAppCardUrl(m[0])) return m[0];
+  }
+  return null;
+}
+
 /**
  * Does this URL render as a full in-app CARD that replaces the link entirely?
  *
@@ -124,12 +168,36 @@ export function stripInAppCardUrl(
   url: string | null | undefined,
 ): string {
   if (!text) return '';
-  if (!url) return text;
-  // `split`/`join` rather than a regex: the URL is data and may contain regex metacharacters.
-  const without = text.split(url).join('');
-  // Collapse the blank line the removal leaves behind, then trim. A caption survives; a bare link
-  // becomes empty.
-  return without.replace(/[ \t]*\r?\n[ \t]*$/, '').trim();
+  // ── STRIPS EVERY ONE OF OUR OWN URLS, NOT JUST THE MATCHED ONE ─────────────
+  //
+  // The `url` argument is still honoured (it may be a mini-app link, whose shape lives in
+  // `miniAppShare.ts`), but the sweep below is what makes the guarantee hold: "везде во всём
+  // приложении, чтобы был только сам контейнер".
+  //
+  // Removing only the previewed url left the others behind, and a message can genuinely carry more
+  // than one — forwarding a share, or a caption that itself quotes a profile link. Only one of them
+  // becomes a card, so the rest were printed as bare elided links next to it, which reads as broken
+  // rather than deliberate.
+  //
+  // Case-insensitive by construction: the extractors' regexes carry the `i` flag, so a link typed or
+  // pasted with a capitalised host is matched here even though the exact-substring removal below
+  // would have missed it.
+  let out = text;
+  if (url) {
+    // `split`/`join` rather than a regex: the URL is data and may contain regex metacharacters.
+    out = out.split(url).join('');
+  }
+  const ours: string[] = [];
+  for (const m of out.matchAll(ALL_URLS_RE)) {
+    if (isInAppCardUrl(m[0])) ours.push(m[0]);
+  }
+  for (const u of ours) out = out.split(u).join('');
+  // Collapse the blank lines the removals leave behind and tidy the edges. A caption survives; a
+  // message that was nothing but links becomes empty, so the caller can drop the text node entirely.
+  return out
+    .replace(/[ \t]+\r?\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /** Canonical share URL for a post. The one place this string is built. */

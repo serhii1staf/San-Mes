@@ -22,6 +22,7 @@ import { fail, ok } from '../http';
 import { register } from '../router';
 import { exec, normalizeProfile, query, queryOne } from '../db';
 import { signToken } from '../auth';
+import { forgetInstallDecision } from '../revocation';
 import { asStr, readJson } from '../validate';
 
 // Projection returned by the auth endpoints.
@@ -88,6 +89,7 @@ register('POST', '/v1/auth/register', async (req, env) => {
     emoji?: unknown;
     pin?: unknown;
     deviceKey?: unknown;
+    installId?: unknown;
   }>(req);
   if (!body.ok) return fail(req, body.error, 400);
 
@@ -129,7 +131,9 @@ register('POST', '/v1/auth/register', async (req, env) => {
     [id],
   );
   const profile = normalizeProfile(row);
-  const token = await signToken(env, id);
+  // Bind the token to the install that registered, so "disconnect this device" can enforce itself on
+  // the request path rather than depending on that device cooperating. See `revocation.ts`.
+  const token = await signToken(env, id, asStr(body.value.installId, 64));
   return ok(req, { profile, token });
 });
 
@@ -138,7 +142,7 @@ register('POST', '/v1/auth/register', async (req, env) => {
 // Body: { deviceKey, pin }
 // Returns: { profile, token }
 register('POST', '/v1/auth/login', async (req, env) => {
-  const body = await readJson<{ deviceKey?: unknown; pin?: unknown }>(req);
+  const body = await readJson<{ deviceKey?: unknown; pin?: unknown; installId?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
   const deviceKey = asStr(body.value.deviceKey, 64);
   const pin = asStr(body.value.pin, 16);
@@ -152,7 +156,29 @@ register('POST', '/v1/auth/login', async (req, env) => {
   if (!row) return fail(req, 'invalid_key_or_pin', 401);
 
   const profile = normalizeProfile(row);
-  const token = await signToken(env, row.id as string);
+  // ── SIGNING IN CLEARS A PREVIOUS REVOCATION FOR THIS INSTALL ──────────────
+  //
+  // Without this, "disconnect" would be permanent for that device: the tombstone would still be there,
+  // the new token would carry the same install id, and `isInstallAllowed` would refuse it — so someone
+  // who removed their own phone by mistake could never sign back in on it, and the confirmation copy
+  // ("signing back in needs the device key and PIN") would be false.
+  //
+  // Presenting the device key AND the PIN is the account's own credential, so it is exactly the right
+  // gate for undoing a revocation. Scoped to this install on this account, so it cannot clear anyone
+  // else's.
+  //
+  // The cached decision is dropped too, or this isolate would keep refusing for up to a minute after a
+  // successful sign-in.
+  const installId = asStr(body.value.installId, 64);
+  if (installId) {
+    await exec(
+      env,
+      `UPDATE devices SET revoked_at = NULL WHERE install_id = ? AND user_id = ?`,
+      [installId, row.id as string],
+    );
+    forgetInstallDecision(row.id as string, installId);
+  }
+  const token = await signToken(env, row.id as string, installId);
   return ok(req, { profile, token });
 });
 
@@ -192,7 +218,16 @@ register('GET', '/v1/auth/me', async (req, env, _ctx, _params, authedUserId) => 
 // sessions stay logged in without re-asking for the PIN.
 register('POST', '/v1/auth/refresh', async (req, env, _ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
-  const token = await signToken(env, authedUserId);
+  // The install claim has to SURVIVE a refresh, or revocation would have a hole you could drive
+  // through: a revoked device is refused, its client tries one silent refresh, and a refresh that
+  // minted an unattributed token would hand it thirty more days of access. Read from the body rather
+  // than from the incoming token because the dispatcher does not pass the verified claims through —
+  // and it cannot be spoofed to escape a revocation, because a token WITHOUT the claim is only
+  // obtainable by an old client, and this handler is only reached at all if the incoming token was
+  // already accepted (i.e. its install was not revoked).
+  const body = await readJson<{ installId?: unknown }>(req);
+  const installId = body.ok ? asStr(body.value.installId, 64) : null;
+  const token = await signToken(env, authedUserId, installId);
   return ok(req, { token });
 });
 
@@ -259,6 +294,76 @@ register('DELETE', '/v1/auth/me', async (req, env, _ctx, _params, authedUserId) 
 
   // Mini-apps the user created.
   stmts.push({ sql: `DELETE FROM mini_apps WHERE creator_id = ?`, params: [authedUserId] });
+
+  // ── SATELLITE TABLES THIS USED TO LEAVE BEHIND ────────────────────────────
+  //
+  // Everything above was written when `profiles`, `posts`, the social graph and the transcripts were
+  // the whole database. Four tables that hold rows keyed to a user were added later and never added
+  // here, so "delete my account" left them all in place:
+  //
+  //   push_tokens    — an Expo push token belonging to the deleted account.
+  //   devices        — platform / model / OS / app version and first+last seen, per install.
+  //   blocked_users  — the deleted user's own block list, AND every other user's block of them.
+  //   mutation_dedup — account id + opaque mutation ids.
+  //
+  // None of it is dramatic on its own, and none of it was visible in the app, which is exactly why it
+  // survived: nothing ever read it back, so nothing ever pointed at it. It is still retained personal
+  // data after an erasure request, which is the one thing account deletion is not allowed to do.
+  //
+  // `blocked_users` is deleted in BOTH directions on purpose. `blocker_id` is the deleted user's own
+  // data; `blocked_id` is a row sitting in a STRANGER's block list still naming the deleted account.
+  // Dropping the latter is also the behaviour that matches reality — the id it names no longer
+  // resolves to anyone, so keeping it only preserves a dangling reference.
+  //
+  // `mutation_dedup` already expires on a 7-day sweep (`dedup.ts`), so this only closes that window.
+  //
+  // WHY THIS IS GUARDED BY A sqlite_master LOOKUP: `blocked_users` and `mutation_dedup` are created
+  // LAZILY, on first use, by `routes/reports.ts` and `dedup.ts` respectively — they are not in any
+  // migration. On a database where neither feature has been touched the tables do not exist, and a
+  // statement naming a missing table fails the whole D1 batch, which would turn account deletion from
+  // "incomplete" into "impossible". One extra read on a rare, deliberate operation buys atomicity
+  // without that coupling.
+  const presentTables = await query<{ name: string }>(
+    env,
+    `SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('push_tokens','devices','blocked_users','mutation_dedup','reports')`,
+  );
+  const has = new Set(presentTables.map((r) => r.name));
+
+  if (has.has('push_tokens')) {
+    stmts.push({ sql: `DELETE FROM push_tokens WHERE user_id = ?`, params: [authedUserId] });
+  }
+  if (has.has('devices')) {
+    stmts.push({ sql: `DELETE FROM devices WHERE user_id = ?`, params: [authedUserId] });
+  }
+  if (has.has('blocked_users')) {
+    stmts.push({ sql: `DELETE FROM blocked_users WHERE blocker_id = ?`, params: [authedUserId] });
+    stmts.push({ sql: `DELETE FROM blocked_users WHERE blocked_id = ?`, params: [authedUserId] });
+  }
+  if (has.has('mutation_dedup')) {
+    stmts.push({ sql: `DELETE FROM mutation_dedup WHERE account_id = ?`, params: [authedUserId] });
+  }
+
+  // ── `reports` IS ANONYMISED, NOT DELETED ──────────────────────────────────
+  //
+  // The other tables are the user's data and go. Moderation records are not, quite: App Review
+  // guideline 1.2 requires the report path to work, and a queue that the reported party can empty by
+  // tapping "delete account" is not a working report path — report someone, they delete, they
+  // re-register, the complaint is gone. So rows are kept and the personal link is removed instead.
+  //
+  // Only `reporter_id` is rewritten. `target_id` is left alone: it identifies the CONTENT complained
+  // about, the row it named is being deleted in this same batch, and blanking it would destroy the
+  // only thing that makes the record legible to a moderator. Nothing reads `reporter_id` back — there
+  // is no SELECT of it anywhere in the Worker, and the only index is (status, created_at) — so the
+  // sentinel exists purely to be readable by a human looking at the table. It cannot collide with a
+  // real id, which is always a UUID.
+  if (has.has('reports')) {
+    stmts.push({
+      sql: `UPDATE reports SET reporter_id = 'deleted_account' WHERE reporter_id = ?`,
+      params: [authedUserId],
+    });
+  }
 
   // Finally, the profile itself.
   stmts.push({ sql: `DELETE FROM profiles WHERE id = ?`, params: [authedUserId] });
