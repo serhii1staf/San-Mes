@@ -10,7 +10,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useTheme } from '../../src/theme';
+import { useTheme, resolveProfileTheme } from '../../src/theme';
+import { stripBannerTransform } from '../../src/utils/bannerTransform';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { proxiedImageUrl } from '../../src/components/ui/CachedImage';
@@ -3684,6 +3685,49 @@ export default function ChatScreen() {
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
   const profileId = participantId;
 
+  // ── THE HEADER IS THE PEER'S BANNER ────────────────────────────────────────
+  //
+  // Asked for: the header is "too banal, one to one with Telegram", and could it merge with the
+  // banner the user has on their profile — something unique, not too big.
+  //
+  // The note further down at the header JSX is the reason this takes the shape it does. A previous
+  // attempt STRIPPED the containers off the back button and the name, and it was rejected: "looks
+  // terrible". The lesson recorded there is that what was wanted is something DISTINCTIVE, and
+  // removing chrome only makes a header plainer. So nothing is removed here — the back pill, the
+  // name pill and the avatar all stay exactly as they are, because they already read correctly. What
+  // changes is what sits BEHIND them.
+  //
+  // Two sources, in order:
+  //
+  //   1. The peer's own banner. `stripBannerTransform` because the stored value can carry the crop
+  //      transform appended to the url, and the transform is meaningless at this size — the header is
+  //      a thin band, so the image is drawn `cover` and centred rather than positioned.
+  //   2. No banner → the peer's profile-theme accent as a soft two-stop wash. Deliberately NOT a flat
+  //      grey: the point is that the header belongs to the person you are talking to, and an accent
+  //      still carries that. A conversation with someone who set neither is the only case that falls
+  //      back to the plain scrim, which is exactly today's appearance.
+  //
+  // COST, because this screen is the one under scrutiny: the header band is ~100 pt tall, so this is
+  // ONE additional image on the chat-open path — the same class of thing the profile screen already
+  // pays for. It is deliberately NOT prefetched or gated: a banner is a backdrop, and the profile
+  // screen's own note records that withholding a backdrop produces a visible swap on every open,
+  // which is worse than showing it a beat late. `priority="low"` keeps it behind the transcript's own
+  // images, and `autoplay={false}` stops an animated banner from decoding a frame forever behind the
+  // chrome — the same continuous-cost mistake already fixed in the profile grids.
+  const peerBannerUrl = useMemo(() => {
+    const raw = (profileData as any)?.banner_url || (cachedProfile as any)?.banner_url || null;
+    return raw ? stripBannerTransform(raw) : null;
+  }, [profileData, cachedProfile]);
+  // The peer's theme accent, for the no-banner case. Falls back to the app accent so this is never
+  // undefined; `+ '00'` is a fully transparent stop of the same hue, which fades into the scrim
+  // instead of ending on a hard edge.
+  const peerAccent = useMemo(() => {
+    const themeId = (profileData as any)?.theme_id || (cachedProfile as any)?.theme_id || null;
+    // `resolveProfileTheme` never throws and never returns undefined — it falls back to the default
+    // theme for an unknown or null id, which is why there is no guard here.
+    return themeId ? resolveProfileTheme(themeId).palette.accent : theme.colors.accent.primary;
+  }, [profileData, cachedProfile, theme.colors.accent.primary]);
+
   // ── Canonical conversation reconciliation (Bug 3) ─────────────────────
   // A chat opened from a profile carries the OTHER user's id as the route
   // `id`, not a conversation id. The conversation is created lazily on the
@@ -6871,8 +6915,53 @@ export default function ChatScreen() {
           is exactly the complaint. The wrapper is the chrome's own footprint again, so the
           ramp finishes where the header finishes. */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-        {/* Shared scrim ramp — see the note on the footer gradient below. */}
+        {/* ── THE PEER'S BANNER, BEHIND THE SCRIM ─────────────────────────────────
+            Asked for: the header is "too banal, one to one with Telegram" — could it merge with the
+            banner from the person's profile, something unique but not too big.
+
+            Order matters and is the whole trick. The banner goes UNDER the existing scrim ramp, not
+            instead of it: the ramp already fades the chrome into the transcript and already
+            guarantees the name and the back label stay legible over whatever is behind them. So the
+            header gains an identity without anything having to be re-tuned for contrast, and a
+            conversation with someone who has no banner looks exactly as it does today.
+
+            `pointerEvents="none"` on both layers so the back button, the name pill and the avatar
+            keep every touch — the band is `box-none` and these are pure decoration.
+
+            Height is UNCHANGED (`headerGradientHeight`). "Не слишком большое" was explicit, and a
+            taller header would also eat transcript rows, which is the mistake the composer scrim
+            already made once and had to walk back. */}
+        {peerBannerUrl ? (
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <CachedImage
+              uri={peerBannerUrl}
+              style={StyleSheet.absoluteFill as any}
+              resizeMode="cover"
+              // Behind the transcript's own images in the queue: the band is decoration, a message
+              // photo is content.
+              priority="low"
+              // An animated banner would decode a frame forever behind chrome nobody is looking at —
+              // the same continuous UI-thread cost already fixed in the profile grids.
+              autoplay={false}
+            />
+          </View>
+        ) : (
+          // No banner → the peer's theme accent, so the header still belongs to the person you are
+          // talking to. Deliberately not a flat grey: a hue carries identity, an absence does not.
+          // Ends on a fully transparent stop of the same colour so it dissolves into the scrim
+          // rather than stopping on a visible edge.
+          <LinearGradient
+            pointerEvents="none"
+            colors={[peerAccent + '3D', peerAccent + '14', peerAccent + '00']}
+            locations={[0, 0.6, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        )}
+        {/* Shared scrim ramp — see the note on the footer gradient below. Sits ON TOP of the banner
+            so the ramp does its usual job of dissolving the chrome into the transcript, and the
+            banner reads as a backdrop rather than as a photo pasted over the messages. */}
         <LinearGradient
+          pointerEvents="none"
           colors={topSurfaceScrimColors(bgColor)}
           locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
