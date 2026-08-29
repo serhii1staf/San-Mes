@@ -600,21 +600,34 @@ export default function SettingsScreen() {
             onPress={() => router.push('/settings/privacy' as any)}
             isFirst
           />
-          {/* ── THIS ROW SAID "DEVICES" AND OPENED A SINGLE KEY ───────────────────
-              It was labelled `settings.devices` ("Devices" / "Устройства") and pushed
-              `/settings/device-key`, which shows ONE value — this install's device key, with a copy
-              button. So the label promised a list of sessions and delivered a single string, which is
-              why it read as broken rather than as a different feature.
-              `settings.device_key` already existed in both dictionaries and was simply not used
-              here. Honest label, same screen, no new strings.
+          {/* ── THE DEVICE LIST NOW EXISTS, SO THIS ROW IS BACK ───────────────────
+              History, because it matters for what the label is allowed to say. This row once read
+              `settings.devices` but pushed `/settings/device-key`, a screen showing ONE value — this
+              install's key, with a copy button. The label promised a session list and delivered a
+              string, which is why it read as broken rather than as a different feature. It was
+              relabelled to `settings.device_key` as an honest stopgap, with a note that the missing
+              piece was a LIST endpoint over `push_tokens` that could not be deployed at the time.
 
-              A real device LIST is not a client-side change. The only per-install record the backend
-              keeps is `push_tokens (token, user_id, platform, created_at)`, there is no endpoint that
-              returns it (`workers/api/src/routes/push.ts` has only INSERT and DELETE), and recording
-              anything richer would be new device data collection, which the compliance rules require
-              consent for and forbid deriving a stable device identifier from. The DELETE half needed
-              for "sign this device out" already exists; the missing piece is a list endpoint, and it
-              cannot be deployed without a Cloudflare token. */}
+              That endpoint exists now (`GET /v1/push/devices`), so the two concerns are two rows:
+
+                Devices    — who receives notifications for this account, with a revoke control.
+                Device key — the string you type to sign in somewhere new.
+
+              The Devices screen is careful about what it claims: `push_tokens` is the only per-device
+              record this backend keeps, so the list is "devices registered for notifications", NOT
+              "every device that ever signed in". There is no session log to enumerate — the auth token
+              is a stateless JWT — and adding one would be new device-data collection, which the
+              compliance rules require consent for and forbid deriving a stable device identifier from.
+              The screen says so in both languages rather than implying completeness it cannot have.
+
+              `device_key.title` was also changed from "Devices" to "Device key": it titled the
+              single-key screen, so before this change BOTH screens claimed the same name. */}
+          <SettingsRow
+            icon="devices"
+            iconTint="teal"
+            label={t('settings.devices')}
+            onPress={() => router.push('/settings/devices' as any)}
+          />
           <SettingsRow
             icon="vpn-key"
             iconTint="blue"

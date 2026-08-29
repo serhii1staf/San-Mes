@@ -21,6 +21,28 @@ import { channels, publishEvent } from '../realtime';
 import { sendPushToUser, cleanPushBody } from '../push';
 import { findDedupResultId, maybeCleanupDedup, parseClientMutationId, recordDedup } from '../dedup';
 
+/**
+ * Validate one image dimension off the wire. Returns `null` for anything unusable.
+ *
+ * DROPPED, NOT REJECTED. These two numbers exist so a recipient can size a photo bubble before the
+ * bytes arrive; they are presentation metadata, and the message is perfectly valid without them
+ * (every message sent before migration 0006 has none). 400-ing a real message someone typed because
+ * its width was reported as `0` — which `expo-image-manipulator` genuinely does for a file it failed
+ * to read — would turn a cosmetic miss into a failed send. NULL simply means the receiver measures
+ * on load, exactly as it does today.
+ *
+ * The upper bound is a sanity rail, not a policy: `fitChatImageBox` only consumes the RATIO, so a
+ * nonsense pair cannot make a bubble huge, but it can make one absurdly thin. 20000 is comfortably
+ * above any real camera (a 100MP sensor is ~11600 on its long edge) while keeping the stored value
+ * in a range where `w / h` stays meaningful.
+ */
+function parseImageDim(v: unknown): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  const n = Math.round(v);
+  if (n <= 0 || n > 20000) return null;
+  return n;
+}
+
 // ── POST /v1/conversations ────────────────────────────────────────────
 //
 // Creates a 1:1 conversation with `otherUserId` if one doesn't already
@@ -78,7 +100,7 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
   const conversationId = parseUuid(params.id);
   if (!conversationId) return fail(req, 'invalid conversation id', 400);
 
-  const body = await readJson<{ text?: unknown; clientMutationId?: unknown }>(req);
+  const body = await readJson<{ text?: unknown; clientMutationId?: unknown; imgW?: unknown; imgH?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
   // 5000, matching `MAX_MESSAGE_CHARS` in src/utils/textLimits.ts, which the composer enforces
   // with `maxLength`. This was 16000 — over three times the client's cap, so the server's limit
@@ -87,6 +109,10 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
   // keep them equal.
   const text = typeof body.value.text === 'string' ? body.value.text.slice(0, 5000) : '';
   if (!text) return fail(req, 'empty message', 400);
+  // Pixel dimensions of the first attached image (migration 0006). See `parseImageDim` for why a
+  // bad value is dropped rather than rejected.
+  const imgW = parseImageDim(body.value.imgW);
+  const imgH = parseImageDim(body.value.imgH);
 
   // Participation check — same EXISTS gate the GET path uses.
   const participant = await queryOne<{ x: number }>(
@@ -109,10 +135,12 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
         conversation_id: string;
         sender_id: string;
         text: string;
+        img_w: number | null;
+        img_h: number | null;
         created_at: string;
       }>(
         env,
-        `SELECT id, conversation_id, sender_id, text, created_at
+        `SELECT id, conversation_id, sender_id, text, img_w, img_h, created_at
            FROM messages WHERE id = ? LIMIT 1`,
         [priorId],
       );
@@ -126,8 +154,9 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
   const now = new Date().toISOString();
   await exec(
     env,
-    `INSERT INTO messages (id, conversation_id, sender_id, text, created_at) VALUES (?, ?, ?, ?, ?)`,
-    [id, conversationId, authedUserId, text, now],
+    `INSERT INTO messages (id, conversation_id, sender_id, text, img_w, img_h, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, conversationId, authedUserId, text, imgW, imgH, now],
   );
 
   if (clientMutationId) {
@@ -184,6 +213,14 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
         sender_emoji: sender?.emoji || '😊',
         message_id: id,
         text: realtimeText,
+        // Carried on THIS payload as well as in the history response, because this is the path a
+        // recipient who is not on the chat screen takes: `RealtimeAccountBridge` decodes the
+        // `::img::` marker out of `text` and writes the message straight into the chat store, so by
+        // the time that person opens the chat the bubble renders from a row that never went through
+        // a history fetch. Without the dimensions here, the one photo most likely to be looked at
+        // immediately — the one that just arrived — would be the one that still resizes on decode.
+        img_w: imgW,
+        img_h: imgH,
         created_at: now,
         preview,
         ts: now,
@@ -205,6 +242,8 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
     conversation_id: conversationId,
     sender_id: authedUserId,
     text,
+    img_w: imgW,
+    img_h: imgH,
     created_at: now,
   });
 });
@@ -301,9 +340,17 @@ register('PATCH', '/v1/messages/:id', async (req, env, ctx, params, authedUserId
   const id = parseUuid(params.id);
   if (!id) return fail(req, 'invalid message id', 400);
 
-  const body = await readJson<{ text?: unknown }>(req);
+  const body = await readJson<{ text?: unknown; imgW?: unknown; imgH?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
   const text = typeof body.value.text === 'string' ? body.value.text.slice(0, 5000) : null;
+  // An edit can change which images are attached — removing a photo from a multi-image message is
+  // done through this route — so the dimensions have to be able to change with them, including back
+  // to NULL when the last image goes. Written unconditionally alongside `text` rather than only when
+  // present, because "the client did not send dimensions" and "this message no longer has an image"
+  // must produce the same stored state; a COALESCE here would leave a deleted photo's shape behind to
+  // size whatever image was attached next.
+  const imgW = parseImageDim(body.value.imgW);
+  const imgH = parseImageDim(body.value.imgH);
   // An empty edit is a delete, and delete has its own route with its own semantics (it
   // publishes `msg.delete`, which peers handle by removing the row). Silently turning one into
   // the other here would make the peer's UI disagree with the database.
@@ -317,15 +364,97 @@ register('PATCH', '/v1/messages/:id', async (req, env, ctx, params, authedUserId
   if (!row) return fail(req, 'not found', 404);
   if (row.sender_id !== authedUserId) return fail(req, 'forbidden', 403);
 
-  await exec(env, `UPDATE messages SET text = ? WHERE id = ?`, [text, id]);
+  await exec(env, `UPDATE messages SET text = ?, img_w = ?, img_h = ? WHERE id = ?`, [text, imgW, imgH, id]);
 
   publishEvent(
     env,
     channels.chat(row.conversation_id),
     'msg.edit',
-    { id, text, conversation_id: row.conversation_id },
+    { id, text, img_w: imgW, img_h: imgH, conversation_id: row.conversation_id },
     ctx,
   );
 
-  return ok(req, { id, text });
+  return ok(req, { id, text, img_w: imgW, img_h: imgH });
+});
+
+// ── POST /v1/messages/dims ────────────────────────────────────────────
+//
+// Body: { items: [{ id, w, h }] } → { updated: <count> }
+//
+// Backfill image dimensions for messages that predate migration 0006, reported by whoever first
+// decoded the photo.
+//
+// WHY THIS EXISTS AT ALL
+//
+// 0006 makes every NEW message carry its photo's shape, which is what stops the bubble resizing on
+// decode. It cannot do anything for messages already in the table: the server never saw those images.
+// On the live database that is 286 image-bearing messages out of 980 — and those are precisely the
+// ones the report is about, because the symptom appears while scrolling UP through history. A fix
+// that only covered future messages would have left the reported case exactly as it was.
+//
+// WHY TRUSTING THE READER'S MEASUREMENT IS SAFE
+//
+// The client's own `SingleChatImage.handleLoad` already measures the photo on first decode and writes
+// the result into its local, permanent `imageDimsCache`. So this number is not new or less trusted —
+// it is the number that device has been sizing every subsequent view from all along. If it were
+// wrong (the EXIF-transpose hazard the client's comments warn about), every second view of that photo
+// would show a permanently wrong box rather than a one-time settle, and the report says settle.
+//
+// It is measured off the weserv-proxied derivative rather than the original, which does not matter:
+// the only consumer is `fitChatImageBox`, and that reads the RATIO. A proportional resize preserves it.
+//
+// WRITE-ONCE, AND THAT IS THE WHOLE SECURITY MODEL
+//
+// `AND img_w IS NULL` means this can only ever fill a hole. It cannot overwrite what a sender sent,
+// it cannot be replayed to change a shape later, and a second reader racing the first is a harmless
+// no-op. So the worst a malicious participant can do is put a wrong aspect ratio on an unmeasured
+// photo in a conversation they are already in — a cosmetic box on their own screen and their peer's,
+// self-limited to one message, and not something that can be escalated or repeated.
+//
+// Authorisation is folded into each statement as an EXISTS over `conversation_participants` rather
+// than checked up front, because the items in one batch may span conversations. One statement can
+// then be both the permission check and the write, so there is no window between them and no way for
+// a partially-authorised batch to apply the unauthorised half.
+//
+// BATCHED because the trigger is scrolling: a first pass through a media-heavy history decodes many
+// photos in quick succession, and one request per photo would put a burst of writes behind a scroll.
+// The client buffers and flushes; this caps a batch at 50 so a single call stays bounded.
+//
+// Registered before nothing it could collide with: the router matches per method, and `dims` is the
+// only POST under `/v1/messages/`.
+register('POST', '/v1/messages/dims', async (req, env, _ctx, _params, authedUserId) => {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  const body = await readJson<{ items?: unknown }>(req);
+  if (!body.ok) return fail(req, body.error, 400);
+  const raw = Array.isArray(body.value.items) ? body.value.items : null;
+  if (!raw || raw.length === 0) return fail(req, 'items required', 400);
+
+  const statements: { sql: string; params: unknown[] }[] = [];
+  for (const it of raw.slice(0, 50)) {
+    if (!it || typeof it !== 'object') continue;
+    const rec = it as { id?: unknown; w?: unknown; h?: unknown };
+    const id = parseUuid(typeof rec.id === 'string' ? rec.id : '');
+    const w = parseImageDim(rec.w);
+    const h = parseImageDim(rec.h);
+    // A locally-created id (`m-<timestamp>`) is not a uuid and fails `parseUuid` — those messages are
+    // not on the server yet and have nothing to backfill.
+    if (!id || w === null || h === null) continue;
+    statements.push({
+      sql: `UPDATE messages
+               SET img_w = ?, img_h = ?
+             WHERE id = ?
+               AND img_w IS NULL
+               AND EXISTS (SELECT 1 FROM conversation_participants cp
+                            WHERE cp.conversation_id = messages.conversation_id
+                              AND cp.user_id = ?)`,
+      params: [w, h, id, authedUserId],
+    });
+  }
+  if (statements.length === 0) return ok(req, { updated: 0 });
+
+  await batch(env, statements);
+  // Reports the number of statements RUN, not rows changed: `batch` does not surface per-statement
+  // `meta.changes` in a shape worth threading through, and the client does not branch on it — it is a
+  // fire-and-forget backfill. Anything already filled in was a no-op by design.
+  return ok(req, { updated: statements.length });
 });

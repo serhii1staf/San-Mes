@@ -112,6 +112,7 @@ function formatCount(n: number): string {
 // header module — matches the Instagram/TikTok-style chips in the mockup.
 function SocialChip({ url, theme }: { url: string; theme: any }) {
   const glassActive = useLiquidGlassActive();
+  const t = useT();
   const type = detectLinkType(url);
   const map: Record<string, { name: string; color: string; isBrand: boolean; label: string }> = {
     github: { name: 'github', color: theme.isDark ? '#FFF' : '#333', isBrand: true, label: 'GitHub' },
@@ -124,7 +125,11 @@ function SocialChip({ url, theme }: { url: string; theme: any }) {
     discord: { name: 'discord', color: '#5865F2', isBrand: true, label: 'Discord' },
     twitch: { name: 'twitch', color: '#9146FF', isBrand: true, label: 'Twitch' },
     spotify: { name: 'spotify', color: '#1DB954', isBrand: true, label: 'Spotify' },
-    website: { name: 'globe', color: '#2563EB', isBrand: false, label: 'Сайт' },
+    // Twin of the same map in `app/profile/[id].tsx` — see the long note there. Hardcoded `'Сайт'`,
+    // and also the catch-all for unrecognised link types, so an English UI showed Russian on every
+    // generic link chip. Fixed in both files together: the two screens render the same profile and a
+    // fix in one only would mean the label changed depending on whose profile you were looking at.
+    website: { name: 'globe', color: '#2563EB', isBrand: false, label: t('edit_profile.link_website') },
   };
   const icon = map[type] || map.website;
   const content = (

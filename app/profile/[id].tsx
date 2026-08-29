@@ -167,6 +167,7 @@ function formatCount(n: number): string {
 // target mockup. Reuses the same brand-icon mapping as `SocialLinkIcon`.
 function SocialChip({ url, theme }: { url: string; theme: any }) {
   const glassActive = useLiquidGlassActive();
+  const t = useT();
   const type = detectLinkType(url);
   const map: Record<string, { name: string; color: string; isBrand: boolean; label: string }> = {
     github: { name: 'github', color: theme.isDark ? '#FFF' : '#333', isBrand: true, label: 'GitHub' },
@@ -179,7 +180,23 @@ function SocialChip({ url, theme }: { url: string; theme: any }) {
     discord: { name: 'discord', color: '#5865F2', isBrand: true, label: 'Discord' },
     twitch: { name: 'twitch', color: '#9146FF', isBrand: true, label: 'Twitch' },
     spotify: { name: 'spotify', color: '#1DB954', isBrand: true, label: 'Spotify' },
-    website: { name: 'globe', color: '#2563EB', isBrand: false, label: 'Сайт' },
+    // ── THE ONE LABEL HERE THAT IS NOT A BRAND NAME, AND THE ONLY ONE THAT NEEDED TRANSLATING ──
+    //
+    // This was the hardcoded literal `'Сайт'`. Every other entry in this map is a proper noun that
+    // is spelled the same in every language, so the map read as if it needed no i18n — and the one
+    // entry that did was invisible among them.
+    //
+    // Reported as: with the interface in English, the caption near the Message button on someone's
+    // profile is still Russian. It is this chip, and it is worse than one label: the line below is
+    // `map[type] || map.website`, so `website` is also the CATCH-ALL for any link whose type is not
+    // recognised. So an English UI showed "Сайт" for every generic link on the profile.
+    //
+    // Reusing `edit_profile.link_website` rather than adding `profile.link_website`: it already means
+    // exactly "Website"/"Сайт", it is already present in BOTH dictionaries, and it is the label the
+    // link EDITOR uses for the same link type — so the profile and the editor cannot drift apart.
+    // There is no global ru/en key-parity test in this repo, so a brand-new key added to one
+    // dictionary only would fall back to Russian silently, which is the exact failure being fixed.
+    website: { name: 'globe', color: '#2563EB', isBrand: false, label: t('edit_profile.link_website') },
   };
   const icon = map[type] || map.website;
   const content = (
@@ -1944,7 +1961,11 @@ export default function UserProfileScreen() {
         )}
         <ViewerActionButton
           icon="share"
-          accessibilityLabel={t('post.share')}
+          // `post.share` does not exist in EITHER dictionary, so this button announced the literal
+          // string "post.share" to VoiceOver / TalkBack, in both languages, with no fallback to hide
+          // it. `common.share` is the key that carries "Share" / "Поделиться" and is what the sibling
+          // buttons in this same row already use for edit and delete (`common.edit`, `common.delete`).
+          accessibilityLabel={t('common.share')}
           onPress={() => {
             triggerHaptic('light');
             const caption = viewingPost?.content || viewingPost?.originalPost?.content || '';

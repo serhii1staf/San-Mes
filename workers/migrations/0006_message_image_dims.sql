@@ -1,0 +1,71 @@
+-- 0006 — carry a photo's aspect ratio with the message
+--
+-- Apply to the live D1 database with:
+--   cd workers/api
+--   npx wrangler d1 execute san-mes --remote --file=../migrations/0006_message_image_dims.sql --yes
+--
+-- WHY
+--
+-- Reported: "пользователь открывает со мной чат, начинает листать вверх, и после этого вот эти вот
+-- контейнеры, где я отправлял эти гифки и изображения, они начинают просто увеличиваться,
+-- уменьшаться... сначала он видит скелетон одного размера, и после этого только оно загрузилось —
+-- бам, и уже другого размера этот пузырь".
+--
+-- That is exactly what the code does, and it is a missing-data problem rather than an animation one.
+-- A photo bubble sizes itself with `fitChatImageBox(naturalW, naturalH)`, and until the bytes arrive
+-- nobody on the receiving device knows those numbers. So the bubble mounts at `UNKNOWN_IMG_BOX` — a
+-- square at `CHAT_IMG_MAX_W` — expo-image reports the decoded size in `onLoad`, and the container
+-- relayouts. One layout per photo, on a scroll frame, for every photo the device has never seen.
+--
+-- The SENDER has always known the answer: `setImageDims` is stamped at pick time from the
+-- expo-image-manipulator result, and `handleSend` explicitly carries it across the local->remote uri
+-- swap. But `imageDimsCache` is per-install MMKV, so that knowledge never left the sending device.
+-- The receiver had to rediscover it by decoding the image, which is the one thing that cannot happen
+-- before layout.
+--
+-- These two columns are that knowledge, on the wire.
+--
+-- WHY COLUMNS AND NOT THE EXISTING MARKER
+--
+-- Images do not have a column: they travel inside `text` as `::img::url1|url2::caption`, parsed
+-- client-side. Extending that marker would have been zero-migration and was the first idea, and it is
+-- wrong for one decisive reason: a client that has not taken the OTA yet strips only the segments it
+-- knows, so any new marker segment would be rendered as literal message text. `::dim::270x360::`
+-- appearing inside people's messages is a worse bug than the one being fixed, and it would hit every
+-- user who had not updated.
+--
+-- Columns are invisible to old clients. They ignore unknown JSON fields in the response and keep
+-- measuring on load exactly as they do today.
+--
+-- FIRST IMAGE ONLY, DELIBERATELY
+--
+-- One pair per message, describing `imageUrls[0]`. A multi-image bubble does not need it: that path
+-- renders a fixed 120x120 grid and never calls `fitChatImageBox`, so there is no box to get wrong.
+-- Single-image bubbles are the only ones that size to an aspect ratio, and they are what the report
+-- is about.
+--
+-- ASPECT RATIO, NOT PROVENANCE
+--
+-- The only consumer is `fitChatImageBox`, which uses `natW / natH`. So these are "two numbers whose
+-- ratio is the photo's shape", and it does not matter that the sender measured a 1080-wide derivative
+-- rather than the original — a resize preserves the ratio. Stored as INTEGER because that is what
+-- they are; NULL means "unknown", which is every message that already exists.
+--
+-- NOT RETROACTIVE, AND THAT IS NOT FIXABLE HERE
+--
+-- Messages already in the table stay NULL. The server never saw those images and cannot invent their
+-- shape, so scrolling up through EXISTING history still settles once per photo per device (after
+-- which `imageDimsCache` remembers it locally, as it does today). Only messages sent from now on are
+-- jump-free on first sight. A "receiver measures it and reports it back" heal would fix old history
+-- too, and is deliberately not in this migration: `onLoad` on a proxied copy is exactly the
+-- measurement the client's own code distrusts for EXIF-transposed photos, and persisting a
+-- transposed ratio server-side would make one wrong box permanent for everyone instead of
+-- self-correcting per device.
+--
+-- NOT IDEMPOTENT (the ALTERs)
+--
+-- SQLite has no `ADD COLUMN IF NOT EXISTS`; matches 0002, 0003 and 0005, which also add columns bare.
+-- Re-running errors with "duplicate column name". There is no backfill to re-run.
+
+ALTER TABLE messages ADD COLUMN img_w INTEGER;
+ALTER TABLE messages ADD COLUMN img_h INTEGER;

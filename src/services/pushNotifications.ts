@@ -285,6 +285,28 @@ export async function registerForPush(): Promise<void> {
   } catch {}
 }
 
+/**
+ * This install's Expo push token, as last accepted by the Worker, or `''`.
+ *
+ * Exists so the Devices screen can mark one row as "this device" without a second round-trip: the
+ * stored value is byte-identical to the `push_tokens` primary key the list endpoint returns.
+ *
+ * An accessor rather than exporting `TOKEN_SENT_KEY`, so the MMKV key stays owned by this module —
+ * a consumer that knew the key could write it, and a wrong value here would make the app skip
+ * registration entirely (`registerForPush` treats a match as "already sent").
+ *
+ * Empty in three legitimate cases the caller must handle: notification permission was never granted,
+ * the build has no native module (simulator / bare OTA), or the user has logged out since. In all
+ * three the screen simply marks no row as current.
+ */
+export function getRegisteredPushToken(): string {
+  try {
+    return kvGetStringRawSync(TOKEN_SENT_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
 /** Drop the token server-side on logout / account switch. */
 export async function unregisterPush(): Promise<void> {
   try {
