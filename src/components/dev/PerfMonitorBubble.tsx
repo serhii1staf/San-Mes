@@ -293,7 +293,44 @@ function PerfMonitorBubbleInner() {
     [reportUiFps, uiFrameCount, uiLastSampleAt, uiMaxGap, uiPrevFrameAt],
   );
   const uiArmed = enabled && isForeground;
-  useFrameCallback(sampleUiFps, uiArmed);
+  // ── WHY `uiSampleCount` WAS 0 FOR THE WHOLE SESSION ────────────────────────
+  //
+  // This was `useFrameCallback(sampleUiFps, uiArmed)`, passing the armed flag as `autostart`. That
+  // does not work, and the reason is in the installed source —
+  // `node_modules/react-native-reanimated/lib/module/hook/useFrameCallback.js`:
+  //
+  //     export function useFrameCallback(callback, autostart = true) {
+  //       const ref = useRef({
+  //         setActive: isActive => { ...; ref.current.isActive = isActive; },
+  //         isActive: autostart,          // <-- captured in the useRef INITIALISER
+  //         callbackId: -1,
+  //       });
+  //       useEffect(() => {
+  //         ref.current.callbackId = frameCallbackRegistry.registerFrameCallback(callback);
+  //         ref.current.setActive(ref.current.isActive);   // <-- the FROZEN value, not `autostart`
+  //         ...
+  //       }, [callback, autostart]);
+  //
+  // A `useRef` initialiser runs on the first render only, so `isActive` is frozen at whatever
+  // `autostart` was AT MOUNT. The effect does re-run when `autostart` changes — and then calls
+  // `setActive(ref.current.isActive)`, i.e. the stale frozen value. So a `false` at mount can never
+  // become `true` through the prop.
+  //
+  // `perfMonitorEnabled` defaults to false and is forced false for every existing install by the
+  // settings-store migration, so the bubble ALWAYS mounts disarmed. Turning the monitor on afterwards
+  // re-ran that effect and re-applied `false`. The UI sampler was therefore permanently inert on
+  // every device, which is exactly the `uiSampleCount: 0` / `uiFps: 0` reported in four consecutive
+  // snapshots — and the reason I spent this session optimising the one thread I could still see.
+  //
+  // So `autostart` is pinned to a literal `false` (honest: it never starts by itself) and arming is
+  // done through the documented imperative handle, which reads the value at call time and cannot go
+  // stale. The hook's own effect still fires once on mount and applies `false`; the effect below then
+  // applies the real state, and because `setActive` also WRITES `ref.current.isActive`, any later
+  // re-registration preserves it instead of reverting.
+  const uiFrameCb = useFrameCallback(sampleUiFps, false);
+  useEffect(() => {
+    uiFrameCb.setActive(uiArmed);
+  }, [uiArmed, uiFrameCb]);
   // ── RESET AT THE ARM/DISARM BOUNDARY, WHICH IS WHERE THE PAUSE ACTUALLY IS ──
   //
   // `uiLastSampleAt` is a SharedValue, so it SURVIVES a disarm. Without this, the first window after
