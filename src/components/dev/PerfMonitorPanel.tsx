@@ -256,17 +256,33 @@ export function PerfMonitorPanel({ onClose }: Props) {
                 {t('perf.js_thread', 'JS')}
               </Text>
               <Text style={[styles.gaugeValue, { color: fpsColor(snap.jsFps) }]}>{snap.jsFps}</Text>
+              {/* "loop Hz", not "fps". This counts completions of a one-shot 1 ms timer loop, so its
+                  absolute value is a JS-thread busyness signal and not a count of presented frames.
+                  It was labelled only "min 5s", which let a reading of 40 be reported as 20 dropped
+                  frames when no frame need have been dropped at all. */}
               <Text style={[styles.gaugeSub, { color: theme.colors.text.tertiary }]}>
-                {t('perf.min_5s', 'min 5s')}: {snap.jsP1Min}
-              </Text>
+                {t('perf.loop_hz', 'loop Hz')} · {snap.jsP1Min}</Text>
             </View>
             <View style={[styles.gaugeCell, { backgroundColor: theme.colors.background.secondary }]}>
               <Text style={[styles.gaugeLabel, { color: theme.colors.text.tertiary }]}>
                 {t('perf.ui_thread', 'UI')}
               </Text>
-              <Text style={[styles.gaugeValue, { color: fpsColor(snap.uiFps) }]}>{snap.uiFps}</Text>
+              {/* The only real frame rate in this row, and the only one that was ever missing. A
+                  dead sampler and a genuine 0 fps both render as "0", which is how four snapshots
+                  of `uiFps: 0` got read as data. `uiSampleCount` separates them, so an unreported
+                  UI thread now says so instead of quietly claiming a number. */}
+              <Text
+                style={[
+                  styles.gaugeValue,
+                  { color: snap.uiSampleCount > 0 ? fpsColor(snap.uiFps) : '#94a3b8' },
+                ]}
+              >
+                {snap.uiSampleCount > 0 ? snap.uiFps : '--'}
+              </Text>
               <Text style={[styles.gaugeSub, { color: theme.colors.text.tertiary }]}>
-                {t('perf.min_5s', 'min 5s')}: {snap.uiP1Min}
+                {snap.uiSampleCount > 0
+                  ? `${t('perf.min_5s', 'min 5s')}: ${snap.uiP1Min}`
+                  : t('perf.no_samples', 'no samples')}
               </Text>
             </View>
             <View style={[styles.gaugeCell, { backgroundColor: theme.colors.background.secondary }]}>
