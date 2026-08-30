@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useTheme } from '../../theme';
-import { androidSurfaceStyle } from './AppBlurView';
+import { androidSurfaceStyle, type AppSurfaceRole } from './AppBlurView';
 
 // ── Native liquid glass (iOS 26+) — single integration point ───────────────
 //
@@ -286,6 +286,18 @@ interface GlassBgProps {
   interactive?: boolean;
   /** Optional tint to lift a too-dark glass surface. */
   tintColor?: string;
+  /**
+   * Android-only, and the reason it had to exist: this component's Android fallback called
+   * `androidSurfaceStyle(60, …)` with NO role, so it always took the `chrome` path and painted
+   * `rgba(28,28,32,0.852)` in dark mode. On a button or a small control floating over a photo that is
+   * a near-black disc — reported as "some buttons went black on Android".
+   *
+   * `AppSurfaceRole` already existed for exactly this distinction and `AppBlurView` already honoured
+   * it; `GlassBg` simply had no way to say which it was, which is the same "two surface families
+   * drifted apart" failure this file's own note describes one paragraph down. Pass `'scrim'` for a
+   * control over imagery. No effect on iOS, where real glass is rendered.
+   */
+  role?: AppSurfaceRole;
 }
 
 /**
@@ -310,7 +322,7 @@ interface GlassBgProps {
  * Returns null when glass is off, so the container simply falls back to its
  * own backgroundColor/border.
  */
-export function GlassBg({ borderRadius, glassStyle = 'clear', colorScheme, interactive = true, tintColor }: GlassBgProps) {
+export function GlassBg({ borderRadius, glassStyle = 'clear', colorScheme, interactive = true, tintColor, role }: GlassBgProps) {
   const active = useLiquidGlassActive();
   // Called unconditionally, before the branch below — the Android surface needs to know which way to go
   // when the caller has not pinned a `colorScheme`, and a hook cannot live inside a conditional.
@@ -350,7 +362,11 @@ export function GlassBg({ borderRadius, glassStyle = 'clear', colorScheme, inter
           borderRadius != null ? { borderRadius } : null,
           // 60: a middling intensity. These are buttons, pills and fields rather than full-bleed
           // chrome, so they want a clearly-present surface without going as opaque as a tab bar.
-          androidSurfaceStyle(60, dark ?? theme.isDark),
+          //
+          // `role` is forwarded now. It used to be omitted, which defaulted every one of these to
+          // `chrome` — a 0.72-floor near-opaque fill — so a control sitting over a photo became a
+          // black disc in dark theme. That is the "buttons went black on Android" report.
+          androidSurfaceStyle(60, dark ?? theme.isDark, role),
         ]}
       />
     );

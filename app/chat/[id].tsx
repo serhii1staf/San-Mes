@@ -10,7 +10,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useTheme, resolveProfileTheme } from '../../src/theme';
+import { useTheme } from '../../src/theme';
 import { stripBannerTransform } from '../../src/utils/bannerTransform';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
@@ -3754,23 +3754,13 @@ export default function ChatScreen() {
   // unreadable in light mode, and the whole point of the scrim is that it darkens regardless of theme.
   const onBannerTextColor = peerBannerUrl ? '#FFFFFF' : theme.colors.text.primary;
 
-  const peerThemeId = (profileData as any)?.theme_id || (cachedProfile as any)?.theme_id || null;
-  const peerAccent = useMemo(
-    () =>
-      // `resolveProfileTheme` never throws and never returns undefined — it falls back to the default
-      // theme for an unknown or null id, which is why there is no guard here.
-      peerThemeId ? resolveProfileTheme(peerThemeId).palette.accent : theme.colors.accent.primary,
-    [peerThemeId, theme.colors.accent.primary],
-  );
-  /**
-   * Has this peer personalised anything the header can show?
-   *
-   * Gates the accent ring on the avatar. Without it, EVERY conversation would get a ring in the app's
-   * own accent — which is not identity, it is decoration applied uniformly, and it would make the
-   * chats of people who set nothing look deliberately styled. A ring that means "this is theirs" has
-   * to be absent when there is nothing of theirs to show.
-   */
-  const peerHasIdentity = !!peerThemeId || !!peerBannerUrl;
+  // ── `peerAccent` AND `peerHasIdentity` ARE GONE ────────────────────────────
+  //
+  // They existed for one purpose: colouring the avatar's hairline with the peer's theme accent. That
+  // ring was reported as an unwanted outline and has been removed (see the note at the header
+  // circle), which left a `useMemo` plus a `resolveProfileTheme` call running on every render of this
+  // screen to feed nothing. Deleted rather than left in place — dead state that still costs work per
+  // render is how a screen ends up with 4,900 lines and no one able to say what any of it is for.
 
   // ── Canonical conversation reconciliation (Bug 3) ─────────────────────
   // A chat opened from a profile carries the OTHER user's id as the route
@@ -7112,14 +7102,53 @@ export default function ChatScreen() {
                   delayLongPress={300}
                   style={{ borderRadius: 18, maxWidth: '100%' }}
                 >
-                  {/* The name Text + badges are CHILDREN of the interactive
-                      glass; with no fixed width the children drive the pill's
-                      width and the liquid surface morphs outward on touch. */}
-                  <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerPillGlass}>
-                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
+                  {/* ── THE BANNER WAS MISSING FROM THIS BRANCH ENTIRELY ───────────
+                      The banner-in-the-name-pill feature was written only into the `glassActive ===
+                      false` branch below. `liquidGlassEnabled` defaults to TRUE and this is an iOS 26
+                      device, so the branch that actually renders on the reporting phone had no
+                      `peerBannerUrl`, no image and no scrim — the whole feature was dead code exactly
+                      where it was meant to be seen. Reported as "there is no photo in the profile
+                      where the name is". That is not a styling miss, it is a branch I never checked.
+
+                      Shaped per the rule this repo already documents on `GlassBg`: the CONTAINER owns
+                      the size, radius and clipping; the glass is a childless absolute-fill layer; the
+                      real content is a SIBLING painted on top. Putting the name inside a
+                      `NativeGlassView` (what this used to do) is the shape that note warns about
+                      twice — content inside the glass gets lensed, and `NativeGlassView` silently
+                      drops `isInteractive` whenever it has children, so the outward morph this branch
+                      claimed to be preserving was never happening in the first place.
+
+                      `glassStyle` switches on the banner: `clear` over a photo, because the point is
+                      that the photo stays visible through the glass — that IS the Liquid Glass look —
+                      and `regular` when there is nothing behind it to show. `regular` over the banner
+                      is what was hiding it in the profile emoji tile too, same cause, fixed there as
+                      well.
+
+                      `overflow: 'hidden'` is required to clip the image to the capsule, and it is
+                      what trades away the outward morph. That trade is deliberate: a visible banner
+                      was the request, and per the paragraph above the morph was already unreachable
+                      here. No border is added — the user asked for no outline. */}
+                  <View style={[styles.headerPillGlass, { overflow: 'hidden' }]}>
+                    {peerBannerUrl ? (
+                      <CachedImage
+                        uri={peerBannerUrl}
+                        proxyWidth={240}
+                        style={StyleSheet.absoluteFill as any}
+                        resizeMode="cover"
+                        priority="low"
+                        autoplay={false}
+                      />
+                    ) : null}
+                    <GlassBg
+                      borderRadius={18}
+                      glassStyle={peerBannerUrl ? 'clear' : 'regular'}
+                      colorScheme={theme.isDark ? 'dark' : 'light'}
+                      interactive={false}
+                    />
+                    <Text variant="caption" weight="semibold" numberOfLines={1} color={peerBannerUrl ? '#FFFFFF' : undefined} style={{ flexShrink: 1 }}>{displayName}</Text>
                     {displayVerified && <VerifiedBadge size={12} />}
                     {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
-                  </NativeGlassView>
+                  </View>
                 </Pressable>
               ) : (
                 <Pressable
@@ -7171,12 +7200,19 @@ export default function ChatScreen() {
               )}
             </View>
             <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
-              {/* The emoji's ring picks up the peer's theme accent, so the avatar and the
-                  banner-filled name pill beside it read as one identity block rather than two
-                  unrelated controls — the "interaction" half of the request, done with one border
-                  colour instead of another element. Falls back to the ordinary hairline when the peer
-                  has no theme, so nothing changes for an account that set neither. */}
-              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: peerHasIdentity ? peerAccent : theme.colors.border.light, overflow: 'hidden' }]}>
+              {/* ── THE ACCENT RING IS GONE ────────────────────────────────────────
+                  It was `borderColor: peerHasIdentity ? peerAccent : theme.colors.border.light`, and
+                  the note that used to sit here argued it made the avatar and the name pill read as
+                  one identity block. It did not. `styles.headerCircle` already carries
+                  `borderWidth: 1`, so recolouring that hairline to a saturated accent turned a piece
+                  of neutral chrome into a second visible box around the emoji — reported as
+                  "containers around the container", and a coloured outline that was never asked for.
+                  Back to the ordinary hairline, identical to every other header circle.
+
+                  The inline `overflow: 'hidden'` went with it. It was inert — the child `Avatar` is
+                  24 pt inside a 36 pt box and cannot overflow — a leftover from the full-header
+                  banner version. */}
+              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
                 <Avatar emoji={displayEmoji} name={displayName} size="xs" />
               </Pressable>
             </View>

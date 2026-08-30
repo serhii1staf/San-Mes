@@ -1310,8 +1310,19 @@ export default function ProfileScreen() {
       <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
         {/* Avatar — rounded square; liquid glass when enabled; tap → account switcher */}
         <Pressable onPress={() => setShowAccountSwitcher(true)} style={{ borderRadius: 26, alignSelf: 'flex-start' }}>
+          {/* ── `regular` OVER A BANNER HID THE BANNER ──────────────────────────
+              Reported: with Liquid Glass on, there is no photo around the profile emoji. Correct.
+              Apple's `regular` material is a heavily frosted surface, so behind an 84 pt tile sitting
+              on the cover photo it stops the photo reading as a photo at all. The non-glass path uses
+              `BlurView intensity={70}`, which samples the banner and shows a blurred version of it —
+              so turning glass ON actually LOST information here, which is the opposite of the intent.
+
+              `clear` when there is a banner behind the tile, `regular` when there is not (over the
+              flat card fill `clear` has nothing to refract and reads as an empty outline). No border
+              is added in either case — the edge the user sees is the tile itself, and they asked for
+              none beyond that. */}
           {glassActive ? (
-            <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 84, height: 84, borderRadius: 26, alignItems: 'center', justifyContent: 'center' }}>
+            <NativeGlassView glassStyle={bannerUrl ? 'clear' : 'regular'} colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 84, height: 84, borderRadius: 26, alignItems: 'center', justifyContent: 'center' }}>
               <Avatar emoji={user?.emoji ?? ''} size="lg" />
             </NativeGlassView>
           ) : (

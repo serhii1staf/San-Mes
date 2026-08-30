@@ -1648,8 +1648,11 @@ export default function UserProfileScreen() {
       {/* ── Module content (left-aligned identity block, matches the mockup) ── */}
       <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
         {/* Avatar — rounded square, top-left; liquid glass when enabled */}
+        {/* `clear` over a banner, `regular` without one — see the twin on the own-profile screen for
+            why. Short version: `regular` is frosted enough to hide the cover photo behind this tile,
+            so switching Liquid Glass ON was losing the photo that the `BlurView` fallback shows. */}
         {glassActive ? (
-          <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 84, height: 84, borderRadius: 26, alignItems: 'center', justifyContent: 'center' }}>
+          <NativeGlassView glassStyle={bannerUrl ? 'clear' : 'regular'} colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 84, height: 84, borderRadius: 26, alignItems: 'center', justifyContent: 'center' }}>
             <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
           </NativeGlassView>
         ) : (

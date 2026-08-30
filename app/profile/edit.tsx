@@ -436,7 +436,7 @@ export default function EditProfileScreen() {
               <Feather name="x" size={18} color="#FFFFFF" />
             </NativeGlassView>
           ) : (
-            <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
+            <BlurView intensity={80} role="scrim" tint="dark" style={styles.headerPillInner}>
               <Feather name="x" size={18} color="#FFFFFF" />
             </BlurView>
           )}
@@ -459,7 +459,7 @@ export default function EditProfileScreen() {
                   </RNText>
                 </NativeGlassView>
               ) : (
-                <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
+                <BlurView intensity={80} role="scrim" tint="dark" style={styles.headerTitleInner}>
                   <RNText
                     style={styles.headerTitleText}
                     allowFontScaling={false}
@@ -490,7 +490,7 @@ export default function EditProfileScreen() {
               </RNText>
             </NativeGlassView>
           ) : (
-            <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
+            <BlurView intensity={80} role="scrim" tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
               <RNText style={styles.headerSaveText} allowFontScaling={false}>
                 {headerActionLabel}
               </RNText>

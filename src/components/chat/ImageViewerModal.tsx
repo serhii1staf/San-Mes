@@ -96,6 +96,10 @@ export function ViewerActionButton({
       {glassActive ? null : (
         <AppBlurView
           intensity={36}
+          // A viewer action button sits ON the photo, so it is a scrim, not chrome. Without the role
+          // Android's fallback took the 0.72-floor `chrome` path and painted rgba(28,28,32,0.799) —
+          // a near-black disc over the image instead of a darkening you can see through.
+          role="scrim"
           tint="dark"
           style={StyleSheet.absoluteFill}
         >

@@ -121,7 +121,7 @@ export default function ChatFontScreen() {
               <Feather name="x" size={18} color="#FFFFFF" />
             </NativeGlassView>
           ) : (
-            <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
+            <BlurView intensity={80} role="scrim" tint="dark" style={styles.headerPillInner}>
               <Feather name="x" size={18} color="#FFFFFF" />
             </BlurView>
           )}
@@ -131,13 +131,13 @@ export default function ChatFontScreen() {
             <View style={styles.headerTitlePill}>
               {glassActive ? (
                 <View style={[styles.headerTitleInner, { borderRadius: 18, overflow: 'hidden' }]}>
-                  <GlassBg borderRadius={18} colorScheme="dark" />
+                  <GlassBg borderRadius={18} role="scrim" colorScheme="dark" />
                   <RNText style={styles.headerTitleText} allowFontScaling={false} numberOfLines={1} ellipsizeMode="tail">
                     {t('chat_settings.font_family')}
                   </RNText>
                 </View>
               ) : (
-                <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
+                <BlurView intensity={80} role="scrim" tint="dark" style={styles.headerTitleInner}>
                   <RNText style={styles.headerTitleText} allowFontScaling={false} numberOfLines={1} ellipsizeMode="tail">
                     {t('chat_settings.font_family')}
                   </RNText>
@@ -154,7 +154,7 @@ export default function ChatFontScreen() {
               </RNText>
             </NativeGlassView>
           ) : (
-            <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
+            <BlurView intensity={80} role="scrim" tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
               <RNText style={styles.headerApplyText} allowFontScaling={false}>
                 {t('common.apply')}
               </RNText>
