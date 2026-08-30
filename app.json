@@ -121,9 +121,6 @@
       "expo-localization",
       "expo-notifications"
     ],
-    "experiments": {
-      "typedRoutes": true
-    },
     "extra": {
       "router": {
         "origin": false
@@ -134,6 +131,7 @@
     },
     "owner": "odserser",
     "experiments": {
+      "typedRoutes": true,
       "reactCompiler": true
     },
     "runtimeVersion": {
