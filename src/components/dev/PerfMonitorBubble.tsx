@@ -422,15 +422,43 @@ function PerfMonitorBubbleInner() {
   // the number is real, including a real 0. So an unmeasured thread is now EXCLUDED from the tint
   // rather than flattered by it, and shown as `--` instead of a fabricated rate.
   const uiMeasured = snap.uiSampleCount > 0;
+
+  // ── A FRAME RATE IS NOT RESPONSIVENESS, AND THE HEADLINE HAD TO STOP SAYING SO ──
+  //
+  // Reported, correctly: "it shows 60 and that does not mean the app is smooth". A device snapshot
+  // proves the point rather than contradicting it — `uiP1Min: 60`, `jankCount: 0` on every route, and
+  // in the same session `chat/[id]` with FIVE long tasks of 128-200 ms.
+  //
+  // Both numbers are true at once because they describe different threads. A long task blocks JS, and
+  // while JS is blocked: touches are not dispatched, scroll offsets are not applied, state does not
+  // commit, list windowing does not run. Meanwhile every native-driver and Reanimated animation keeps
+  // presenting frames on the UI thread at a genuine 60. So the app is visibly animating and completely
+  // unresponsive, and a frame-rate headline reports the half that looks fine.
+  //
+  // `worstLongMs` across routes is the number that tracks the felt stall, so that is the headline now.
+  // The two rates move to the small line. This is the third time this readout has been corrected and
+  // the reason is the same each time: it kept showing the metric that was easiest to collect instead
+  // of the one being asked about.
+  //
+  // Thresholds are Google's own long-task vocabulary rather than invented: 50 ms is the Long Tasks API
+  // definition of a long task, and RAIL puts the input-response budget at 100 ms. So under 50 is
+  // green, 50-100 amber, over 100 red — at which point a tap can visibly fail to register.
+  const worstLongMs = snap.hotspots.reduce((worst, h) => (h.worstLongMs > worst ? h.worstLongMs : worst), 0);
+  const blockTint =
+    worstLongMs > 100 ? '#ef4444' : worstLongMs >= 50 ? '#f59e0b' : '#22c55e';
+  // The frame-rate tint still decides the border, so a genuine rendering collapse is not hidden by a
+  // healthy long-task figure. An unmeasured UI thread goes slate rather than implying health.
   const tintInputs = uiMeasured ? [snap.jsFps, snap.uiFps] : [snap.jsFps];
   const minFps = Math.min(...tintInputs);
-  const tint = !uiMeasured
+  const fpsTint = !uiMeasured
     ? '#94a3b8' /* slate: the UI thread is unmeasured, do not imply health either way */
     : minFps >= 50
     ? '#22c55e' /* green */
     : minFps >= 30
     ? '#f59e0b' /* amber */
     : '#ef4444';
+  // Worst of the two, so the bubble cannot read healthy while either signal is bad.
+  const tint = worstLongMs > 100 || minFps < 30 ? '#ef4444' : blockTint === '#22c55e' ? fpsTint : blockTint;
 
   return (
     <>
@@ -460,11 +488,15 @@ function PerfMonitorBubbleInner() {
                 * and the JS loop rate moves to the small line with an explicit `js` suffix. `--`
                 * when the UI sampler has not reported, because an honest blank beats a plausible
                 * zero. */}
-              <Text style={[styles.fps, { color: tint }]} numberOfLines={1}>
-                {uiMeasured ? snap.uiFps : '--'}
+              {/* Headline: the worst long task, in milliseconds — how long JS was blocked, which is
+                  what "it lags" actually is. `0` means nothing over the detector's threshold was
+                  recorded, which is the honest way to say "responsive". The small line keeps both
+                  rates so a rendering problem is still one glance away. */}
+              <Text style={[styles.fps, { color: blockTint }]} numberOfLines={1}>
+                {worstLongMs > 0 ? `${worstLongMs}` : '0'}
               </Text>
               <Text style={styles.label} numberOfLines={1}>
-                {snap.jsFps || 0}js
+                ms · {uiMeasured ? snap.uiFps : '--'}/{snap.jsFps || 0}
               </Text>
             </View>
           </GestureDetector>

@@ -720,7 +720,19 @@ function fitChatImageBox(natW: number, natH: number): { w: number; h: number } {
 // dimensions once expo-image reports the decoded source size (onLoad) — and
 // remember them so every future open of this chat is jump-free. Own tiny
 // state → the memoized MessageBubble around it is untouched.
-function SingleChatImage({ uri, isVisible, onPress, cutout, uploading, reportDimsFor }: { uri: string; isVisible?: boolean; onPress: () => void; cutout?: boolean; uploading?: boolean; reportDimsFor?: string }) {
+/**
+ * `onDecoded` — fired once the image has actually loaded or failed.
+ *
+ * Exists so the bubble can release its decode slot on completion. `decodeGate`'s own documentation
+ * claims the slot is "released on unmount / recycle as well as on load", and the on-load half was
+ * never wired: the effect returned only its cleanup, so a granted GIF held its slot until the row
+ * recycled or until `SLOT_TIMEOUT_MS` (1200 ms) expired. That turned a gate whose stated design is
+ * "the fourth starts the instant one of the three finishes" into a 1200 ms wave scheduler — i.e. the
+ * timed pump behaviour the module explicitly says it must not become. It also let in-flight decodes
+ * exceed MAX_CONCURRENT whenever a wave overlapped a slow decode, which is how a snapshot showed
+ * `pendingDecodes: 6` against a cap of 3.
+ */
+function SingleChatImage({ uri, isVisible, onPress, cutout, uploading, reportDimsFor, onDecoded }: { uri: string; isVisible?: boolean; onPress: () => void; cutout?: boolean; uploading?: boolean; reportDimsFor?: string; onDecoded?: () => void }) {
   const theme = useTheme();
   // Seed from the persisted dimension cache so a previously-seen photo mounts
   // at the correct aspect-ratio box on the very first frame — this removes the
@@ -786,6 +798,11 @@ function SingleChatImage({ uri, isVisible, onPress, cutout, uploading, reportDim
    */
   const handleLoad = useCallback((e: any) => {
     setLoading(false);
+    // Hand the decode slot back the moment the bytes are actually decoded. See the note on
+    // `onDecoded` in this component's props, and the one at the `acquireDecodeSlot` call site: without
+    // this the gate released slots only on the 1200 ms watchdog, which turned a demand-driven gate
+    // into a 1200 ms wave scheduler — the exact timed behaviour the module says it exists to avoid.
+    onDecoded?.();
     if (seeded) return;
     const s = e?.source;
     if (!s?.width || !s?.height) return;
@@ -806,8 +823,10 @@ function SingleChatImage({ uri, isVisible, onPress, cutout, uploading, reportDim
     // `reportDimsFor` is the server uuid, passed only when the caller has one. The reporter buffers and
     // batches, so a scroll through a media-heavy history is one request rather than one per photo.
     if (reportDimsFor) reportImageDims(reportDimsFor, s.width, s.height);
-  }, [uri, seeded, setLoading, setSize, reportDimsFor]);
-  const handleError = useCallback(() => setLoading(false), [setLoading]);
+  }, [uri, seeded, setLoading, setSize, reportDimsFor, onDecoded]);
+  // A failed decode must release the slot too, or one broken URL holds a third of the pool until the
+  // watchdog fires.
+  const handleError = useCallback(() => { setLoading(false); onDecoded?.(); }, [setLoading, onDecoded]);
   return (
     <Pressable onPress={onPress}>
       {/* Fixed-size rounded container holds the image AND a centered loading
@@ -1138,13 +1157,41 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   //
   // `hasImages` for a non-GIF bubble, so nothing about the photo path changes.
   const [gifSlotGranted, setGifSlotGranted] = useState(!isGifBubble);
+  // ── THE ON-LOAD RELEASE WAS NEVER WIRED, AND THAT MADE THIS A TIMED PUMP ───
+  //
+  // The comment here used to say "Released on unmount / recycle AS WELL AS ON LOAD". Only the first
+  // half was true: the effect returned `release` and nothing else ever called it, so a granted GIF
+  // held its slot until its row recycled or until `SLOT_TIMEOUT_MS` (1200 ms) expired.
+  //
+  // That is not a small discrepancy, it inverts the module's entire justification. `decodeGate`'s
+  // header argues at length that it is legitimate BECAUSE it is demand-driven — "the fourth starts the
+  // instant a previous one finishes. Nothing waits on a clock" — as opposed to the deleted frame pumps
+  // which were timed. With no release on load, admissions arrived in 1200 ms waves. It WAS a clock,
+  // just a slower and less honest one than the pumps it replaced.
+  //
+  // It also broke the cap: the watchdog releases the slot while the holder is still decoding, so a
+  // wave overlapping a slow decode puts more than MAX_CONCURRENT decodes in flight. A device snapshot
+  // showed `pendingDecodes: 6` against a cap of 3.
+  //
+  // The canceller now lives in a ref and is invoked from the image's own load/error handler via
+  // `onDecoded`. Calling it twice is safe by construction (`acquireDecodeSlot` returns an idempotent
+  // `finish`), so the cleanup path is unchanged and a row recycled mid-decode still hands its slot on.
+  const gifSlotReleaseRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!isGifBubble || !hasImages) return;
     const release = acquireDecodeSlot(() => setGifSlotGranted(true));
-    // Released on unmount / recycle as well as on load, so a cell scrolled away mid-decode hands its
-    // slot to the next bubble instead of holding it until the safety timeout.
-    return release;
+    gifSlotReleaseRef.current = release;
+    return () => {
+      gifSlotReleaseRef.current = null;
+      release();
+    };
   }, [isGifBubble, hasImages]);
+  const releaseGifSlot = useCallback(() => {
+    const release = gifSlotReleaseRef.current;
+    if (!release) return;
+    gifSlotReleaseRef.current = null;
+    release();
+  }, []);
   const imgReveal = hasImages && gifSlotGranted;
 
   // ── THIS SCREEN HAD NO MOUNT INSTRUMENTATION AT ALL ───────────────────────
@@ -1499,6 +1546,9 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                       // `healPhotos` keys on. Drives the spinner, nothing else.
                       uploading={!message.imageUrls[0].startsWith('http')}
                       onPress={() => onImagePress(message.imageUrls!, 0, message)}
+                      // Releases this bubble's decode slot on load/error. A no-op for a photo bubble,
+                      // which never took one. See the note at `acquireDecodeSlot` above.
+                      onDecoded={releaseGifSlot}
                     />
                   ) : (
                     <Pressable onPress={() => onImagePress(message.imageUrls!, 0, message)}>
@@ -3482,9 +3532,26 @@ export default function ChatScreen() {
           if (persistTeardownPending) {
             persistTeardownPending = false;
             runPendingPersist();
-            // Leaving the chat is also a safe place to pay for the full write: the screen is
-            // already gone, so the blocked frame is not one the user is scrolling.
-            runPendingFullPersist();
+            // ── "A FRAME NOBODY IS LOOKING AT" WAS NOT TRUE ──────────────────
+            //
+            // This used to call `runPendingFullPersist()` synchronously, justified as: "the screen is
+            // already gone, so the blocked frame is not one the user is scrolling."
+            //
+            // The chat screen is gone. The frame is not free — it is the frame the MESSAGES TAB is
+            // entering on, and that tab is mounting its own list at the same time. A device snapshot
+            // shows exactly that collision: `chat.persist.fullMerge` inside a 122 ms long task billed
+            // to `(tabs)/messages`, on a route reporting `worstOpenFps: 18` and `worstMountMs: 212`.
+            // The write is a `kvGetJSONSync` parse of up to 1000 messages, a 1000-entry Map, a full
+            // array copy, the merge, then `JSON.stringify` plus an MMKV write — one uninterruptible
+            // task landing on the back-navigation frame.
+            //
+            // `flushPendingFullPersistSoon` is the same deferral this file already uses for the
+            // cross-conversation flush a few lines above, and its note gives the durability argument
+            // in full: the write was already sitting on a 120 s trailing debounce, so moving it by one
+            // macrotask NARROWS the window rather than widening it, and the two paths that exist
+            // because blocking is the point — the AppState `background`/`inactive` handler — are
+            // untouched and still synchronous. That handler is the one that runs before an OS kill.
+            flushPendingFullPersistSoon();
           }
         });
       };
