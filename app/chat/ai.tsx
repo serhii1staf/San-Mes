@@ -862,7 +862,7 @@ export default function AIChatScreen() {
         {isLoading ? (
           <View style={{ paddingBottom: 8 }}>
             <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
-              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
+              <BlurView intensity={80} role="scrim" tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
                 <ActivityIndicator size="small" color="#FFFFFF" />
                 <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>{t('ai_chat.thinking')}</Text>
               </BlurView>
@@ -908,7 +908,7 @@ export default function AIChatScreen() {
                   <Feather name="chevron-left" size={18} color="#FFFFFF" />
                 </NativeGlassView>
               ) : chromeReady ? (
-                <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+                <BlurView intensity={80} role="scrim" tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="chevron-left" size={18} color="#FFFFFF" />
                 </BlurView>
               ) : (

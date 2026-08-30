@@ -361,7 +361,7 @@ export default function MusicChatScreen() {
                   <Feather name="chevron-left" size={18} color="#FFFFFF" />
                 </NativeGlassView>
               ) : chromeReady ? (
-                <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+                <BlurView intensity={80} role="scrim" tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="chevron-left" size={18} color="#FFFFFF" />
                 </BlurView>
               ) : (
