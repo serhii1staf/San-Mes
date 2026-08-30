@@ -45,6 +45,7 @@ import { getComments, createComment, updateComment, deleteComment, isRepost, par
 import { generateClientMutationId, queueMutation } from '../../src/services/offlineQueue';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
+import { createGifVisTracker, type GifVisTracker } from '../../src/utils/gifVisTracker';
 import { playSendSound } from '../../src/utils/sounds';
 import { showToast } from '../../src/store/toastStore';
 import { useT } from '../../src/i18n/store';
@@ -224,13 +225,10 @@ function mergeCommentPages(prev: any[], page: any[]): any[] {
 //
 // `onLongPress` and `onReply` are stable callbacks from the parent, so when
 // the parent re-renders the row's props don't change and React.memo bails.
-type GifVisTracker = {
-  subscribeRow: (id: string, l: () => void) => () => void;
-  isActive: (id: string) => boolean;
-  update: (next: Set<string>) => void;
-  setScrolling: (b: boolean) => void;
-  setHasGif: (id: string, has: boolean) => void;
-};
+// The tracker type and its ~100-line implementation used to live here. Both moved to
+// `src/utils/gifVisTracker.ts` unchanged, because the profile screens need the identical behaviour
+// and `app/chat/[id].tsx` already had an equivalent copy — a third copy would have meant three
+// places to fix one bug. The reasoning that was written in this file travelled with the code.
 
 type CommentRowProps = {
   item: any;
@@ -695,121 +693,10 @@ export default function CommentsScreen() {
   // GIF rows subscribe + re-render when their state flips (text rows untouched,
   // scroll start hitch-free).
   const gifTrackerRef = useRef<GifVisTracker | null>(null);
-  if (!gifTrackerRef.current) {
-    let visibleSet = new Set<string>();
-    let ready = false;
-    let scrolling = false;
-    const gifIds = new Set<string>();
-    // Per-row listeners keyed by comment id. Keying by id (not one flat Set)
-    // lets the scroll-pause / staggered-resume pump notify ONLY the rows that
-    // change and release GIFs one at a time when the list settles.
-    const rowListeners = new Map<string, Set<() => void>>();
-    const notify = (id: string) => {
-      const s = rowListeners.get(id);
-      if (s) s.forEach((fn) => fn());
-    };
-    const notifyGifs = () => { gifIds.forEach((id) => notify(id)); };
-
-    // ── Staggered GIF resume (mirrors app/chat/[id].tsx visTracker) ───────
-    // Pausing GIFs while scrolling is cheap and correct. The trap is the
-    // RESUME: flipping every visible GIF back to autoplay on ONE frame
-    // restarts ~10 expo-image decodes at once → the decode storm / long-task
-    // the perf snapshot caught (10 giphy decodes inside an ~11 ms window). So
-    // when the list settles we HOLD every visible GIF and release ONE every
-    // RESUME_INTERVAL_MS, capped by GIF_ANIM_CAP, so resuming never lands a
-    // burst. A generation counter aborts an in-flight stagger the instant a
-    // new scroll begins.
-    const RESUME_INTERVAL_MS = 90;
-    // Telegram-style hard cap: only the first N visible GIFs animate; the rest
-    // show their static first frame until they scroll into the cap window.
-    // This is the decisive fix for the on-open storm — at most ~2 decode at
-    // once instead of the whole visible screenful.
-    const GIF_ANIM_CAP = 2;
-    const held = new Set<string>();
-    let resumeGen = 0;
-    let resumeTimer: ReturnType<typeof setTimeout> | null = null;
-    const clearResume = () => { if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; } };
-
-    gifTrackerRef.current = {
-      subscribeRow(id, l) {
-        let s = rowListeners.get(id);
-        if (!s) { s = new Set(); rowListeners.set(id, s); }
-        s.add(l);
-        return () => {
-          const set = rowListeners.get(id);
-          if (set) { set.delete(l); if (set.size === 0) rowListeners.delete(id); }
-        };
-      },
-      isActive(id) {
-        // `ready` gate (mirrors chat): nothing animates before the first
-        // viewability callback lands. The cap can't rank an empty viewable set,
-        // so on open EVERY GIF would otherwise read active and decode at once —
-        // exactly the storm. Hold them on their static frame until the viewable
-        // set is known (fires within a frame of layout), then the cap applies.
-        if (!ready) return false;
-        if (!visibleSet.has(id)) return false;
-        // Paused for the whole active scroll, then held until this row's
-        // staggered-resume turn after the scroll settles.
-        if (scrolling || held.has(id)) return false;
-        // Concurrency cap: visibleSet preserves viewable order (the viewability
-        // callback inserts top→bottom), so count GIF rows until we reach this
-        // one — only the first GIF_ANIM_CAP animate.
-        let rank = 0;
-        for (const vid of visibleSet) {
-          if (!gifIds.has(vid)) continue;
-          if (vid === id) return rank < GIF_ANIM_CAP;
-          rank++;
-          if (rank >= GIF_ANIM_CAP) break;
-        }
-        if (rank >= GIF_ANIM_CAP) return false;
-        return true;
-      },
-      update(next) {
-        if (ready && next.size === visibleSet.size) {
-          let same = true;
-          for (const id of next) if (!visibleSet.has(id)) { same = false; break; }
-          if (same) return;
-        }
-        visibleSet = next;
-        ready = true;
-        notifyGifs();
-      },
-      setScrolling(b) {
-        if (b === scrolling) return;
-        scrolling = b;
-        if (gifIds.size === 0) { clearResume(); held.clear(); return; }
-        if (b) {
-          // Scroll started → pause GIFs immediately (the `scrolling` flag does
-          // it). Drop any pending resume + holds and notify only the VISIBLE
-          // GIF rows so just they re-render to their static frame; off-screen
-          // rows keep an unchanged snapshot → no re-render → hitch-free start.
-          clearResume();
-          held.clear();
-          gifIds.forEach((gid) => { if (!ready || visibleSet.has(gid)) notify(gid); });
-        } else {
-          // Scroll settled → hold every visible GIF, then release ONE per
-          // RESUME_INTERVAL_MS. No notify on hold: the snapshot is already
-          // false from the scroll, so nothing re-renders until its release.
-          clearResume();
-          const pending = [...gifIds].filter((gid) => (!ready || visibleSet.has(gid)));
-          pending.forEach((gid) => held.add(gid));
-          const gen = ++resumeGen;
-          const step = () => {
-            if (gen !== resumeGen) return; // a new scroll superseded this stagger
-            const nextId = pending.shift();
-            if (nextId === undefined) { resumeTimer = null; return; }
-            held.delete(nextId);
-            notify(nextId);
-            resumeTimer = setTimeout(step, RESUME_INTERVAL_MS);
-          };
-          step();
-        }
-      },
-      setHasGif(id, has) {
-        if (has) gifIds.add(id); else { gifIds.delete(id); held.delete(id); }
-      },
-    };
-  }
+  if (!gifTrackerRef.current) gifTrackerRef.current = createGifVisTracker();
+  // Cancels a pending staggered resume on unmount. The inline version had no equivalent, so a
+  // screen closed mid-stagger left a setTimeout chain running for up to animCap x 90 ms.
+  useEffect(() => () => gifTrackerRef.current?.dispose(), []);
   const gifTracker = gifTrackerRef.current;
   const gifScrollIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Latch mirroring `revealScrollPaused`, so the pause is dispatched to React ONCE per

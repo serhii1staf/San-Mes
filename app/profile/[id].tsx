@@ -35,6 +35,7 @@ import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { FollowsListModal, FollowsListMode } from '../../src/components/profile/FollowsListModal';
 import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/ProfileReplyCard';
+import { createGifVisTracker, type GifVisTracker } from '../../src/utils/gifVisTracker';
 import { EditProfileTabModal } from '../../src/components/profile/EditProfileTabModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
@@ -1185,9 +1186,31 @@ export default function UserProfileScreen() {
   const listItemType = activeTab === 'replies' ? 'reply' : 'user-post';
   const getItemType = useCallback(() => listItemType, [listItemType]);
 
+  // ── REPLY-GIF ANIMATION GATE ───────────────────────────────────────────────
+  //
+  // A profile snapshot on a real device reported this route with `imgCount: 16`, `worstFps: 39` and
+  // `avgMountMs: 56`. A cheap mount next to a bad frame rate means the cost is continuous rather than
+  // a mount, and the continuous cost on a reply list is animated GIFs: an animated image decodes
+  // every frame on the UI thread for as long as its cell exists, including cells the list is merely
+  // retaining. `ProfileReplyCard` rendered the reply's own GIF with animation unconditionally.
+  //
+  // Same tracker the comments screen uses, now shared from `src/utils/gifVisTracker.ts`. It bounds
+  // animation to visible, settled rows and to two at a time, and staggers the resume so a settle does
+  // not restart every decode on one frame.
+  //
+  // Declared here, above `renderReplyItem`, because that callback closes over `gifTracker` — putting
+  // it next to the scroll handlers further down left it in the temporal dead zone.
+  const gifTrackerRef = useRef<GifVisTracker | null>(null);
+  if (!gifTrackerRef.current) gifTrackerRef.current = createGifVisTracker();
+  const gifTracker = gifTrackerRef.current;
+  useEffect(() => () => gifTrackerRef.current?.dispose(), []);
+
   const renderReplyItem = useCallback(
-    ({ item }: { item: any }) => <ProfileReplyCard reply={item as ProfileReply} />,
-    [],
+    ({ item }: { item: any }) => <ProfileReplyCard reply={item as ProfileReply} gifTracker={gifTracker} />,
+    // `gifTracker` is a ref's `.current`, created once for the screen, so this list stays effectively
+    // empty in practice. It is declared rather than omitted because an honest dep list is what keeps
+    // the React Compiler from memoising against a value it was not told about.
+    [gifTracker],
   );
 
   const renderLikedItem = useCallback(
@@ -1806,8 +1829,27 @@ export default function UserProfileScreen() {
     () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true, listener: onProfileScrollY }),
     [scrollY, onProfileScrollY],
   );
-  const handleScrollBeginDrag = useCallback(() => setScrollActive(true), []);
-  const handleScrollSettle = useCallback(() => setScrollActive(false), []);
+  const onRepliesViewable = useRef(({ viewableItems }: { viewableItems: any[] }) => {
+    // Insertion order matters: the tracker ranks GIFs by position in this set to apply its cap, and
+    // the viewability callback reports top-to-bottom.
+    const next = new Set<string>();
+    for (const v of viewableItems) {
+      const id = v?.item?.id;
+      if (id) next.add(id);
+    }
+    gifTrackerRef.current?.update(next);
+  }).current;
+  const repliesViewabilityConfig = useRef({ itemVisiblePercentThreshold: 35 }).current;
+  // Folded into the existing scroll-active handlers rather than added as new listeners, so this adds
+  // no extra scroll plumbing — `setScrolling` is a cheap flag flip that early-returns when unchanged.
+  const handleScrollBeginDrag = useCallback(() => {
+    setScrollActive(true);
+    gifTrackerRef.current?.setScrolling(true);
+  }, []);
+  const handleScrollSettle = useCallback(() => {
+    setScrollActive(false);
+    gifTrackerRef.current?.setScrolling(false);
+  }, []);
   // Was inline JSX on the list, so a new element every render.
   //
   // ── AND IT MUST NOT CLAIM "NO POSTS" WHILE THE MOUNT GATE IS SHUT ──────────
@@ -2154,6 +2196,11 @@ export default function UserProfileScreen() {
         }
         // Recycle pool per row shape — see the note where `getItemType` is defined.
         getItemType={getItemType}
+        // Feeds the reply-GIF animation gate. Both are `useRef(...).current`, so they are stable and
+        // do not make the list re-wire its handlers on render. The tracker ignores an unchanged
+        // viewable set, so a callback that fires without a real change costs one size compare.
+        onViewableItemsChanged={onRepliesViewable}
+        viewabilityConfig={repliesViewabilityConfig}
         // ── THE FLATLIST VIRTUALISATION KNOBS ARE GONE ──────────────────────────
         //
         // Removed: `initialNumToRender={3}`, `maxToRenderPerBatch={2}`, `windowSize={7}`,

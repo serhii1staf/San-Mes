@@ -1,4 +1,4 @@
-import React, { memo, useMemo } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -14,6 +14,7 @@ import { extractFirstUrl } from '../../services/linkPreview';
 import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
 import { parseGif } from '../../services/giphy';
 import { useT } from '../../i18n/store';
+import type { GifVisTracker } from '../../utils/gifVisTracker';
 
 // Profile "Replies" tab row.
 //
@@ -149,9 +150,25 @@ const styles = StyleSheet.create({
 
 interface ProfileReplyCardProps {
   reply: ProfileReply;
+  /**
+   * Visibility gate for the reply's own animated GIF.
+   *
+   * Optional so existing callers and tests keep working; when absent the GIF animates exactly as
+   * before. The comment below the GIF used to read "deliberately left animating — that one is the
+   * content", and that is right while the row is ON SCREEN. It is not right for a row the list is
+   * merely retaining: an animated GIF decodes every frame on the UI thread for as long as its cell
+   * exists, so a reply list retaining a screenful either side of the viewport was paying for three
+   * screenfuls of animation. A profile snapshot showed 16 images on the route and a worst frame rate
+   * of 39 while nothing was mounting (avg mount 56 ms), which is the signature of continuous work
+   * rather than a mount cost.
+   *
+   * Passing a tracker keeps the GIF animating when visible and settled, and holds it on its static
+   * first frame otherwise.
+   */
+  gifTracker?: GifVisTracker;
 }
 
-function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
+function ProfileReplyCardBase({ reply, gifTracker }: ProfileReplyCardProps) {
   const theme = useTheme();
   const t = useT();
 
@@ -181,6 +198,33 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
   // whose body is a GIF). Reuses the comments screen's `parseGif` so the
   // token contract stays in one place.
   const replyGifUrl = parseGif(getReplyBody(reply.content));
+
+  // ── ANIMATION GATE ────────────────────────────────────────────────────────
+  //
+  // `useSyncExternalStore` rather than state pushed down from the screen, because the screen
+  // re-rendering the whole list to flip one row's animation is the cost this is meant to avoid.
+  // Only rows that actually carry a GIF ever subscribe, so text-only replies pay nothing beyond one
+  // undefined check, and a scroll start re-renders only the visible GIF rows.
+  //
+  // The `|| null` on the tracker keeps the hooks unconditional (rules of hooks): the subscribe
+  // function is still created and still called, it just never registers a listener and the snapshot
+  // is a constant `true`, which is the pre-existing "always animate" behaviour.
+  const subscribeGif = useCallback(
+    (cb: () => void) => (gifTracker && replyGifUrl ? gifTracker.subscribeRow(reply.id, cb) : () => {}),
+    [gifTracker, reply.id, replyGifUrl],
+  );
+  const getGifSnapshot = useCallback(
+    () => (gifTracker && replyGifUrl ? gifTracker.isActive(reply.id) : true),
+    [gifTracker, reply.id, replyGifUrl],
+  );
+  const gifActive = useSyncExternalStore(subscribeGif, getGifSnapshot);
+  useEffect(() => {
+    if (!gifTracker) return;
+    // Registering only GIF-bearing rows is what keeps the tracker's notify fan-out proportional to
+    // the number of GIFs on screen instead of the number of rows retained.
+    gifTracker.setHasGif(reply.id, !!replyGifUrl);
+    return () => gifTracker.setHasGif(reply.id, false);
+  }, [gifTracker, reply.id, replyGifUrl]);
 
   // Image takes layout precedence — if the parent post has an image we
   // show that thumbnail and skip the (heavier) link preview, even when
@@ -295,7 +339,12 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
       {/* The user's reply: an actual GIF preview when the reply is a GIF
           (rendered via CachedImage, which proxies giphy/R2 URLs), otherwise
           the reply text. FormattedText so **bold**, *italic*, `code`, and
-          other markers render as styled text. */}
+          other markers render as styled text.
+
+          `autoplay={gifActive}` is the gate. Without a tracker `gifActive` is a constant true, so
+          this is byte-for-byte the old behaviour for any caller that does not pass one. With a
+          tracker the GIF animates while its row is visible, settled and inside the concurrency cap,
+          and otherwise sits on its static first frame instead of decoding every frame off-screen. */}
       <View style={styles.replyBody}>
         {replyGifUrl ? (
           <CachedImage
@@ -304,6 +353,7 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
             resizeMode="cover"
             proxyWidth={240}
             priority="low"
+            autoplay={gifActive}
           />
         ) : (
           <FormattedText style={{ fontSize: 13, lineHeight: 18 }}>
@@ -326,5 +376,9 @@ export const ProfileReplyCard = memo(
     prev.reply.parentSnippet === next.reply.parentSnippet &&
     prev.reply.parentImageUrl === next.reply.parentImageUrl &&
     prev.reply.parentImageCount === next.reply.parentImageCount &&
-    prev.reply.parentLinkUrl === next.reply.parentLinkUrl,
+    prev.reply.parentLinkUrl === next.reply.parentLinkUrl &&
+    // The tracker must be part of the comparison or a screen swapping it in would be swallowed by
+    // this memo and the gate would silently never attach. It is created once per screen in a ref, so
+    // in practice this compares equal on every scroll and costs one reference check.
+    prev.gifTracker === next.gifTracker,
 );
