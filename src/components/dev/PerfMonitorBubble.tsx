@@ -411,9 +411,26 @@ function PerfMonitorBubbleInner() {
 
   // Colour-code by the worse of the two streams so a UI-thread stutter is
   // just as visible as a JS-thread stutter.
-  const minFps = Math.min(snap.jsFps || 60, snap.uiFps || 60);
-  const tint =
-    minFps >= 50 ? '#22c55e' /* green */ : minFps >= 30 ? '#f59e0b' /* amber */ : '#ef4444';
+  //
+  // This was `Math.min(snap.jsFps || 60, snap.uiFps || 60)`. The `|| 60` reads "if we have no
+  // number, assume a perfect one", which is the single most misleading default this file could
+  // have picked: the UI sampler was dead for the entire session (see the `useFrameCallback` note
+  // above), so `snap.uiFps` was permanently 0, permanently substituted with 60, and the bubble
+  // stayed green while the thread it describes was never once measured.
+  //
+  // `uiSampleCount` is the discriminator — 0 samples means no instrument, any other value means
+  // the number is real, including a real 0. So an unmeasured thread is now EXCLUDED from the tint
+  // rather than flattered by it, and shown as `--` instead of a fabricated rate.
+  const uiMeasured = snap.uiSampleCount > 0;
+  const tintInputs = uiMeasured ? [snap.jsFps, snap.uiFps] : [snap.jsFps];
+  const minFps = Math.min(...tintInputs);
+  const tint = !uiMeasured
+    ? '#94a3b8' /* slate: the UI thread is unmeasured, do not imply health either way */
+    : minFps >= 50
+    ? '#22c55e' /* green */
+    : minFps >= 30
+    ? '#f59e0b' /* amber */
+    : '#ef4444';
 
   return (
     <>
@@ -428,11 +445,26 @@ function PerfMonitorBubbleInner() {
         <GestureHandlerRootView style={styles.gestureRoot}>
           <GestureDetector gesture={composedGesture}>
             <View style={[styles.bubble, { borderColor: tint, shadowColor: tint }]}>
+              {/* The two numbers swapped places, deliberately.
+                *
+                * The big number used to be `jsFps`, and `jsFps` is NOT a frame rate. It is how many
+                * times per second a one-shot 1 ms timer loop completes (#212 established this from
+                * `node_modules/react-native-reanimated`-adjacent RN source:
+                * `Libraries/Core/Timers/JSTimers.js` — `requestAnimationFrame` there is a 1 ms
+                * timer, not a vsync callback). Its ceiling happens to sit near 60 on an unloaded
+                * thread, which is exactly what makes it treacherous: it LOOKS like fps, so a
+                * reading of 40 gets read as "20 dropped frames" when it actually means "the JS
+                * thread was busy", possibly with every single frame presented on time.
+                *
+                * So the headline is now the UI thread — real frames, the thing the eye can verify —
+                * and the JS loop rate moves to the small line with an explicit `js` suffix. `--`
+                * when the UI sampler has not reported, because an honest blank beats a plausible
+                * zero. */}
               <Text style={[styles.fps, { color: tint }]} numberOfLines={1}>
-                {snap.jsFps || 0}
+                {uiMeasured ? snap.uiFps : '--'}
               </Text>
               <Text style={styles.label} numberOfLines={1}>
-                {snap.uiFps || 0}ui
+                {snap.jsFps || 0}js
               </Text>
             </View>
           </GestureDetector>

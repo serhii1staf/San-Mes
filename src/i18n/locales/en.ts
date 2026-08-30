@@ -1050,6 +1050,12 @@ const en: Record<string, string> = {
   'perf.js_thread': 'JS thread',
   'perf.ui_thread': 'UI thread',
   'perf.min_5s': 'min 5s',
+  // "loop Hz" rather than "fps": the JS gauge counts completions of a 1 ms timer loop, which is a
+  // busyness signal for the JS thread and not a count of presented frames.
+  'perf.loop_hz': 'loop Hz',
+  // Shown instead of a frame rate when `uiSampleCount` is 0, so a dead sampler is distinguishable
+  // from a genuine 0 fps.
+  'perf.no_samples': 'no samples',
   'perf.settings': 'Settings',
   'perf.bubble_enabled': 'Show bubble',
   'perf.clear_log': 'Clear log',

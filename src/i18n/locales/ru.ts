@@ -1064,6 +1064,8 @@ const ru: Record<string, string> = {
   'perf.js_thread': 'JS-поток',
   'perf.ui_thread': 'UI-поток',
   'perf.min_5s': 'мин. 5 с',
+  'perf.loop_hz': 'цикл, Гц',
+  'perf.no_samples': 'нет данных',
   'perf.settings': 'Настройки',
   'perf.bubble_enabled': 'Показывать кнопку',
   'perf.clear_log': 'Очистить лог',
