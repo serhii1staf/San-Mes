@@ -20,6 +20,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/ProfileReplyCard';
+import { createGifVisTracker, type GifVisTracker } from '../../src/utils/gifVisTracker';
 import { EditProfileTabModal } from '../../src/components/profile/EditProfileTabModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { extractFirstUrl } from '../../src/services/linkPreview';
@@ -937,9 +938,33 @@ export default function ProfileScreen() {
     [postEmoji, handlePostLongPress, handlePostImagePress],
   );
 
+  // ── REPLY-GIF ANIMATION GATE ───────────────────────────────────────────────
+  //
+  // See the longer note on the other-user profile screen. Short version: an animated GIF decodes
+  // every frame on the UI thread for as long as its cell exists, retained-but-off-screen cells
+  // included, and `ProfileReplyCard` animated the reply's GIF unconditionally. The shared tracker
+  // bounds that to the visible, settled rows, two at a time, with a staggered resume.
+  //
+  // Declared above `renderReplyItem` because that callback closes over it.
+  const gifTrackerRef = useRef<GifVisTracker | null>(null);
+  if (!gifTrackerRef.current) gifTrackerRef.current = createGifVisTracker();
+  const gifTracker = gifTrackerRef.current;
+  useEffect(() => () => gifTrackerRef.current?.dispose(), []);
+  const onRepliesViewable = useRef(({ viewableItems }: { viewableItems: any[] }) => {
+    // Insertion order is load-bearing: the tracker ranks GIFs by position in this set to apply its
+    // concurrency cap, and viewability reports top-to-bottom.
+    const next = new Set<string>();
+    for (const v of viewableItems) {
+      const id = v?.item?.id;
+      if (id) next.add(id);
+    }
+    gifTrackerRef.current?.update(next);
+  }).current;
+  const repliesViewabilityConfig = useRef({ itemVisiblePercentThreshold: 35 }).current;
+
   const renderReplyItem = useCallback(
-    ({ item }: { item: ProfileReply }) => <ProfileReplyCard reply={item} />,
-    [],
+    ({ item }: { item: ProfileReply }) => <ProfileReplyCard reply={item} gifTracker={gifTracker} />,
+    [gifTracker],
   );
 
   const keyExtractorReply = useCallback((item: ProfileReply) => item.id, []);
@@ -1485,8 +1510,16 @@ export default function ProfileScreen() {
   // identities stable and present means the ScrollView's event configuration does not change, and
   // when the theme layers are switched back on the pause can be re-implemented from a Reanimated
   // shared value instead of React state.
-  const handleScrollBeginDrag = useCallback(() => {}, []);
-  const handleScrollSettle = useCallback(() => {}, []);
+  // They are no longer no-ops. They now drive the reply-GIF gate, which is the kind of consumer the
+  // note above anticipated: the tracker is an external store that notifies only the GIF rows whose
+  // answer changed, so pausing on scroll costs no React state and no whole-list re-render — the exact
+  // problem that made the previous `scrollActive` version pure waste.
+  const handleScrollBeginDrag = useCallback(() => {
+    gifTrackerRef.current?.setScrolling(true);
+  }, []);
+  const handleScrollSettle = useCallback(() => {
+    gifTrackerRef.current?.setScrolling(false);
+  }, []);
   // ── DO NOT CLAIM "NO POSTS" WHILE THE MOUNT GATE IS SHUT ──────────────────
   //
   // Reported as the profile "loading wrong / lagging" even though the device was
@@ -1813,6 +1846,10 @@ export default function ProfileScreen() {
         }
         // Recycle pool per row shape — see the note where `getItemType` is defined.
         getItemType={getItemType}
+        // Feeds the reply-GIF animation gate. Both are `useRef(...).current`, so the list does not
+        // re-wire its handlers on render, and an unchanged viewable set is discarded by the tracker.
+        onViewableItemsChanged={onRepliesViewable}
+        viewabilityConfig={repliesViewabilityConfig}
         // ── THE FLATLIST VIRTUALISATION KNOBS ARE GONE ──────────────────────────
         //
         // Removed: `initialNumToRender={2}`, `maxToRenderPerBatch={2}`, `windowSize={7}`,
