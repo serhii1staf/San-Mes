@@ -32,22 +32,38 @@
 // That distinction is the whole justification. If this ever reads as staggering, it is wrong and
 // should be removed rather than tuned.
 //
-// ── WHY IT ONLY GATES GIFS ──────────────────────────────────────────────────
+// ── IT USED TO GATE ONLY GIFS. THAT PREMISE WAS MEASURED AND FOUND FALSE ────
 //
-// A static photo's decode is cheap and cached after the first one; the marks above are all giphy
-// hosts. `expo-image` already bounds its own network and decode concurrency internally on
-// SDWebImage / Glide, but an ANIMATED image is decoded frame-by-frame by a different path, and the
-// first-frame cost is what lands in a burst. Gating photos too would add a queue in front of work
-// that is already fast, which is how the pumps became a regression.
+// This section used to read: "A static photo's decode is cheap and cached after the first one …
+// Gating photos too would add a queue in front of work that is already fast."
+//
+// A later device snapshot contradicts both clauses on the same screen. Static photo decodes:
+// `pub-…r2.dev` at 357, 390, 394 and 514 ms, `tr.rbxcdn.com` at 389 and 390 ms. Not cheap. And "cached
+// after the first one" conflated two caches — the app's own dimension cache is MMKV and survives
+// relaunch, expo-image's BITMAP cache does not, so after a cold start a photo the user has seen many
+// times still costs a full decode. The chat bubble had a `singleImgKnown` fast path built on exactly
+// that conflation, and it let eleven media rows decode on one commit: `MessageBubble.media x11` at
+// 297 ms, inside a 462 ms long task, with 23 decodes in flight against a cap of 3.
+//
+// So the gate now covers every media bubble, not just animated ones. `expo-image` does bound its own
+// concurrency on SDWebImage / Glide, but that bound is per-loader and generous, and it does not know
+// that the JS thread is simultaneously committing eleven rows of gesture handlers and Reanimated
+// views. This gate is about the COMMIT, which is the part no image library can see.
 
 /**
  * How many gated decodes may be in flight.
  *
- * Three, not one: a single slot is a serial queue, which IS a pump by another name and would
- * reproduce the visible one-at-a-time arrival. Three keeps several images landing together — so a
- * screenful still fills in a couple of waves — while cutting peak concurrency from ten to three.
+ * Not one: a single slot is a serial queue, which IS a pump by another name and would reproduce the
+ * one-at-a-time arrival the deleted frame pumps were removed for.
+ *
+ * Four rather than the original three, because the constant's scope widened. Three was chosen when
+ * only animated GIFs were gated — a small subset of a screenful. Now that every media bubble queues
+ * here, three is tight enough to be visible on a media-dense chat, while the measured damage came from
+ * eight-to-eleven at once (decodes stretching to 533 ms purely from contention). Four keeps a
+ * screenful arriving in two or three waves as fast as decodes actually complete, with no timer
+ * anywhere in the path.
  */
-const MAX_CONCURRENT = 3;
+const MAX_CONCURRENT = 4;
 
 /**
  * Ceiling on how long one holder may occupy a slot.

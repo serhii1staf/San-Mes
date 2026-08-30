@@ -1155,8 +1155,6 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // Photos are deliberately not gated — their decode is cheap and cached after the first, and
   // putting a queue in front of already-fast work is exactly how the pumps became a regression.
   //
-  // `hasImages` for a non-GIF bubble, so nothing about the photo path changes.
-  const [gifSlotGranted, setGifSlotGranted] = useState(!isGifBubble);
   // ── THE ON-LOAD RELEASE WAS NEVER WIRED, AND THAT MADE THIS A TIMED PUMP ───
   //
   // The comment here used to say "Released on unmount / recycle AS WELL AS ON LOAD". Only the first
@@ -1176,23 +1174,68 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // The canceller now lives in a ref and is invoked from the image's own load/error handler via
   // `onDecoded`. Calling it twice is safe by construction (`acquireDecodeSlot` returns an idempotent
   // `finish`), so the cleanup path is unchanged and a row recycled mid-decode still hands its slot on.
-  const gifSlotReleaseRef = useRef<(() => void) | null>(null);
+  // ── I MADE THIS WORSE, AND THIS IS THE CORRECTION ──────────────────────────
+  //
+  // Releasing the slot on load was right in isolation and wrong as a lone change. The 1200 ms hold it
+  // removed was, by accident, the only thing throttling admissions. Two consecutive device snapshots,
+  // before and after:
+  //
+  //   before   5 long tasks, worst 200 ms, jankCount 2,  pendingDecodes 6
+  //   after   14 long tasks, worst 462 ms, jankCount 11, pendingDecodes 23, worstFps 3
+  //
+  // (The second chat was media-heavier — imgCount 29 against 14 — so those are not a controlled
+  // comparison. The direction is not in doubt though, and `pendingDecodes: 23` against a cap of 3 is
+  // not explainable by test conditions.)
+  //
+  // Two holes let it happen, and neither is new — removing the accidental throttle merely exposed
+  // them:
+  //
+  //   1. THE "PHOTOS ARE CHEAP" PREMISE IS FALSE ON THIS DEVICE. `decodeGate`'s header argues photos
+  //      need no gate because "a static photo's decode is cheap and cached after the first one". The
+  //      same snapshot has `pub-…r2.dev` decoding at 357, 390, 394 and 514 ms and `tr.rbxcdn.com` at
+  //      389/390. Photos were never gated, so of 23 decodes in flight the gate could see only the GIFs.
+  //
+  //   2. `singleImgKnown` BYPASSED THE GATE ENTIRELY. It required `getImageDims(url)` — "we have seen
+  //      this photo before" — and treated that as "the bitmap is cached". The dimension cache is MMKV
+  //      and survives relaunch; the bitmap cache does not. So on a cold open every previously-seen
+  //      photo skipped the gate and paid a full decode, which is exactly the burst above.
+  //
+  // So the gate is now the single authority for revealing ANY media bubble, and `MAX_CONCURRENT`
+  // finally means what it says. This is not a return to the deleted frame pumps: the first three are
+  // still granted synchronously with no timer, and the fourth starts when one of the three finishes —
+  // now genuinely, because the release is wired to `onLoad`. Under three media rows it stays inert.
+  //
+  // The `singleImgKnown` fast path is gone from the reveal decision. Its purpose — a known photo should
+  // appear instantly rather than flashing a placeholder — is preserved by the gate's synchronous grant
+  // whenever a slot is free, which is the common case. What it no longer does is let eleven "known"
+  // photos decode on one commit.
+  const [imgSlotGranted, setImgSlotGranted] = useState(false);
+  const imgSlotReleaseRef = useRef<(() => void) | null>(null);
+  // Keyed on the FIRST URL, not on `[isGifBubble, hasImages]`.
+  //
+  // That old dep list is constant for a given message, and FlashList recycles a row by re-rendering it
+  // with a different message rather than unmounting it. A media row recycled onto another media row
+  // therefore never re-ran this effect: the new image inherited the previous message's granted flag and
+  // mounted ungated, for the rest of the session. Keying on the url makes recycling re-arm, which is
+  // the same reason `SingleChatImage` uses `useRecyclingState` for its box.
+  const firstImgUrl = hasImages ? message.imageUrls![0] : null;
   useEffect(() => {
-    if (!isGifBubble || !hasImages) return;
-    const release = acquireDecodeSlot(() => setGifSlotGranted(true));
-    gifSlotReleaseRef.current = release;
+    if (!firstImgUrl) return;
+    setImgSlotGranted(false);
+    const release = acquireDecodeSlot(() => setImgSlotGranted(true));
+    imgSlotReleaseRef.current = release;
     return () => {
-      gifSlotReleaseRef.current = null;
+      imgSlotReleaseRef.current = null;
       release();
     };
-  }, [isGifBubble, hasImages]);
-  const releaseGifSlot = useCallback(() => {
-    const release = gifSlotReleaseRef.current;
+  }, [firstImgUrl]);
+  const releaseImgSlot = useCallback(() => {
+    const release = imgSlotReleaseRef.current;
     if (!release) return;
-    gifSlotReleaseRef.current = null;
+    imgSlotReleaseRef.current = null;
     release();
   }, []);
-  const imgReveal = hasImages && gifSlotGranted;
+  const imgReveal = hasImages && imgSlotGranted;
 
   // ── THIS SCREEN HAD NO MOUNT INSTRUMENTATION AT ALL ───────────────────────
   //
@@ -1242,40 +1285,24 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     perfMonitor.markBatchCommit('MessageBubble.media');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled, hasImages, imgReveal]);
-  // Photos we've already seen are on disk (their dimensions are remembered):
-  // render them IMMEDIATELY instead of routing through the placeholder →
-  // staggered-reveal path. That deferral exists ONLY to avoid a decode STORM
-  // when a chat full of FRESH images opens; for an already-cached image it just
-  // produced a dark placeholder → spinner → image flash on every single open
-  // (the "photos reload as black images every time I reopen the chat" report).
-  // First-time images keep the staggered path so a fresh GIF-heavy chat still
-  // doesn't decode-storm the open frame.
+  // ── `singleImgKnown` IS GONE ────────────────────────────────────────────────
   //
-  // GIFs are DELIBERATELY excluded from this fast path (`!isGifBubble`). A
-  // static photo's bytes+bitmap are cached after the first decode, so a known
-  // photo is genuinely cheap to re-mount. An animated GIF is NOT: expo-image
-  // re-decodes the first frame (~40-74 ms each on a weak device) on every fresh
-  // mount even when the bytes are on disk and the dimensions are remembered.
-  // `getImageDims` persists across launches (MMKV), so on RE-open of a GIF-heavy
-  // chat every GIF satisfied `singleImgKnown` and mounted its CachedImage on the
-  // SAME frame — exactly the ~10-11 simultaneous Giphy decodes / 125-134 ms long
-  // task the perf monitor caught right after navigation. Forcing GIFs to always
-  // honour `gifReveal` routes them through the wider-spaced GIF reveal pump
-  // (≈90 ms apart, ~2 concurrent) so the first-frame decodes cascade across
-  // frames instead of bursting. The placeholder skeleton below is sized to the
-  // remembered dims, so the Skeleton → CachedImage swap is layout-identical
-  // (no jump). This mirrors the comments screen, which always gates GIF reveal.
+  // It was a fast path that rendered a photo immediately when `getImageDims(url)` returned a value,
+  // on the reasoning that "a static photo's bytes+bitmap are cached after the first decode, so a
+  // known photo is genuinely cheap to re-mount".
   //
-  // LOCAL (`file://`) images are ALSO excluded from this fast path (the
-  // `.startsWith('http')` test below): pickImages stamps their dimensions the
-  // moment they're picked, so a rapid photo-send burst would otherwise have
-  // every fresh local bubble satisfy `singleImgKnown` and decode its full
-  // bitmap on the SAME mount frame — the decode storm behind the FPS crash.
-  // Forcing local images through `imgReveal` (the one-per-frame photo pump)
-  // spreads those decodes across frames; they still appear promptly (correctly-
-  // sized skeleton → photo, no jump), just not all on one frame. Once uploaded,
-  // the bubble's url becomes http and re-mounts cached → instant, as before.
-  const singleImgKnown = hasImages && message.imageUrls!.length === 1 && !isGifBubble && message.imageUrls![0].startsWith('http') && !!getImageDims(message.imageUrls![0]);
+  // The two halves of that sentence are backed by DIFFERENT caches with different lifetimes.
+  // `getImageDims` is MMKV and survives relaunch; expo-image's bitmap cache does not. So after a cold
+  // start every photo the user had ever seen satisfied this test and mounted ungated, paying a full
+  // decode. The device snapshot has the receipts: `pub-...r2.dev` at 357/390/394/514 ms and
+  // `tr.rbxcdn.com` at 389/390 ms, eleven media rows in one commit (`MessageBubble.media x11`,
+  // 297 ms), inside a 462 ms long task, with `pendingDecodes: 23` against a gate cap of 3.
+  //
+  // The old note also worried, correctly, about GIFs and local `file://` images slipping through, and
+  // excluded them one predicate at a time. That accretion is the tell: the condition was a list of
+  // exceptions to a premise that did not hold. Everything now goes through `imgReveal`, which grants
+  // synchronously while slots are free — so the instant-appearance this existed to protect is kept for
+  // the ordinary case, and only a burst is made to queue.
 
   // `Pressable.onPress` receives a gesture event, not the message — bind it here
   // so the button can stay a plain onPress while the screen's handler keeps
@@ -1529,9 +1556,16 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                   // navigation frame mounts only text/layout — never a burst of
                   // synchronous image decodes. The placeholder matches
                   // `SingleChatImage`'s initial square so the list doesn't jump
-                  // when the real image swaps in. `imgReveal` adds a frame-paced
-                  // stagger so multiple image bubbles don't all decode at once.
-                  imgReveal || singleImgKnown ? (
+                  // when the real image swaps in.
+                  //
+                  // `|| singleImgKnown` is gone. It made "we remember this photo's dimensions" mean
+                  // "its bitmap is cached", and those are different caches with different lifetimes —
+                  // the dimension cache is MMKV and survives relaunch, the bitmap cache does not. So on
+                  // a cold open every previously-seen photo skipped the gate and paid a full decode:
+                  // eleven of them on one commit, inside a 462 ms long task, with 23 decodes in flight.
+                  // `imgReveal` alone is the gate now, and it grants synchronously whenever a slot is
+                  // free, which is what keeps a known photo appearing immediately in the ordinary case.
+                  imgReveal ? (
                     <SingleChatImage
                       uri={message.imageUrls[0]}
                       isVisible={isVisible}
@@ -1548,7 +1582,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                       onPress={() => onImagePress(message.imageUrls!, 0, message)}
                       // Releases this bubble's decode slot on load/error. A no-op for a photo bubble,
                       // which never took one. See the note at `acquireDecodeSlot` above.
-                      onDecoded={releaseGifSlot}
+                      onDecoded={releaseImgSlot}
                     />
                   ) : (
                     <Pressable onPress={() => onImagePress(message.imageUrls!, 0, message)}>
@@ -1577,7 +1611,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 ) : (
                   message.imageUrls.map((uri, idx) => (
                     <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx, message)}>
-                      {imgReveal || (!isGifBubble && uri.startsWith('http') && getImageDims(uri)) ? (
+                      {/* Same removal as the single-image branch above: the `getImageDims(uri)` escape
+                          hatch treated a remembered SIZE as a cached BITMAP. In a multi-image bubble it
+                          was worse, because it let every tile in the grid through at once. */}
+                      {imgReveal ? (
                         <CachedImage
                           uri={uri}
                           style={bubbleStyles.imageMulti}
