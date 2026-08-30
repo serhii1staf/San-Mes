@@ -3736,10 +3736,17 @@ export default function ChatScreen() {
   //
   // Null when there is no banner, so every call site falls back to its existing opaque style and the
   // no-banner header is byte-for-byte what it was.
+  // Applied to the NAME PILL ONLY, because that is the only pill with an image inside it now. The
+  // first version also applied it to the back pill and the avatar circle, which made sense while a
+  // photo spanned the whole header and makes none now: over the ordinary background those two should
+  // stay exactly as they always were.
+  //
+  // `overflow: 'hidden'` is what clips the absolutely-positioned banner to the capsule, so the image
+  // takes the pill's radius for free rather than needing a second rounded wrapper.
   const onBannerPillStyle = useMemo(
     () =>
       peerBannerUrl
-        ? { backgroundColor: 'rgba(0,0,0,0.34)', borderColor: 'rgba(255,255,255,0.22)' }
+        ? { borderColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' as const }
         : null,
     [peerBannerUrl],
   );
@@ -3747,12 +3754,23 @@ export default function ChatScreen() {
   // unreadable in light mode, and the whole point of the scrim is that it darkens regardless of theme.
   const onBannerTextColor = peerBannerUrl ? '#FFFFFF' : theme.colors.text.primary;
 
-  const peerAccent = useMemo(() => {
-    const themeId = (profileData as any)?.theme_id || (cachedProfile as any)?.theme_id || null;
-    // `resolveProfileTheme` never throws and never returns undefined — it falls back to the default
-    // theme for an unknown or null id, which is why there is no guard here.
-    return themeId ? resolveProfileTheme(themeId).palette.accent : theme.colors.accent.primary;
-  }, [profileData, cachedProfile, theme.colors.accent.primary]);
+  const peerThemeId = (profileData as any)?.theme_id || (cachedProfile as any)?.theme_id || null;
+  const peerAccent = useMemo(
+    () =>
+      // `resolveProfileTheme` never throws and never returns undefined — it falls back to the default
+      // theme for an unknown or null id, which is why there is no guard here.
+      peerThemeId ? resolveProfileTheme(peerThemeId).palette.accent : theme.colors.accent.primary,
+    [peerThemeId, theme.colors.accent.primary],
+  );
+  /**
+   * Has this peer personalised anything the header can show?
+   *
+   * Gates the accent ring on the avatar. Without it, EVERY conversation would get a ring in the app's
+   * own accent — which is not identity, it is decoration applied uniformly, and it would make the
+   * chats of people who set nothing look deliberately styled. A ring that means "this is theirs" has
+   * to be absent when there is nothing of theirs to show.
+   */
+  const peerHasIdentity = !!peerThemeId || !!peerBannerUrl;
 
   // ── Canonical conversation reconciliation (Bug 3) ─────────────────────
   // A chat opened from a profile carries the OTHER user's id as the route
@@ -6957,90 +6975,24 @@ export default function ChatScreen() {
             Height is UNCHANGED (`headerGradientHeight`). "Не слишком большое" was explicit, and a
             taller header would also eat transcript rows, which is the mistake the composer scrim
             already made once and had to walk back. */}
-        {peerBannerUrl ? (
-          <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden' }]}>
-            <CachedImage
-              uri={peerBannerUrl}
-              // ── EXPLICIT proxyWidth, BECAUSE absoluteFill HAS NO NUMERIC WIDTH ──
-              //
-              // The first version of this passed only `style={StyleSheet.absoluteFill}` and relied on
-              // `CachedImage`'s `styleW` fallback to size the proxy request. `absoluteFill` is
-              // `{position,top,left,right,bottom}` — there is no `width` in it, so nothing could be
-              // derived and the banner was fetched at whatever the proxy does with no width. Reported
-              // immediately: "изображение должно быть в хорошем качестве". Correct, and this is why.
-              //
-              // `SCREEN_WIDTH` is the same value `app/(tabs)/profile.tsx` passes for its own banner,
-              // and that matters beyond sharpness: the proxy width is part of the URL and the URL is
-              // expo-image's cache key, so asking at the SAME width means the bytes the profile
-              // screen already warmed are reused here instead of being re-fetched at a second size.
-              proxyWidth={SCREEN_WIDTH}
-              style={StyleSheet.absoluteFill as any}
-              resizeMode="cover"
-              // Behind the transcript's own images in the queue: the band is decoration, a message
-              // photo is content.
-              priority="low"
-              // An animated banner would decode a frame forever behind chrome nobody is looking at —
-              // the same continuous UI-thread cost already fixed in the profile grids.
-              autoplay={false}
-            />
-            {/* ── A LEGIBILITY SCRIM, NOT THE BACKGROUND RAMP ──────────────────────
-                The first version put the banner UNDER `topSurfaceScrimColors(bgColor)`, which is a
-                ramp built FROM THE CHAT BACKGROUND COLOUR. Its entire job is to erase what is beneath
-                it so the transcript dissolves into the chrome — so it erased the banner too, and the
-                result was the muddy smear that got reported as "непонятно что случилось".
+        {/* ── THE FULL-WIDTH BANNER STRIP IS GONE ─────────────────────────────────
+            Two rounds of it were rejected, and the second report says exactly why: "не хотел бы,
+            чтобы он просто был сверху" — a photo band spanning the header is a photo band, however
+            carefully its scrim is tuned. Tuning the gradient was answering the wrong question.
+            What was asked for instead: something that INTERACTS with the name and the emoji,
+            compact, minimal, convenient.
 
-                Over imagery the scrim has to do the opposite job: darken just enough that white text
-                and the pills hold contrast, while leaving the picture visible. So this is a
-                black-alpha ramp, strongest at the very top where the status bar and the controls sit,
-                clearing by 70% down the band.
-
-                The background-colour ramp is still applied below, but only across the BOTTOM edge —
-                see the note on it. That way the banner still melts into the transcript instead of
-                ending on a hard line, without being wiped out across its whole height. */}
-            <LinearGradient
-              pointerEvents="none"
-              colors={['rgba(0,0,0,0.55)', 'rgba(0,0,0,0.28)', 'rgba(0,0,0,0.0)']}
-              locations={[0, 0.45, 1]}
-              style={StyleSheet.absoluteFill}
-            />
-          </View>
-        ) : (
-          // No banner → the peer's theme accent, so the header still belongs to the person you are
-          // talking to. Deliberately not a flat grey: a hue carries identity, an absence does not.
-          // Ends on a fully transparent stop of the same colour so it dissolves into the scrim
-          // rather than stopping on a visible edge.
-          <LinearGradient
-            pointerEvents="none"
-            colors={[peerAccent + '3D', peerAccent + '14', peerAccent + '00']}
-            locations={[0, 0.6, 1]}
-            style={StyleSheet.absoluteFill}
-          />
-        )}
-        {/* ── THE BACKGROUND RAMP IS NOW CONDITIONAL ──────────────────────────────
-            Without a banner this is unchanged: the full-height `topSurfaceScrimColors(bgColor)` ramp
-            that has always dissolved the chrome into the transcript.
-
-            WITH a banner it is confined to the BOTTOM THIRD. Applied full-height it wiped the picture
-            out — that ramp is made of the chat background colour and erasing what is under it is
-            precisely its purpose. Confined to the bottom edge it does the one part still needed: the
-            banner fades into the first messages instead of ending on a hard horizontal line, while
-            the upper two thirds stay a visible photo. Legibility up there is handled by the black
-            ramp inside the banner layer above. */}
-        {peerBannerUrl ? (
-          <LinearGradient
-            pointerEvents="none"
-            colors={[bgColor + '00', bgColor + '99', bgColor]}
-            locations={[0, 0.72, 1]}
-            style={StyleSheet.absoluteFill}
-          />
-        ) : (
-          <LinearGradient
-            pointerEvents="none"
-            colors={topSurfaceScrimColors(bgColor)}
-            locations={SCRIM_LOCATIONS}
-            style={StyleSheet.absoluteFill}
-          />
-        )}
+            So the banner moved INTO the name pill (see `headerPill` below) and the header goes back
+            to its original single scrim ramp, unchanged. That also removes a screen-width image from
+            the chat-open path, which is the path this whole session has been trying to make cheaper —
+            the pill's copy is ~200 pt wide instead of ~1080, so it is roughly a thirtieth of the
+            pixels to decode. */}
+        <LinearGradient
+          pointerEvents="none"
+          colors={topSurfaceScrimColors(bgColor)}
+          locations={SCRIM_LOCATIONS}
+          style={StyleSheet.absoluteFill}
+        />
         {searchMode ? (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
             {glassActive ? (
@@ -7131,9 +7083,9 @@ export default function ChatScreen() {
                   </NativeGlassView>
                 </Pressable>
               ) : (
-                <Pressable onPress={() => router.back()} style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }, onBannerPillStyle]}>
-                  <MaterialIcons name="chevron-left" size={22} color={onBannerTextColor} />
-                  <Text variant="caption" weight="semibold" numberOfLines={1} color={onBannerTextColor} style={styles.backLabel}>{t('common.back')}</Text>
+                <Pressable onPress={() => router.back()} style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+                  <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
+                  <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>{t('common.back')}</Text>
                 </Pressable>
               )}
             </View>
@@ -7176,6 +7128,42 @@ export default function ChatScreen() {
                   delayLongPress={300}
                   style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }, onBannerPillStyle]}
                 >
+                  {/* ── THE BANNER LIVES HERE NOW ──────────────────────────────────────
+                      Asked for after two rejected full-width strips: not a photo sitting across the
+                      top, but something that INTERACTS with the name and the emoji — compact,
+                      minimal, convenient.
+
+                      This is that. The peer's banner becomes the FILL of their own name pill, so the
+                      identity block itself carries their image instead of a band hovering above the
+                      conversation. It is unique to this app (no messenger puts the banner in the
+                      title), it adds no height, it adds no element, and it cannot be mistaken for
+                      part of the transcript.
+
+                      `overflow: 'hidden'` is on `styles.headerPill`'s radius via the absolute child
+                      being clipped by the parent's `borderRadius` — the pill already rounds itself,
+                      so the image takes the capsule shape for free.
+
+                      COST: the pill is ~200 pt wide, so `proxyWidth={240}` is roughly a thirtieth of
+                      the pixels the screen-width strip was decoding, and the URL differs from the
+                      profile screen's copy only in that width. `autoplay={false}` for the same
+                      reason as everywhere else: an animated banner behind a title would decode a
+                      frame forever. */}
+                  {peerBannerUrl ? (
+                    <>
+                      <CachedImage
+                        uri={peerBannerUrl}
+                        proxyWidth={240}
+                        style={StyleSheet.absoluteFill as any}
+                        resizeMode="cover"
+                        priority="low"
+                        autoplay={false}
+                      />
+                      {/* Just enough darkening for white text over an arbitrary photo. Flat rather
+                          than a gradient: the pill is one line tall, so a ramp across it would read
+                          as a smudge rather than as depth. */}
+                      <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.42)' }]} />
+                    </>
+                  ) : null}
                   <Text variant="caption" weight="semibold" numberOfLines={1} color={onBannerTextColor} style={{ flexShrink: 1 }}>{displayName}</Text>
                   {displayVerified && <VerifiedBadge size={12} />}
                   {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
@@ -7183,7 +7171,12 @@ export default function ChatScreen() {
               )}
             </View>
             <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
-              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }, onBannerPillStyle]}>
+              {/* The emoji's ring picks up the peer's theme accent, so the avatar and the
+                  banner-filled name pill beside it read as one identity block rather than two
+                  unrelated controls — the "interaction" half of the request, done with one border
+                  colour instead of another element. Falls back to the ordinary hairline when the peer
+                  has no theme, so nothing changes for an account that set neither. */}
+              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: peerHasIdentity ? peerAccent : theme.colors.border.light, overflow: 'hidden' }]}>
                 <Avatar emoji={displayEmoji} name={displayName} size="xs" />
               </Pressable>
             </View>
