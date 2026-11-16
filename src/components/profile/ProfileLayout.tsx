@@ -19,6 +19,7 @@ import {
   StyleSheet,
   Image,
   Modal,
+  Platform,
   InteractionManager,
   useWindowDimensions,
 } from 'react-native';
@@ -199,6 +200,32 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
 }) {
   const theme = useTheme();
   const { width } = useWindowDimensions();
+  // ── Telegram's profile scroll animation ────────────────────────────────────
+  // As the profile scrolls, the avatar travels to the Dynamic Island on iPhone (shrinking and turning
+  // black, so it merges into it) and slides out through the top of the screen elsewhere — the effect
+  // Telegram introduced on iOS and later brought to Android. Pure transform/opacity on the native
+  // driver. No opacity on the avatar's container: an alpha on a GlassView ancestor discards the glass.
+  const island = Platform.OS === 'ios' && topInset >= 51;
+  const avatarAnim = useMemo(() => {
+    const startX = 20 + 42;
+    const startY = topInset + 52 + 42;
+    const targetX = island ? width / 2 : startX;
+    const targetY = island ? topInset / 2 : -70;
+    const travel = Math.max(60, startY - targetY);
+    const s = anim.scrollY;
+    const pin = targetY - startY + travel;
+    return {
+      container: {
+        transform: [
+          { translateX: s.interpolate({ inputRange: [0, travel], outputRange: [0, targetX - startX], extrapolate: 'clamp' }) },
+          // Past `travel` it keeps counter-scrolling, so it stays parked in the island.
+          { translateY: s.interpolate({ inputRange: [0, travel, travel + 2000], outputRange: [0, pin, pin + 2000], extrapolate: 'clamp' }) },
+          { scale: s.interpolate({ inputRange: [0, travel], outputRange: [1, island ? 0.16 : 0.55], extrapolate: 'clamp' }) },
+        ],
+      },
+      black: { opacity: s.interpolate({ inputRange: [travel * 0.45, travel * 0.9], outputRange: [0, 1], extrapolate: 'clamp' }) },
+    };
+  }, [anim.scrollY, width, topInset, island]);
   const avatar = glassActive ? (
     <NativeGlassView glassStyle={bannerUrl ? 'clear' : 'regular'} colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.avatarTile}>
       <Avatar emoji={emoji || '😊'} size="lg" />
@@ -232,11 +259,9 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
       <HeaderBackgroundLayer backgroundId={scene?.background} drawing={scene?.drawing} hasBanner={!!bannerUrl} blend={scene?.bgBlend} />
 
       <View style={{ paddingTop: topInset + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
-        {onAvatarPress ? (
-          <Pressable onPress={onAvatarPress} style={{ borderRadius: 26, alignSelf: 'flex-start' }}>{avatar}</Pressable>
-        ) : (
-          <View style={{ alignSelf: 'flex-start' }}>{avatar}</View>
-        )}
+        {/* Placeholder: the real avatar is drawn above the frost (see the end of the card) so it
+            stays crisp while it flies to the island. */}
+        <View style={styles.avatarTile} />
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
           <Text variant="heading" weight="bold" color={nameColor} numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28, ...(shadow || {}) }}>{displayName}</Text>
           {isVerified ? <VerifiedBadge size={18} /> : null}
@@ -262,6 +287,15 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
       <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: anim.headerOpacity }]}>
         <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
         <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.isDark ? 'rgba(20,21,28,0.32)' : 'rgba(255,255,255,0.34)' }]} />
+      </Animated.View>
+
+      <Animated.View style={[{ position: 'absolute', top: topInset + 52, left: 20 }, avatarAnim.container]}>
+        <Pressable onPress={onAvatarPress} disabled={!onAvatarPress} style={{ borderRadius: 26 }}>
+          {avatar}
+          {island ? (
+            <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: 26, backgroundColor: '#000' }, avatarAnim.black]} />
+          ) : null}
+        </Pressable>
       </Animated.View>
     </View>
   );
