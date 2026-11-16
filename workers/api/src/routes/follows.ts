@@ -13,7 +13,6 @@ import { register } from '../router';
 import { exec, queryOne } from '../db';
 import { parseUuid } from '../util';
 import { channels, publishEvent } from '../realtime';
-import { sendPushToUser } from '../push';
 
 // ── PUT /v1/profiles/:id/follow ───────────────────────────────────────
 register('PUT', '/v1/profiles/:id/follow', async (req, env, ctx, params, authedUserId) => {
@@ -31,13 +30,10 @@ register('PUT', '/v1/profiles/:id/follow', async (req, env, ctx, params, authedU
     [authedUserId, followingId, now],
   );
 
-  // Three channels for one mutation:
-  //   1) `user:<target>:follows` — the followed user's other devices
-  //      see their followers list grow.
-  //   2) `user:<target>:notifications` — the followed user gets a
-  //      notification ping wherever they're connected.
-  //   3) `user:<self>:follows` — the follower's other devices keep
-  //      their following list in sync.
+  // Followers were removed from the app (Nov 2026: San is a messenger). The route is kept so an
+  // app that has not taken the update yet does not error, but a follow no longer notifies anyone:
+  // no `notif.follow` ping and no "started following you" push, because the people receiving
+  // them have no follower UI left to open.
   const followPayload = {
     follower_id: authedUserId,
     following_id: followingId,
@@ -46,30 +42,11 @@ register('PUT', '/v1/profiles/:id/follow', async (req, env, ctx, params, authedU
   publishEvent(env, channels.userFollows(followingId), 'follow.added', followPayload, ctx);
   publishEvent(
     env,
-    channels.userNotifications(followingId),
-    'notif.follow',
-    { follower_id: authedUserId, ts: now },
-    ctx,
-  );
-  publishEvent(
-    env,
     channels.userFollows(authedUserId),
     'follow.outgoing.added',
     followPayload,
     ctx,
   );
-  // Push the new follower to the followed user's device(s).
-  const follower = await queryOne<{ username: string; display_name: string }>(
-    env,
-    `SELECT username, display_name FROM profiles WHERE id = ?`,
-    [authedUserId],
-  );
-  const followerName = follower?.display_name || follower?.username || 'Someone';
-  sendPushToUser(env, ctx, followingId, {
-    title: followerName,
-    body: 'started following you',
-    data: { type: 'follow', follower_id: authedUserId },
-  });
   return ok(req, { following: true });
 });
 
