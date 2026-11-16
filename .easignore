@@ -106,5 +106,9 @@ html.txt
 # ── Test output and caches ──────────────────────────────────────────────────────
 coverage/
 dist/
+# Local device screenshots and recordings, never read by the build
+# (`.shots/` alone is ~125 MB of emulator captures and helper scripts).
+.shots/
+*.mp4
 .jest-cache/
 *.log

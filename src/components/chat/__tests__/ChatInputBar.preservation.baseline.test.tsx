@@ -405,7 +405,6 @@ describe('ChatInputBar preservation baseline (Task 2 — ¬isBugCondition behavi
     expect(keys).toEqual(
       [
         'ITSAppUsesNonExemptEncryption',
-        'NSCameraUsageDescription',
         'NSPhotoLibraryAddUsageDescription',
         'NSPhotoLibraryUsageDescription',
         'UIBackgroundModes',
@@ -415,6 +414,9 @@ describe('ChatInputBar preservation baseline (Task 2 — ¬isBugCondition behavi
     expect(keys).not.toContain('NSUserTrackingUsageDescription');
     expect(keys).not.toContain('NSMotionUsageDescription');
     expect(keys).not.toContain('NSMicrophoneUsageDescription');
+    // The camera was only used by the removed Create (publishing) screen. Nothing captures photos
+    // now, so the permission is gone and the image-picker plugin is configured to keep it gone.
+    expect(keys).not.toContain('NSCameraUsageDescription');
   });
 
   // ── Property: swallow hysteresis is unchanged across random height sequences ─

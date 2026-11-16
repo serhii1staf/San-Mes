@@ -18,10 +18,23 @@ The user has accepted the **Apple Developer Program License Agreement** (full te
 Every iOS permission we request needs an honest `NS*UsageDescription` string in `app.json` → `ios.infoPlist`. Apple rejects builds with missing or misleading strings.
 
 Currently declared:
-- `NSPhotoLibraryUsageDescription` — gallery picker (posts, comments, chat, profile, banner, chat background)
-- `NSPhotoLibraryAddUsageDescription` — save post screenshots to library
-- `NSCameraUsageDescription` — camera capture for posts
+- `NSPhotoLibraryUsageDescription` — gallery picker (photos in chats, profile banner, chat background)
+- `NSPhotoLibraryAddUsageDescription` — "Save" on a photo in the full-screen chat viewer (`app/chat/fullscreen.tsx`, add-only access)
 - `UIBackgroundModes: ["audio"]` — required because the music player keeps playing in the background
+
+**Removed (Nov 2026, with the publishing feature):** `NSCameraUsageDescription`. The camera was used
+only by the deleted Create screen (`app/(tabs)/create.tsx`); nothing captures photos now. `expo-image-picker`
+is listed in `app.json` plugins with `"cameraPermission": false, "microphonePermission": false` because
+its config plugin otherwise ADDS default camera and microphone strings ("Allow $(PRODUCT_NAME) to access
+your camera") whenever the key is absent — read `node_modules/expo-image-picker/plugin/build/withImagePicker.js`.
+The same two `false` values block `android.permission.CAMERA` and `android.permission.RECORD_AUDIO`, which
+also removes the stray RECORD_AUDIO noted in the expo-audio section below. Do not remove them. Like any
+native change, this reaches users only with a new binary, never through OTA.
+
+**Build image:** `eas.json` production pins `"image": "sdk-54"` (macos-sequoia-15.6-xcode-26.0, iOS 26 SDK).
+It was `"latest"`, which now resolves to an Xcode 27 image; per Expo's infrastructure docs, apps built
+on Xcode 27 launch on iOS 27 only if they use the UIKit scene life cycle, which SDK 54 does not. Pin
+the SDK alias, not `latest`.
 
 > **This key is guarded by a test.** `src/components/chat/__tests__/ChatInputBar.preservation.baseline.test.tsx`
 > asserts the EXACT set of keys under `app.json` → `ios.infoPlist`. Adding, renaming or removing any key
@@ -137,8 +150,11 @@ and new follows). Compliance notes for the push path:
 
 ### User-generated content (App Review Guideline 1.2)
 
-Posts, comments, profile bios, chat messages — all user content. We MUST provide:
-- A way to **report** objectionable content (we have this in `PostMenuModal` / chat menus — keep it working).
+Profile bios, names, banners and chat messages are all user content (posts and comments were removed in
+Nov 2026). We MUST provide:
+- A way to **report** objectionable content. Profiles: `src/components/profile/ProfileMenuModal.tsx`
+  (the "More" tile on every profile: report + block). Chat messages: the message long-press menu must
+  offer Report as well — it was the post menus' job before publishing was removed, so check it exists.
 - A way to **block** other users.
 - Moderation/removal of content reported as abusive within 24 hours.
 - Terms of service forbidding objectionable content.
