@@ -27,6 +27,7 @@ import { setThrottleAccount } from '../src/services/syncThrottle';
 import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { enableFreeze } from 'react-native-screens';
 // `@gorhom/bottom-sheet`'s `BottomSheetModalProvider` used to be mounted here.
 // It was removed along with the dependency: an audit found the provider was the
 // ONLY reference to the library in the whole codebase — not a single
@@ -55,6 +56,29 @@ try { installPerfErrorHooks(); } catch {}
 // so resuming into the chat list or the profile never refreshed it. See the long note in
 // `notificationsBadgeStore.ts` for why the badge could be missing entirely after a push.
 try { installNotificationsBadgeForegroundRefresh(); } catch {}
+
+// ── FREEZE BLURRED SCREENS (the single biggest app-wide lag lever) ───────────
+//
+// Without this, react-native-screens leaves every visited tab and every pushed
+// screen MOUNTED and RE-RENDERING while it is off-screen. The measured symptom:
+// the Messages tab re-ran its whole filter/sort/list reconcile on every store
+// write while the user was on another tab, and the feed tab kept rebuilding in
+// the background. `enableFreeze(true)` wraps a blurred screen in react-freeze's
+// Suspense boundary so its React subtree stops re-rendering until it is focused
+// again — native views persist, so there is no remount cost on return.
+//
+// Scope and limits, stated honestly:
+//   • It freezes BLURRED navigator screens. The root-level hosts (music player,
+//     realtime bridge, toasts, perf bubble) are siblings of the navigator, never
+//     screens, so they keep running — which is what we want.
+//   • On the New Architecture (Fabric), the native-stack screen DIRECTLY BELOW
+//     the focused one is not frozen, so "Messages under an open chat" is NOT
+//     covered by this flag alone; that case is handled separately by gating the
+//     messages tab's heavy subscriptions on `useIsFocused`. This flag still wins
+//     the common cases: the other tabs while you are on one, and any screen two
+//     or more levels down the stack.
+//   • Module scope + before first render, as react-native-screens requires.
+try { enableFreeze(true); } catch {}
 
 // ── `runAfterInteractions` CONCENTRATES WORK. IT DOES NOT SPREAD IT. ─────────
 //

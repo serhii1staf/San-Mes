@@ -287,7 +287,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   // Run all checks in parallel.
   const [counts, r2, r2use, vercelRegion, jwtMatch] = await Promise.all([
     timed(() => workerCounts()),
-    timed(() => fetchT(`${R2_PUBLIC_BASE}/test/hello.txt`, { method: 'GET' }).then((r) => r.ok)),
+    // Report the ACTUAL HTTP status rather than a bare boolean. The old probe did
+    // `.then((r) => r.ok)`, so a 404 (probe object simply absent — routing and
+    // public access both fine) read identically to a 403 (public access denied),
+    // and both surfaced as the vague "Проверьте публичный доступ". Carrying the
+    // status code lets the panel tell "reachable, file absent" from "access
+    // denied", which are different problems with different fixes.
+    timed(() => fetchT(`${R2_PUBLIC_BASE}/test/hello.txt`, { method: 'GET' }).then((r) => ({ httpStatus: r.status }))),
     timed(() => r2Usage()),
     Promise.resolve(process.env.VERCEL_REGION || 'unknown'),
     jwtSecretsAgree(),
@@ -329,13 +335,30 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       latencyMs: counts.ms,
       detail: dbOk ? 'Запросы выполняются' : counts.error || 'нет ответа',
     },
-    {
-      key: 'r2',
-      name: 'Cloudflare R2 (media.san-m-app.com)',
-      status: r2.ok && r2.value ? 'online' : 'degraded',
-      latencyMs: r2.ms,
-      detail: r2.ok && r2.value ? 'Публичный домен отвечает' : 'Проверьте публичный доступ',
-    },
+    (() => {
+      // A reachable public domain answers with SOME HTTP status. A missing probe
+      // object returns 404 — routing, TLS and public access all work, the file is
+      // just not there — so that counts as online. 401/403 means the domain is up
+      // but public access is denied (the real "check public access" case). Only a
+      // transport failure (no status at all) is truly down.
+      const httpStatus = (r2.value as { httpStatus?: number } | undefined)?.httpStatus;
+      const reachable = r2.ok && typeof httpStatus === 'number';
+      const accessDenied = httpStatus === 401 || httpStatus === 403;
+      const publicOk = reachable && !accessDenied;
+      return {
+        key: 'r2',
+        name: 'Cloudflare R2 (media.san-m-app.com)',
+        status: publicOk ? 'online' : 'degraded',
+        latencyMs: r2.ms,
+        detail: !reachable
+          ? `Домен недоступен${r2.error ? ` (${r2.error})` : ''}`
+          : publicOk
+            ? httpStatus === 404
+              ? 'Домен отвечает (пробный объект test/hello.txt отсутствует)'
+              : 'Публичный домен отвечает'
+            : `Публичный доступ запрещён (HTTP ${httpStatus}) — включите Public access для media.san-m-app.com`,
+      };
+    })(),
   ];
 
   // Usage bars: value/limit pairs the UI can render as progress bars.
