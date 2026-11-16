@@ -21,10 +21,8 @@ import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bann
 import { getTabBarHeight } from '../../src/components/navigation/CustomTabBar';
 import {
   ProfileActionPill,
-  ProfileFloatingButtons,
   ProfileHeaderCard,
   ProfileMediaGrid,
-  ProfileQRModal,
   parseProfileLinks,
   profileUrl,
   useProfileMedia,
@@ -50,7 +48,6 @@ export default function ProfileScreen() {
   const glassActive = useLiquidGlassActive();
   const screenFocused = useIsFocused();
   const anim = useProfileScrollAnim();
-  const [showQR, setShowQR] = useState(false);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
 
   const { screenshotDetected } = useScreenCaptureGuard(!!(user as any)?.screenshots_disabled, 'own-profile');
@@ -104,13 +101,8 @@ export default function ProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      <ProfileFloatingButtons
-        topInset={insets.top}
-        anim={anim}
-        glassActive={glassActive}
-        left={{ icon: 'qrcode', fa5: true, label: t('profile.qr_title'), onPress: () => { triggerHaptic('light'); setShowQR(true); } }}
-        right={{ icon: 'settings', label: t('settings.title'), onPress: () => { triggerHaptic('light'); router.push('/settings'); } }}
-      />
+      {/* No QR / Settings buttons in the header: double-tap or long-press the profile capsule in
+          the tab bar and they rise out of it (see ProfileQuickDial in CustomTabBar). */}
       <Animated.ScrollView
         onScroll={anim.onScroll}
         scrollEventThrottle={16}
@@ -153,7 +145,6 @@ export default function ProfileScreen() {
         <ProfileMediaGrid items={media} onPressItem={openChat} />
       </Animated.ScrollView>
 
-      <ProfileQRModal visible={showQR} onClose={() => setShowQR(false)} profileId={user.id} title={t('profile.qr_title')} />
       <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />
       <ScreenshotShield visible={screenshotDetected} />
     </View>

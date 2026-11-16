@@ -88,6 +88,9 @@ interface ChatSettingsStore {
   isPinned: (chatId: string) => boolean;
   /** Pin when unpinned, unpin when pinned. */
   togglePinChat: (chatId: string) => void;
+  /** Chats whose notifications are off (no in-app alert, no foreground banner, no sound). */
+  muted: string[];
+  toggleMuteChat: (chatId: string) => void;
   /**
    * Replace the manual ordering with `ids`, in the order given.
    *
@@ -113,6 +116,7 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
       openedAt: {},
       pinned: [],
       order: [],
+      muted: [],
       getSettings: (chatId) => {
         const state = get();
         const global = state.settings[GLOBAL_CHAT_SETTINGS_KEY];
@@ -151,6 +155,11 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
           ? { pinned: s.pinned.filter((id) => id !== chatId) }
           : { pinned: [...s.pinned, chatId] }
       )),
+      // `?? []`: a store persisted before this field existed rehydrates without it.
+      toggleMuteChat: (chatId) => set((s) => {
+        const muted = s.muted ?? [];
+        return { muted: muted.includes(chatId) ? muted.filter((id) => id !== chatId) : [...muted, chatId] };
+      }),
       // Merge rather than replace: `ids` is only the bucket the user was looking at, so
       // an arrangement made in Chats must not be wiped by a later drag in Archive.
       setChatOrder: (ids) => set((s) => {
@@ -162,3 +171,13 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
     { name: 'chat-settings', storage: createJSONStorage(() => storage) }
   )
 );
+
+/** Non-hook read for services (realtime bridge, push handler). */
+export function isChatMuted(chatId: string | null | undefined): boolean {
+  if (!chatId) return false;
+  try {
+    return (useChatSettingsStore.getState().muted ?? []).includes(chatId);
+  } catch {
+    return false;
+  }
+}
