@@ -3,22 +3,16 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
 import { useEntityStore } from '../../services/entityStore';
 import { useChatStore } from '../../store/chatStore';
-import { useFeedStore } from '../../store/feedStore';
-import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
 import { useChatUnread } from '../../store/chatUnreadStore';
 import {
-  feedPublicChannelName,
   getRealtime,
   disconnectRealtime,
-  userFollowsChannelName,
   userNotificationsChannelName,
   userProfileChannelName,
 } from '../../services/realtime/ably';
-import { isRepost, parseImageUrls, isImageSpoiler } from '../../lib/supabase';
 import { isActiveThread } from '../../services/activeThread';
 import { useInAppAlert } from '../../store/inAppAlertStore';
 import { isAlertCategoryEnabled } from '../../store/settingsStore';
-import type { Post } from '../../types';
 
 /**
  * Is this URL an animated image, so the alert can say "sent you a GIF" rather than "a photo"?
@@ -43,23 +37,16 @@ function looksAnimated(u: string): boolean {
 // Mounts once when the user is authenticated, opens a single Ably
 // connection, and subscribes to a small set of channels:
 //
-//   - `user:<myId>:notifications`  — incoming pings: new conversations,
-//                                    likes, comments, follows, message
-//                                    previews. Drives the bell + msg
-//                                    tab badges.
+//   - `user:<myId>:notifications`  — incoming pings: new conversations and
+//                                    message previews. Drives the chats
+//                                    tab badge and the in-app alert.
 //   - `user:<myId>:profile`        — bio / display name / banner edits
 //                                    made on another device land here so
 //                                    every signed-in surface stays
 //                                    consistent.
-//   - `user:<myId>:follows`        — follow graph events on both
-//                                    directions: incoming `follow.added`
-//                                    / `follow.removed`, and the user's
-//                                    own `follow.outgoing.*` events so
-//                                    multi-device sessions never drift.
-//   - `feed:public`                — global firehose of new / edited /
-//                                    deleted posts. We dedupe by id and
-//                                    skip events authored by the current
-//                                    user (already added locally).
+//
+// (`user:<myId>:follows` and the `feed:public` firehose were dropped with
+// the follower and publishing features.)
 //
 // All of this runs effects-only (no rendered output). The bridge sits
 // inside AuthNavigationGuard so it only mounts while the user is signed
@@ -349,76 +336,14 @@ export function RealtimeAccountBridge(): null {
             }
           } catch {}
 
-          // 3) Bump the unread notifications badge so the bell updates live even when the recipient
-          //    isn't on the messages tab.
-          //
-          //    GUARDED BY AUTHORSHIP — this is the line that kept the reported bug alive.
-          //
-          //    "I send a message and the indicator appears on MY side for about a second, then
-          //    disappears." That is this increment, exactly: it fired on EVERY `notif.message`,
-          //    including the echo of our own send, so the bell jumped immediately. A second later
-          //    `recompute()` derives the real count from the notifications cache — which does not
-          //    contain our own outgoing message — and corrects it back to zero. Appear, then vanish.
-          //
-          //    Three previous fixes went to the per-conversation unread counter and left this one
-          //    untouched, because they were two separate decisions about the same question. There is
-          //    one decision now (`isFromOther` above).
-          try { if (isFromOther) useNotificationsBadge.getState().increment(1); } catch {}
+          // 3) (The separate notifications-bell counter used to be bumped here. It is retired — see
+          //    notificationsBadgeStore — and messages are counted once, by `chatUnreadStore`.)
           return;
         }
 
-        // ── Activity pings (like / comment / follow) ───────────────────
-        // The Worker publishes these from posts.ts / follows.ts. The
-        // per-screen subscriptions (post:<id>, user:<id>:follows) carry the
-        // actual state deltas; here we only bump the bell badge so it
-        // updates live.
-        if (name === 'notif.like' || name === 'notif.comment' || name === 'notif.follow') {
-          try { useNotificationsBadge.getState().increment(1); } catch {}
-          // Same reasoning as the message branch above: produce the in-app pill from the
-          // platform-independent event rather than from the OS push handler, so a like, comment or
-          // follow announces itself identically on both platforms. The requested distinction between
-          // "followed you" / "commented" / "liked" comes straight from the event name.
-          try {
-            const kind = name === 'notif.like' ? 'like' : name === 'notif.comment' ? 'comment' : 'follow';
-            // Likes are the case where this toggle is the ONLY control that exists: the like route
-            // publishes a realtime event and sends no push at all, so the pill and the bell badge are
-            // the entire surface. Comments and follows do send pushes, which the handler gates
-            // separately.
-            if (!isAlertCategoryEnabled(kind)) return;
-            const actorId = String(
-              payload.actorId || payload.actor_id || payload.followerId || payload.follower_id || '',
-            );
-            const postId = String(payload.postId || payload.post_id || '');
-            // A comment on the post already open on screen is visible without an alert, exactly as with
-            // the chat check — the same judgement `shouldPresent` makes for the OS banner.
-            if (!(kind === 'comment' && postId && isActiveThread('post', postId))) {
-              useInAppAlert.getState().push(
-                {
-                  kind,
-                  // Reported: a follow showed a different emoji than that person's own. The follow
-                  // payload carries no emoji, so the generic glyph below was all there was. The peer's
-                  // real emoji is usually already cached — `entityStore.profiles` is populated by any
-                  // screen that has rendered them — so look there first and keep the kind glyph as the
-                  // last resort. Local read only: no request, which the no-server-load requirement rules
-                  // out anyway.
-                  emoji:
-                    String(payload.actorEmoji || payload.actor_emoji || payload.followerEmoji || '').trim() ||
-                    (actorId ? String((useEntityStore.getState() as any).profiles?.[actorId]?.emoji || '').trim() : '') ||
-                    (kind === 'follow' ? '👤' : kind === 'like' ? '❤️' : '💬'),
-                  name:
-                    String(
-                      payload.actorName || payload.actor_name || payload.followerName || payload.follower_name || '',
-                    ).trim() || 'Someone',
-                  actorId: actorId || undefined,
-                  targetId: postId || undefined,
-                },
-                'bridge',
-              );
-            }
-          } catch {
-            // Never let an ambient alert break the badge increment above.
-          }
-        }
+        // `notif.like` / `notif.comment` / `notif.follow` are ignored on purpose: likes, comments
+        // and followers were removed with publishing. An older Worker may still publish them;
+        // they must not bump a badge or raise an alert for a feature the app no longer has.
       };
 
       void notifChannel.subscribe(onNotif);
@@ -479,128 +404,10 @@ export function RealtimeAccountBridge(): null {
         try { profileChannel.unsubscribe(onProfile); } catch {}
       });
 
-      // ─── follow events (incoming + outgoing) ────────────────────────
-      const followsChannel = realtime.channels.get(userFollowsChannelName(userId));
-      const onFollow = (msg: { name?: string; data?: any }) => {
-        const payload = msg?.data;
-        if (!payload || typeof payload !== 'object') return;
-        const followerId = String(payload.follower_id || '');
-        const followingId = String(payload.following_id || '');
-        if (!followerId || !followingId) return;
-
-        try {
-          const entity = useEntityStore.getState();
-          if (msg.name === 'follow.added' || msg.name === 'follow.outgoing.added') {
-            entity.setFollow(followerId, followingId);
-          } else if (msg.name === 'follow.removed' || msg.name === 'follow.outgoing.removed') {
-            entity.removeFollow(followerId, followingId);
-          }
-        } catch {}
-      };
-      void followsChannel.subscribe(onFollow);
-      cleanups.push(() => {
-        try { followsChannel.unsubscribe(onFollow); } catch {}
-      });
-
-      // ─── public feed firehose ───────────────────────────────────────
-      // Hot — gets every public-feed event in the world. We bound
-      // memory two ways:
-      //   1) Skip self-authored events; the local optimistic path
-      //      already added them.
-      //   2) Only insert into stores when the feed cache is hot
-      //      (entity store has been hydrated). Otherwise drop silently
-      //      so a fresh device doesn't accumulate orphaned posts in
-      //      memory.
-      const feedChannel = realtime.channels.get(feedPublicChannelName());
-      const onFeed = (msg: { name?: string; data?: any }) => {
-        const payload = msg?.data;
-        if (!payload || typeof payload !== 'object') return;
-
-        if (msg.name === 'post.new') {
-          const post = payload.post;
-          if (!post || typeof post !== 'object') return;
-          // Skip self — local optimistic add already covers it. We use
-          // either the wrapped `author_id` or the embedded profile id
-          // since the Worker shape varies slightly between create and
-          // repost paths.
-          const authorId = post.author_id || post.profiles?.id;
-          if (authorId === userId) return;
-          try {
-            const entity = useEntityStore.getState();
-            if (!entity.isHydrated) return;
-            // Upsert author profile + post. `upsertPost` is a no-op
-            // if we already have it (e.g. the message was redelivered).
-            if (post.profiles && typeof post.profiles === 'object') {
-              entity.upsertProfile(post.profiles as any);
-            }
-            entity.upsertPost(post as any);
-            // Prepend the new id so it appears at the top of any
-            // surface that reads from `getFeedPosts`.
-            const ids = entity.feedIds;
-            if (!ids.includes(post.id)) {
-              entity.setFeedIds([post.id, ...ids].slice(0, 200));
-            }
-
-            // The home tab keeps its own `Post[]`-shaped state in the
-            // feed store for compatibility with the local optimistic
-            // add flow. Map the Worker's snake_case shape to the
-            // app's Post shape and prepend so the UI updates without
-            // a refetch.
-            const mapped = mapWorkerPostToAppPost(post);
-            if (mapped) {
-              const feedState = useFeedStore.getState();
-              if (!feedState.posts.some((p) => p.id === mapped.id)) {
-                feedState.addPost(mapped);
-              }
-            }
-          } catch {}
-        } else if (msg.name === 'post.delete') {
-          const id = String(payload.id || '');
-          if (!id) return;
-          try {
-            useEntityStore.getState().removePost(id);
-            useFeedStore.getState().removePost(id);
-          } catch {}
-        } else if (msg.name === 'post.edit') {
-          const id = String(payload.id || '');
-          if (!id) return;
-          try {
-            const entity = useEntityStore.getState();
-            const existing = entity.posts[id];
-            if (existing) {
-              entity.upsertPost({
-                ...existing,
-                content: typeof payload.content === 'string' ? payload.content : existing.content,
-                image_url:
-                  payload.image_url === undefined
-                    ? existing.image_url
-                    : payload.image_url,
-              } as any);
-            }
-            // Local optimistic mirror — only patch the fields the user
-            // would notice change; preserve like / comment counts.
-            const feedState = useFeedStore.getState();
-            const partial: Partial<Post> = {};
-            if (typeof payload.content === 'string') partial.content = payload.content;
-            if (payload.image_url !== undefined) {
-              partial.imageUrl = payload.image_url || undefined;
-              partial.imageUrls = payload.image_url
-                ? parseImageUrls(payload.image_url)
-                : undefined;
-              partial.isSpoilerImage = payload.image_url
-                ? isImageSpoiler(payload.image_url)
-                : false;
-            }
-            if (Object.keys(partial).length > 0) {
-              feedState.updatePost(id, partial);
-            }
-          } catch {}
-        }
-      };
-      void feedChannel.subscribe(onFeed);
-      cleanups.push(() => {
-        try { feedChannel.unsubscribe(onFeed); } catch {}
-      });
+      // The `user:<id>:follows` channel and the `feed:public` firehose used to be subscribed
+      // here. Followers and the public feed were removed, and the firehose in particular
+      // delivered EVERY public post in the network to EVERY client, each one parsed and pushed
+      // through two stores on the JS thread — load with no screen left to show it.
 
       activeCleanups = cleanups;
     };
@@ -667,42 +474,4 @@ export function RealtimeAccountBridge(): null {
   }, [userId]);
 
   return null;
-}
-
-// ─── helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Map a Worker-shaped post (snake_case + embedded profiles row) to the
- * camelCase `Post` shape the home-tab feed store consumes. Returns null
- * for malformed payloads so a corrupt realtime message can never crash
- * the bridge.
- */
-function mapWorkerPostToAppPost(p: any): Post | null {
-  if (!p || typeof p !== 'object' || !p.id) return null;
-  const repostInfo = isRepost(p.content || '');
-  const parsedImages = parseImageUrls(p.image_url);
-  const spoiler = isImageSpoiler(p.image_url);
-  const profile = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
-  const post: Post = {
-    id: String(p.id),
-    authorId: String(p.author_id || profile?.id || ''),
-    authorName: profile?.display_name || 'User',
-    authorUsername: profile?.username || 'user',
-    authorEmoji: profile?.emoji || '😊',
-    authorBadge: profile?.badge || undefined,
-    authorVerified: !!profile?.is_verified,
-    content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
-    imageUrl: parsedImages[0] || undefined,
-    imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-    isSpoilerImage: spoiler,
-    likesCount: p.likes_count || 0,
-    commentsCount: p.comments_count || 0,
-    sharesCount: p.shares_count || 0,
-    isLiked: false,
-    isBookmarked: false,
-    createdAt: String(p.created_at || new Date().toISOString()),
-    isRepost: repostInfo.isRepost,
-  };
-  if (!post.content && !post.imageUrl && !post.isRepost) return null;
-  return post;
 }

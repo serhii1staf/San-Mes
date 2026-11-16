@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, Dimensions, AppState, Pressable, InteractionManager } from 'react-native';
+import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, AppState, Pressable, InteractionManager, Platform } from 'react-native';
 import { Stack, useRouter, useSegments, useNavigationContainerRef } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -577,17 +577,8 @@ function RootLayout() {
       import('../src/services/imageDiskCacheGuard')
         .then(({ enforceImageDiskCacheCap }) => enforceImageDiskCacheCap())
         .catch(() => {});
-      // Refresh the viewer's follow graph from the server once on boot so
-      // follow buttons reconcile to server truth app-wide (the entity store
-      // only rehydrates the cached follow set synchronously above).
-      // `syncFollows` is internally throttled, so this is a cheap no-op when
-      // it ran recently. Deferred to the idle frame so it never competes
-      // with first paint.
-      if (currentUser?.id) {
-        import('../src/services/syncService')
-          .then(({ syncFollows }) => syncFollows(currentUser.id))
-          .catch(() => {});
-      }
+      // (The boot-time `syncFollows` was removed with followers: nothing reads
+      // the follow graph any more, so it was a request per launch for nothing.)
 
       // Revalidate the persisted session once, AFTER first paint is unblocked.
       // restoreSession() validates the stored JWT via /v1/auth/me and silently
@@ -620,37 +611,13 @@ function RootLayout() {
 
     // Phase 4 — boot-time image warming. Deferred well past first paint so it
     // NEVER competes with the cold-start frame, then warms the on-disk image
-    // cache for the two surfaces the user opens first: the feed heroes and the
-    // recent media of the top conversations. This makes re-entering the feed /
-    // a chat show images instantly even on a cold launch (Telegram-style),
-    // instead of paying a weserv round-trip the first time each screen mounts.
-    // Cheap + capped: ≤4 feed heroes + the existing ≤12-URI chat-media budget,
-    // all routed through expo-image's deduping prefetcher. Fully guarded.
+    // cache for the surface the user opens first: the recent media of the top
+    // conversations, so re-entering a chat shows images instantly even on a
+    // cold launch instead of paying a weserv round-trip on first mount.
+    // (The feed-hero half was removed with the feed.) Capped at ≤12 URIs and
+    // routed through expo-image's deduping prefetcher. Fully guarded.
     const warm = setTimeout(() => {
       try {
-        // Feed heroes from the cached feed (top few only).
-        const { kvGetJSONSync } = require('../src/services/kvStore');
-        const feed = kvGetJSONSync('@san:feed_posts', []);
-        if (Array.isArray(feed) && feed.length > 0) {
-          const heroes: string[] = [];
-          for (let i = 0; i < Math.min(feed.length, 4); i++) {
-            const p = feed[i];
-            const u = p?.imageUrl || (Array.isArray(p?.imageUrls) ? p.imageUrls[0] : undefined);
-            if (typeof u === 'string' && u.startsWith('http')) heroes.push(u);
-          }
-          if (heroes.length > 0) {
-            import('../src/components/ui/CachedImage')
-              .then(({ prefetchImages }) => {
-                // Must equal PostCard.HERO_IMG_WIDTH (card content width
-                // [screen − 32] minus the 12px image inset on each side) so the
-                // warmed weserv URL shares an expo-image cache key with the feed
-                // hero's real mount. Kept in sync with PostCard by construction.
-                const heroWidth = Dimensions.get('window').width - 56;
-                prefetchImages(heroes, heroWidth);
-              })
-              .catch(() => {});
-          }
-        }
         // Recent chat media for the most-active conversations (already capped
         // + chunked inside the helper). entityStore was hydrated in Phase 2,
         // so the conversation list is available here.
@@ -792,10 +759,28 @@ function RootLayout() {
 // background, which kills the white sliver/flash that showed during screen
 // transitions and modal dismissals (e.g. closing a mini-app) when the OS color
 // scheme didn't match the app's dark theme.
+// ── PUSH TRANSITIONS ─────────────────────────────────────────────────────────
+//
+// Android: `ios_from_right` — the new screen slides in from the right while the previous one
+// shifts left underneath, the same push Telegram uses on both platforms. It is a native fragment
+// animation inside react-native-screens 4.16 (FragmentTransactionKt.kt), so it runs on the UI
+// thread and is not slowed by a busy JS thread. iOS keeps UIKit's own push ('default').
+//
+// iOS full-screen back swipe (`fullScreenGestureEnabled`) only on screens that are plain vertical
+// lists: anywhere on the screen, not just the edge, like Telegram. Deliberately NOT global: on a
+// screen with a horizontal scroller or a horizontal gesture (the chat's swipe-to-reply) the two
+// pans compete, and that needs a device test before it ships. RNS 4.16 disables iOS 26's own
+// content pop recogniser and uses its RNSPanGestureRecognizer for this, gated per screen.
+const SWIPE_BACK_ANYWHERE = { fullScreenGestureEnabled: true } as const;
+
 function AppStack() {
   const theme = useTheme();
   const screenOptions = React.useMemo(
-    () => ({ headerShown: false, contentStyle: { backgroundColor: theme.colors.background.primary } }),
+    () => ({
+      headerShown: false,
+      contentStyle: { backgroundColor: theme.colors.background.primary },
+      animation: Platform.OS === 'android' ? ('ios_from_right' as const) : ('default' as const),
+    }),
     [theme.colors.background.primary],
   );
   return (
@@ -810,17 +795,17 @@ function AppStack() {
           chat's message list instead of leaving it laying out underneath. */}
       <Stack.Screen name="chat/fullscreen" />
       <Stack.Screen name="profile/edit" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
-      <Stack.Screen name="profile/[id]" />
+      <Stack.Screen name="profile/[id]" options={SWIPE_BACK_ANYWHERE} />
       {/* @mention resolver. A username is not an id, so tapping a mention lands here, the lookup
           runs, and it either `replace`s itself with the profile or shows "no such user". */}
-      <Stack.Screen name="u/[username]" />
+      <Stack.Screen name="u/[username]" options={SWIPE_BACK_ANYWHERE} />
       <Stack.Screen name="comments/[id]" />
       <Stack.Screen name="browser" options={{ presentation: 'modal', headerShown: false, animation: 'slide_from_bottom' }} />
       <Stack.Screen name="mini-app" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="mini/[id]" options={{ headerShown: false, animation: 'fade' }} />
       <Stack.Screen name="m/[short]" options={{ headerShown: false, animation: 'fade' }} />
       <Stack.Screen name="notifications" />
-      <Stack.Screen name="settings/index" />
+      <Stack.Screen name="settings/index" options={SWIPE_BACK_ANYWHERE} />
       <Stack.Screen name="settings/appearance" />
       <Stack.Screen name="settings/profile-theme" />
       <Stack.Screen name="settings/widget" />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Pressable, ViewStyle, FlatList, ActivityIndicator, Text as RNText, InteractionManager } from 'react-native';
 import Reanimated, { useSharedValue, useAnimatedStyle, useAnimatedScrollHandler } from 'react-native-reanimated';
 import { CollapsingSearchField, SEARCH_ZONE_HEIGHT } from '../../src/components/ui/CollapsingSearchField';
@@ -57,17 +57,6 @@ interface RecentApp {
 type RecentEntry =
   | { kind: 'profile'; ts: number; id: string; profile: ProfileResult }
   | { kind: 'app'; ts: number; id: string; app: RecentApp };
-
-/** A trimmed post, just enough for the preview cards under the top result. */
-interface SearchPreviewPost {
-  id: string;
-  content: string;
-  likes: number;
-  comments: number;
-}
-
-/** How many of the top match's posts to show. Three fills the gap without pushing the second result off screen. */
-const PREVIEW_POST_LIMIT = 3;
 
 /** Tile width. Sized so four fit on a 390 pt screen with the row's padding, as in the design. */
 const RECENT_TILE_WIDTH = 78;
@@ -398,89 +387,17 @@ export default function SearchScreen() {
     paddingTop: insets.top,
   }), [theme, insets.top]);
 
-  // ── A taste of the top match's content ──────────────────────────────────────
-  //
-  // The first result gets a few of its author's most recent posts rendered directly
-  // underneath, so a search for a person answers "is this the right person" without a
-  // round trip into their profile.
-  //
-  // Fetched rather than derived: deriving it would mean subscribing to the entity store's
-  // whole `posts` map and scanning it, which is exactly the subscription that makes
-  // `app/profile/[id].tsx` re-render on every unrelated upsert. A tiny `limit=3` request
-  // keyed on the author, memoised per author for the session, costs one round trip and
-  // cannot re-render this screen on someone else's activity.
-  const topResultId = profiles.length > 0 ? profiles[0].id : null;
-  const [previewPosts, setPreviewPosts] = useState<SearchPreviewPost[]>([]);
-  const previewCacheRef = useRef<Map<string, SearchPreviewPost[]>>(new Map());
-
-  useEffect(() => {
-    if (!topResultId) { setPreviewPosts([]); return; }
-    const cached = previewCacheRef.current.get(topResultId);
-    if (cached) { setPreviewPosts(cached); return; }
-    setPreviewPosts([]);
-    let cancelled = false;
-    // Off the keystroke frame. `debouncedQuery` already collapses typing bursts, but the
-    // author can still change on consecutive settled queries.
-    const handle = InteractionManager.runAfterInteractions(async () => {
-      try {
-        const { apiGet } = await import('../../src/services/apiClient');
-        const { data } = await apiGet<any[]>(
-          `/v1/profiles/${encodeURIComponent(topResultId)}/posts?limit=${PREVIEW_POST_LIMIT}`,
-        );
-        if (cancelled || !Array.isArray(data)) return;
-        const mapped: SearchPreviewPost[] = data.slice(0, PREVIEW_POST_LIMIT).map((p: any) => ({
-          id: String(p.id),
-          content: typeof p.content === 'string' ? p.content : '',
-          likes: Number(p.likes_count) || 0,
-          comments: Number(p.comments_count) || 0,
-        }));
-        previewCacheRef.current.set(topResultId, mapped);
-        if (!cancelled) setPreviewPosts(mapped);
-      } catch {}
-    });
-    return () => { cancelled = true; handle.cancel(); };
-  }, [topResultId]);
+  // (The top result used to carry previews of that person's latest posts. Posts were removed with
+  // the publishing feature, and so was that extra request per settled query.)
 
   // Stable list props so FlatList doesn't see new identities each keystroke.
   const keyExtractor = useCallback((item: ProfileResult) => item.id, []);
 
   const renderItem = useCallback(
-    ({ item, index }: { item: ProfileResult; index: number }) => (
-      <>
-        <SearchResultRow item={item} theme={theme} onSelect={handleSelect} />
-        {index === 0 && previewPosts.length > 0 ? (
-          <View style={{ paddingLeft: 56, paddingTop: 10, paddingBottom: 4, gap: 10 }}>
-            {previewPosts.map((p) => (
-              <Pressable
-                key={p.id}
-                // `/comments/[id]` IS the post detail route in this app — there is no
-                // `/post/[id]`.
-                onPress={() => router.push({ pathname: '/comments/[id]', params: { id: p.id } })}
-                style={{
-                  backgroundColor: theme.colors.background.elevated,
-                  borderRadius: 12,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                }}
-              >
-                <Text variant="caption" numberOfLines={3}>{p.content || '—'}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <MaterialIcons name="favorite" size={11} color={theme.colors.text.tertiary} />
-                    <Text variant="caption" color={theme.colors.text.tertiary}>{p.likes}</Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <MaterialIcons name="chat-bubble" size={11} color={theme.colors.text.tertiary} />
-                    <Text variant="caption" color={theme.colors.text.tertiary}>{p.comments}</Text>
-                  </View>
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-      </>
+    ({ item }: { item: ProfileResult }) => (
+      <SearchResultRow item={item} theme={theme} onSelect={handleSelect} />
     ),
-    [theme, handleSelect, previewPosts]
+    [theme, handleSelect]
   );
 
   const listContentStyle = useMemo(() => ({

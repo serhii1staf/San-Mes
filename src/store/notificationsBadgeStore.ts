@@ -69,19 +69,22 @@ function readCachedNotifications(): NotificationsCache | null {
   }
 }
 
-// Count cached notifications newer than the last-seen watermark. Shared by
-// the synchronous initial value and `recompute` so they can never drift.
+// ── THIS COUNTER IS RETIRED: IT IS ALWAYS 0 ──────────────────────────────────
+//
+// It counted the notifications feed, and that feed only ever carried likes, comments and new
+// followers (`NotificationKind = 'like' | 'comment' | 'follow'`). All three features were removed,
+// and so was the screen that marked them seen — so a non-zero value here could never be cleared and
+// would sit on the app icon (it is one of the two parts `osBadge` sums) for ever.
+//
+// Unread MESSAGES are counted by `chatUnreadStore`, which feeds the chat rows, the tab bar and the
+// other half of the icon badge. The store's API is kept so existing callers keep compiling; the
+// cached feed and the watermark are simply no longer read.
 function computeUnread(): number {
-  const cache = readCachedNotifications();
-  if (!cache?.data) return 0;
-  const lastSeen = readLastSeenTs();
-  let n = 0;
-  for (const item of cache.data) {
-    const t = new Date(item.ts).getTime();
-    if (Number.isFinite(t) && t > lastSeen) n++;
-  }
-  return n;
+  return 0;
 }
+// Kept referenced so the retired cache readers stay type-checked until the keys are dropped.
+void readCachedNotifications;
+void readLastSeenTs;
 
 // ── MIRROR THE COUNT ONTO THE APP ICON ───────────────────────────────────────
 //
@@ -136,34 +139,13 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
     syncOsBadge(unread);
   },
 
+  // No network any more: the feed this refetched (likes / comments / follows) no longer exists, so a
+  // request per foreground was pure load. Kept as a function so callers need no change.
   refresh: async (opts) => {
-    const now = Date.now();
-    // `force` bypasses the throttle. See `installNotificationsBadgeForegroundRefresh` for the one
-    // caller that needs it and why the throttle was silently eating the case it was reported for.
-    if (!opts?.force && now - lastRefreshAt < REFRESH_THROTTLE_MS) return;
-    // Claim the window BEFORE awaiting so concurrent focus events can't
-    // stampede a burst of parallel fetches.
-    lastRefreshAt = now;
-    try {
-      const { fetchAndCacheNotifications } = await import('../services/notificationsFeed');
-      const items = await fetchAndCacheNotifications();
-      if (items) {
-        // Cache is now server-truth → recompute sets the ABSOLUTE unread
-        // count, reconciling any transient `increment()` bumps from the
-        // realtime bridge. Never additive.
-        const unread = computeUnread();
-        set({ unread });
-        syncOsBadge(unread);
-      } else {
-        // Network/offline failure wrote nothing — release the throttle so
-        // the next home-tab focus can retry rather than waiting the full
-        // window. (Not a loop: refresh only fires on focus, not on render
-        // or on the unread state change.)
-        lastRefreshAt = 0;
-      }
-    } catch {
-      lastRefreshAt = 0;
-    }
+    void opts;
+    lastRefreshAt = Date.now();
+    set({ unread: 0 });
+    syncOsBadge(0);
   },
 
   markAllSeen: () => {
@@ -175,13 +157,10 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
     syncOsBadge(0);
   },
 
+  // A no-op: messages are counted once, by `chatUnreadStore`. Bumping this too made one message count
+  // twice on the app icon until the next refresh.
   increment: (by = 1) => {
-    if (!Number.isFinite(by) || by <= 0) return;
-    set((s) => {
-      const unread = s.unread + by;
-      syncOsBadge(unread);
-      return { unread };
-    });
+    void by;
   },
 }));
 

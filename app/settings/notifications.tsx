@@ -52,12 +52,9 @@ interface RowSpec {
   labelDefault: string;
 }
 
-/** Ordered by how often the event happens, so the most consequential switch is first. */
+/** Messages only: comments, likes and new-follower alerts went away with publishing and followers. */
 const CATEGORY_ROWS: readonly RowSpec[] = [
   { key: 'message', icon: 'message-circle', tint: '#0A84FF', labelKey: 'alerts.cat.messages', labelDefault: 'Messages' },
-  { key: 'comment', icon: 'corner-up-left', tint: '#BF5AF2', labelKey: 'alerts.cat.comments', labelDefault: 'Comments' },
-  { key: 'follow', icon: 'user-plus', tint: '#30D158', labelKey: 'alerts.cat.follows', labelDefault: 'New followers' },
-  { key: 'like', icon: 'heart', tint: '#FF453A', labelKey: 'alerts.cat.likes', labelDefault: 'Likes' },
 ];
 
 function ToggleRow({

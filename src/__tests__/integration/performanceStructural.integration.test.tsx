@@ -6,16 +6,14 @@
 // memoization + virtualization + stable callbacks. This integration test
 // composes those checks across the heavy screens identified in Block B:
 //
-//   1. RENDER-COUNTER checks for the memoized list-item components
-//      (TrackResultCard, UserProfilePostCard) — proving that an unrelated
-//      parent re-render does NOT cascade into the memoized child. This is
-//      what guarantees scroll/feed re-renders don't multiply work per row.
+//   1. RENDER-COUNTER checks for the memoized list-item component
+//      (TrackResultCard) — proving that an unrelated parent re-render does
+//      NOT cascade into the memoized child. This is what guarantees scroll
+//      re-renders don't multiply work per row.
 //   2. STRUCTURAL string-level assertions on the heavy screens
-//      ((tabs)/index.tsx, (tabs)/profile.tsx, app/profile/[id].tsx,
-//       chat/[id].tsx, chat/music.tsx) — every FlatList is configured with
-//      `removeClippedSubviews`, `maxToRenderPerBatch`, `windowSize`, and
-//      `initialNumToRender`. Missing any of these regresses the Property 5
-//      structural invariant.
+//      (chat/[id].tsx, chat/music.tsx, (tabs)/messages.tsx) — every list is
+//      virtualised or recycling — and on the two profile screens, which must
+//      stay list-free since the post lists were removed.
 //
 // Why structural for the screens: full-screen renders pull in router,
 // safe-area, gesture-handler, reanimated, MMKV — too heavy for a pure-JS
@@ -97,14 +95,6 @@ jest.mock('react-native-youtube-iframe', () => {
   return { __esModule: true, default: (props: any) => React.createElement(View, props) };
 });
 
-jest.mock('../../components/ui/SwipeablePostCard', () => {
-  const React = require('react');
-  const { View } = require('react-native');
-  return {
-    SwipeablePostCard: ({ children }: any) => React.createElement(View, null, children),
-  };
-});
-
 jest.mock('../../components/ui/LinkPreview', () => {
   const React = require('react');
   const { View } = require('react-native');
@@ -118,7 +108,6 @@ jest.mock('expo-image', () => {
 });
 
 import { TrackResultCard } from '../../components/ui/TrackResultCard';
-import { UserProfilePostCard } from '../../components/ui/UserProfilePostCard';
 import type { Track } from '../../services/musicService';
 
 const mkTrack = (id: string): Track =>
@@ -132,21 +121,6 @@ const mkTrack = (id: string): Track =>
     sourceHost: 'https://api.audius.co',
     isPreview: false,
   }) as Track;
-
-const mkPost = (id: string) =>
-  ({
-    id,
-    authorId: 'a-1',
-    authorName: 'Alice',
-    authorUsername: 'alice',
-    content: 'hello world',
-    likesCount: 0,
-    commentsCount: 0,
-    sharesCount: 0,
-    isLiked: false,
-    isBookmarked: false,
-    createdAt: new Date(2024, 0, 1).toISOString(),
-  });
 
 // ───────────────────────────────────────────────────────────────────────────
 // 1. Render-counter checks — memoized list items don't re-render when the
@@ -198,74 +172,6 @@ describe('Performance integration — memoized list items skip parent re-renders
     }
     expect(parentRenderCount).toBe(6);
     // Card render count is still 1 — not re-rendered by parent updates.
-    expect(cardRenderCount).toBe(1);
-
-    await act(async () => renderer.unmount());
-  });
-
-  it('UserProfilePostCard does NOT re-render when the parent re-renders with stable callbacks', async () => {
-    const post = mkPost('post-memo-1');
-    let parentRenderCount = 0;
-    let cardRenderCount = 0;
-
-    // Stable callbacks — useCallback equivalent. New refs would defeat memo.
-    const stableLongPress = () => {};
-    const stableImagePress = () => {};
-
-    const CountingCard = React.memo(
-      function CountingCard(props: any) {
-        cardRenderCount++;
-        return React.createElement(UserProfilePostCard, props);
-      },
-      // Same comparator as production UserProfilePostCard — id + visual
-      // fields + callback identity.
-      (prev, next) =>
-        prev.post.id === next.post.id &&
-        prev.post.content === next.post.content &&
-        prev.post.likesCount === next.post.likesCount &&
-        prev.post.commentsCount === next.post.commentsCount &&
-        prev.post.imageUrl === next.post.imageUrl &&
-        prev.post.imageUrls === next.post.imageUrls &&
-        prev.authorName === next.authorName &&
-        prev.authorUsername === next.authorUsername &&
-        prev.onLongPress === next.onLongPress &&
-        prev.onImagePress === next.onImagePress,
-    );
-
-    const Parent = ({ tick }: { tick: number }) => {
-      parentRenderCount++;
-      return React.createElement(
-        require('react-native').View,
-        { testID: `tick-${tick}` },
-        React.createElement(CountingCard, {
-          post,
-          authorName: 'Alice',
-          authorUsername: 'alice',
-          authorEmoji: '🎉',
-          authorVerified: false,
-          authorBadge: null,
-          authorId: 'a-1',
-          postEmoji: '🎉',
-          onLongPress: stableLongPress,
-          onImagePress: stableImagePress,
-        }),
-      );
-    };
-
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(React.createElement(Parent, { tick: 0 }));
-    });
-    expect(parentRenderCount).toBe(1);
-    expect(cardRenderCount).toBe(1);
-
-    for (let i = 1; i <= 5; i++) {
-      await act(async () => {
-        renderer.update(React.createElement(Parent, { tick: i }));
-      });
-    }
-    expect(parentRenderCount).toBe(6);
-    // Memo blocked all re-renders downstream — the heavy card never rebuilt.
     expect(cardRenderCount).toBe(1);
 
     await act(async () => renderer.unmount());
@@ -357,25 +263,17 @@ function usesFlashList(source: string): boolean {
 }
 
 describe('Performance integration — heavy screens declare FlatList virtualization', () => {
-  // (tabs)/profile — own profile.
-  it('(tabs)/profile.tsx FlatList is virtualised', () => {
+  // Both profile screens lost their post lists with the publishing feature. They are a fixed handful
+  // of views now, which is what makes opening a profile cheap; a list creeping back in (and with it
+  // per-row mount cost on the push transition) should be a deliberate, reviewed change.
+  it('(tabs)/profile.tsx renders no list', () => {
     const src = readScreen('app/(tabs)/profile.tsx');
-    const v = detectFlatListVirt(src);
-    expect(v.removeClippedSubviews).toBe(true);
-    expect(v.initialNumToRender).toBe(true);
-    expect(v.maxToRenderPerBatch).toBe(true);
-    expect(v.windowSize).toBe(true);
+    expect(src).not.toMatch(/<(?:Animated)?(?:FlashList|FlatList)\b/);
   });
 
-  // app/profile/[id] — other-user profile (the screen that prompted the
-  // UserProfilePostCard memoization in the first place).
-  it('app/profile/[id].tsx FlatList is virtualised', () => {
+  it('app/profile/[id].tsx renders no list', () => {
     const src = readScreen('app/profile/[id].tsx');
-    const v = detectFlatListVirt(src);
-    expect(v.removeClippedSubviews).toBe(true);
-    expect(v.initialNumToRender).toBe(true);
-    expect(v.maxToRenderPerBatch).toBe(true);
-    expect(v.windowSize).toBe(true);
+    expect(src).not.toMatch(/<(?:Animated)?(?:FlashList|FlatList)\b/);
   });
 
   // chat/[id] — heavy chat. Migrated to FlashList v2 (cell recycling) the
@@ -423,11 +321,6 @@ describe('Performance integration — heavy screens use useCallback for list cal
     expect(src).toMatch(/useCallback\b/);
     // MemoMessageBubble defined with React.memo + custom comparator
     expect(src).toMatch(/React\.memo\(MessageBubble/);
-  });
-
-  it('app/profile/[id].tsx uses memoized UserProfilePostCard', () => {
-    const src = readScreen('app/profile/[id].tsx');
-    expect(src).toMatch(/UserProfilePostCard/);
   });
 
   it('chat/music.tsx uses memoized TrackResultCard', () => {

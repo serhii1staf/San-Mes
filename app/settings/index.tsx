@@ -400,12 +400,6 @@ export default function SettingsScreen() {
             onPress={() => router.push('/profile/edit')}
             isFirst
           />
-          <SettingsRow
-            icon="inbox"
-            iconTint="red"
-            label={t('settings.notifications')}
-            onPress={() => router.push('/notifications')}
-          />
           {/* ── PUSH IS A SUB-SCREEN NOW, NOT AN INLINE SWITCH ──────────────────
               It grew a second dimension. There are per-category preferences (messages / comments /
               follows / likes) alongside the master switch, and four more toggles inlined here would

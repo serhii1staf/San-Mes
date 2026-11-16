@@ -26,6 +26,10 @@ export interface LocalProfile {
   links: string | null;
   badge?: string | null;
   is_verified?: boolean;
+  /** The owner's header decorations as JSON text (see `toSceneText` in syncService). */
+  header_scene?: string | null;
+  /** Owner-controlled: viewers may not screenshot or record this profile. */
+  screenshots_disabled?: boolean;
   created_at: string | null;
   updated_at: string | null;
 }

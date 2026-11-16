@@ -24,9 +24,6 @@ type TabBarIconProps = { color: string; size: number };
 const SearchTabIcon = ({ color, size }: TabBarIconProps) => (
   <Feather name="search" size={size} color={color} />
 );
-const CreateTabIcon = ({ color, size }: TabBarIconProps) => (
-  <Feather name="plus-circle" size={size} color={color} />
-);
 /**
  * Messages tab, with an unread count.
  *
@@ -120,7 +117,6 @@ const ProfileTabIcon = ({ color, size }: TabBarIconProps) => {
 export const unstable_settings = { initialRouteName: 'messages' };
 
 const searchOptions = { title: 'Search', tabBarIcon: SearchTabIcon };
-const createOptions = { title: 'Create', headerShown: false, tabBarIcon: CreateTabIcon };
 const messagesOptions = { title: 'Messages', tabBarIcon: MessagesTabIcon };
 const profileOptions = { title: 'Profile', tabBarIcon: ProfileTabIcon };
 
@@ -132,8 +128,10 @@ export default function TabLayout() {
           `href: null` drops it from expo-router's own linking, and CustomTabBar
           filters it out of the tab row, so it is never shown as a tab. */}
       <Tabs.Screen name="index" options={{ href: null }} />
+      {/* The Create tab was removed with publishing. Its route file is deleted in the same
+          change; a layout entry without a file (or the reverse) is what produced the black
+          screen when the Home tab was removed. */}
       <Tabs.Screen name="search" options={searchOptions} />
-      <Tabs.Screen name="create" options={createOptions} />
       <Tabs.Screen name="messages" options={messagesOptions} />
       <Tabs.Screen name="profile" options={profileOptions} />
     </Tabs>
