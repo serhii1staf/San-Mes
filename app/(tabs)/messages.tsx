@@ -16,6 +16,7 @@ import Reanimated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { router, useFocusEffect } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
@@ -1355,6 +1356,10 @@ export default function MessagesScreen() {
   // Native iOS-26 liquid glass for the category tab chips. iOS-only + opt-in.
   const glassActive = useLiquidGlassActive();
   const [activeTab, setActiveTab] = useState<ChatTab>('chats');
+  // True while THIS tab is the focused screen. False the moment a chat (or any
+  // screen) is pushed over the tab navigator — which is exactly the window in
+  // which the list derivations below are wasted work nobody can see.
+  const isFocused = useIsFocused();
 
   // ─── Selection ("Изм.") mode ──────────────────────────────────────────────
   //
@@ -1938,7 +1943,10 @@ export default function MessagesScreen() {
   // read-state concept at all, so item.unreadCount > 0 was tested against a constant zero.
   const unreadCounts = useChatUnread((s) => s.counts);
   const reconcileUnread = useChatUnread((s) => s.reconcile);
+  const previewFreezeRef = useRef<Map<string, { text: string; at: string; hasImage: boolean; senderId?: string }> | null>(null);
   const previewByConv = useMemo(() => {
+    // Frozen while this tab is not focused — see the note on `conversationsFreezeRef` below.
+    if (!isFocused && previewFreezeRef.current) return previewFreezeRef.current;
     const out = new Map<string, { text: string; at: string; hasImage: boolean; senderId?: string }>();
     for (const convId in persistedPreviews) {
       const p = persistedPreviews[convId];
@@ -1971,11 +1979,25 @@ export default function MessagesScreen() {
         senderId: last.senderId || undefined,
       });
     }
+    previewFreezeRef.current = out;
     return out;
-  }, [messagesByConv, persistedPreviews]);
+  }, [messagesByConv, persistedPreviews, isFocused]);
 
   // Use entityStore conversations as cache layer; fall back to chatStore if empty
+  //
+  // ── FROZEN WHILE THIS TAB IS NOT FOCUSED ──────────────────────────────────
+  // On the New Architecture, react-native-screens does not freeze the tab screen
+  // directly beneath a pushed stack screen (an open chat), so without this guard
+  // this map — plus the whole visibleChats/filteredBase/filtered/activeToday chain
+  // and the FlatList reconcile it feeds — re-ran on EVERY incoming or outgoing
+  // message while the user was inside a chat. Returning the frozen reference keeps
+  // every downstream memo's inputs unchanged, so they all skip. The store keeps
+  // updating underneath; on refocus the memo recomputes fresh, so the list is
+  // correct the first frame it is visible again.
+  const conversationsFreezeRef = useRef<Conversation[] | null>(null);
   const conversations: Conversation[] = useMemo(() => {
+    if (!isFocused && conversationsFreezeRef.current) return conversationsFreezeRef.current;
+    const result: Conversation[] = (() => {
     if (entityConversations.length > 0) {
       const profiles = useEntityStore.getState().profiles;
       // Map LocalConversation to Conversation type with defaults for missing fields
@@ -2033,7 +2055,10 @@ export default function MessagesScreen() {
       });
     }
     return chatStoreConversations;
-  }, [entityConversations, chatStoreConversations, previewByConv, unreadCounts]);
+    })();
+    conversationsFreezeRef.current = result;
+    return result;
+  }, [entityConversations, chatStoreConversations, previewByConv, unreadCounts, isFocused]);
 
   // "At least one new message" for conversations we never saw an event for.
   //
