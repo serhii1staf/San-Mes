@@ -47,7 +47,7 @@
       },
       "ios": {
         "credentialsSource": "remote",
-        "image": "latest"
+        "image": "sdk-54"
       },
       "node": "20.18.0",
       "env": {

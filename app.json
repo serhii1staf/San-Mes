@@ -24,9 +24,8 @@
         "UIBackgroundModes": [
           "audio"
         ],
-        "NSPhotoLibraryUsageDescription": "San uses your photo library so you can attach images to posts, comments, and chat messages, and so you can set a profile picture, banner, or chat background.",
-        "NSPhotoLibraryAddUsageDescription": "San saves screenshots of posts to your photo library when you tap Save.",
-        "NSCameraUsageDescription": "San uses the camera so you can take a photo to attach to a post."
+        "NSPhotoLibraryUsageDescription": "San uses your photo library so you can send photos in chats and set your profile banner or a chat background.",
+        "NSPhotoLibraryAddUsageDescription": "San saves a photo from a chat to your photo library when you tap Save."
       },
       "entitlements": {
         "com.apple.security.application-groups": [
@@ -55,6 +54,13 @@
           "microphonePermission": false,
           "recordAudioAndroid": false,
           "enableBackgroundRecording": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
       [
