@@ -83,3 +83,8 @@ workers/api/node_modules/
 workers/api/.dev.vars
 workers/api/.wrangler/
 workers/api/dist/
+
+# Third-party agent skills installed locally for Kiro (design + perf reference).
+# Kept out of git: one is unlicensed, and 6.5 MB of HIG/RN reference docs do not
+# belong in a public app repo. Provenance + how to reinstall is in .kiro/SKILLS.md.
+.kiro/skills/
