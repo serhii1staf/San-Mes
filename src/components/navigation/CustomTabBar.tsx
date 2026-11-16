@@ -32,12 +32,10 @@ import { useChatUnread, totalChatUnread } from '../../store/chatUnreadStore';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-// The main capsule holds 3 tabs (search, create, messages) after the Home feed
-// tab was removed. Profile lives in a SEPARATE detached capsule to the right, so
-// the lens/gesture slot math below operates over 3 slots.
-const TAB_COUNT = 3;
-// Create is the middle button of the 3-tab main bar (search 0, [create 1], messages 2).
-const CREATE_INDEX = 1;
+// The main capsule holds 2 tabs (search, messages): the Home feed tab and the Create
+// (publishing) button were both removed. Profile lives in a SEPARATE detached capsule
+// to the right, so the lens/gesture slot math below operates over 2 slots.
+const TAB_COUNT = 2;
 const TAB_BUTTON_HEIGHT = 48;
 const TAB_ROW_PADDING_H = 6;
 const TAB_ROW_PADDING_V = 6;
@@ -158,9 +156,7 @@ let lastSlotWidth = 0;
 // The settings tiles deliberately stay on MaterialIcons — they were approved as they are, and a
 // saturated square tile is exactly where a geometric glyph belongs.
 const ICON_NAMES: Record<string, keyof typeof Ionicons.glyphMap> = {
-  index: 'home',
   search: 'search',
-  create: 'add-circle',
   // `message-circle`, not `send`. Reported as "the icon still is not a chats icon" — `send` is a
   // paper plane, which means "compose/send", not "conversations". Every messenger uses a speech
   // bubble for the list of chats, and the paper plane for the send action inside one.
@@ -187,19 +183,6 @@ const ICON_NAMES: Record<string, keyof typeof Ionicons.glyphMap> = {
 //
 // Before changing a tab's appearance, check WHICH of the two renderers owns it.
 
-// Worklet helper — pick the standard slot closest to a given finger slot index
-function snapToStandardSlot(fingerSlot: number): number {
-  'worklet';
-  if (fingerSlot <= 0) return 0;
-  if (fingerSlot >= TAB_COUNT - 1) return TAB_COUNT - 1;
-  if (fingerSlot === CREATE_INDEX) {
-    // Create is a button, not a lens tab, so the lens never rests on it: snap to
-    // the adjacent real tab. Count-relative so it tracks CREATE_INDEX/TAB_COUNT.
-    return fingerSlot < CREATE_INDEX ? CREATE_INDEX - 1 : CREATE_INDEX + 1;
-  }
-  return fingerSlot;
-}
-
 // ─── Tab Button (with UI-thread icon magnification) ──────────────────────────
 //
 // Each Standard_Tab icon scales up when the lens is over it, simulating the
@@ -223,51 +206,16 @@ interface TabBarButtonProps {
   label: string;
   activeColor: string;
   inactiveColor: string;
-  accentSecondary: string;
   pillX: SharedValue<number>;
   pillStretchW: SharedValue<number>;
   pillBaseWidth: number;
   slotWidth: number;
 }
 
-// ─── Two icon wrappers, so each subscribes to only what it needs ─────────────
-//
-// These exist because of how Reanimated decides what a worklet listens to.
-// From `hook/useAnimatedStyle.js` in the installed 4.1.7:
-//
-//     let inputs = Object.values(updater.__closure ?? {});
-//     ...
-//     const mapperId = startMapper(fun, inputs);
-//
-// The mapper's inputs are EVERY value captured in the worklet's closure — not
-// the subset a particular run happens to read. So the single shared style this
-// replaced, which opened with `if (isCreate) return { transform: [{ scale:
-// pressScale.value }] }` and only touched the lens values below that line, was
-// still registered as a listener on `pillX` and `pillStretchW` for the create
-// button too. The early return saved the arithmetic and none of the wakeups:
-// all four main buttons plus `SlidingLens` re-ran on every frame of a tab
-// switch, five mappers and five `updateProps` for a ~400-600ms spring, when
-// only four of them could possibly produce a different result.
-//
-// Splitting the wrapper is what actually unsubscribes it. `isCreate` is derived
-// from `routeName`, which is fixed for the lifetime of a given button (the key
-// is the route key), so the two branches are stable — this is not a conditional
-// hook.
-
-/** Press-squish only. One shared value, so one mapper input. */
-const PressScaleIcon = React.memo(function PressScaleIcon({
-  pressScale,
-  children,
-}: {
-  pressScale: SharedValue<number>;
-  children: React.ReactNode;
-}) {
-  const style = useAnimatedStyle(() => {
-    'worklet';
-    return { transform: [{ scale: pressScale.value }] };
-  });
-  return <Animated.View style={style}>{children}</Animated.View>;
-});
+// Note on Reanimated subscriptions (installed 4.1.7, `hook/useAnimatedStyle.js`): a mapper's
+// inputs are EVERY shared value captured in the worklet's closure, not the subset a given run reads.
+// That is why the press-only wrapper used by the old Create button was a separate component; with
+// Create gone every main button is a lens tab and uses `MagnifyIcon`.
 
 /** Press-squish combined with the sliding-lens magnify. */
 const MagnifyIcon = React.memo(function MagnifyIcon({
@@ -320,14 +268,12 @@ const TabBarButton = React.memo(function TabBarButton({
   label,
   activeColor,
   inactiveColor,
-  accentSecondary,
   pillX,
   pillStretchW,
   pillBaseWidth,
   slotWidth,
 }: TabBarButtonProps) {
   const iconName = ICON_NAMES[routeName] || 'ellipse';
-  const isCreate = routeName === 'create';
 
   // Per-button press-squish — independent of the sliding lens. The lens only
   // exists on the ACTIVE tab, so the old lens-only squish "disappeared" when no
@@ -340,31 +286,6 @@ const TabBarButton = React.memo(function TabBarButton({
   // Center x of THIS button's icon in the same coordinate space as `pillX`
   // (which is "x of the pill's left edge inside the bar container").
   const buttonCenterX = TAB_ROW_PADDING_H + (index + 0.5) * slotWidth;
-
-  // The magnify/press worklets live in `MagnifyIcon` / `PressScaleIcon` above —
-  // see the note there for why they had to be separate components rather than
-  // one style with an `if (isCreate)` early return.
-
-  if (isCreate) {
-    return (
-      <Pressable
-        onPress={onPress}
-        onLongPress={onLongPress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        style={styles.tabButton}
-        accessibilityRole="button"
-        accessibilityLabel={label}
-        accessibilityState={{ selected: isFocused }}
-      >
-        <PressScaleIcon pressScale={pressScale}>
-          <View style={[styles.createCircle, { backgroundColor: accentSecondary }]}>
-            <Ionicons name="add" size={24} color="#FFFFFF" />
-          </View>
-        </PressScaleIcon>
-      </Pressable>
-    );
-  }
 
   const color = isFocused ? activeColor : inactiveColor;
 
@@ -985,6 +906,11 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     }
     return { mainRoutes: main, profileRoute: profile };
   }, [state.routes]);
+  // The slot width is `bar / TAB_COUNT`, so a route added to (or removed from) the tabs layout
+  // without updating TAB_COUNT would draw buttons and the lens on different grids.
+  if (__DEV__ && mainRoutes.length !== TAB_COUNT) {
+    console.warn(`[CustomTabBar] ${mainRoutes.length} main tabs but TAB_COUNT is ${TAB_COUNT}.`);
+  }
 
   // Currently-focused route (in the full routes array).
   const focusedRoute = state.routes[state.index];
@@ -1219,11 +1145,11 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         // 4) Track which slot the finger is currently over — used at release time only
         const fingerXInRow = e.x - TAB_ROW_PADDING_H;
         const fingerSlotF = fingerXInRow / sw;
-        const fingerSlotI = Math.max(
+        // Every main slot is a real tab now, so the clamped slot IS the release slot.
+        releaseSlot.value = Math.max(
           0,
           Math.min(TAB_COUNT - 1, Math.round(fingerSlotF))
         );
-        releaseSlot.value = snapToStandardSlot(fingerSlotI);
       })
       .onFinalize(() => {
         'worklet';
@@ -1258,10 +1184,9 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     navigateOnRelease,
   ]);
 
-  // Pill is shown only when an ACTUAL main tab is focused AND it isn't the
-  // create button. Hidden on create (no highlight for the plus button) and on
-  // profile (activeMainSlot === -1, profile lives in its own capsule).
-  const pillVisible = activeMainSlot >= 0 && activeMainSlot !== CREATE_INDEX;
+  // Pill is shown only when an ACTUAL main tab is focused — hidden on profile
+  // (activeMainSlot === -1, profile lives in its own capsule).
+  const pillVisible = activeMainSlot >= 0;
   const pillBaseWidth = Math.max(0, slotWidth - 2 * PILL_INSET_X);
   const barMarginBottom =
     BAR_BOTTOM_MARGIN + (Platform.OS === 'android' ? insets.bottom : 0);
@@ -1425,7 +1350,6 @@ export const CustomTabBar = React.memo(function CustomTabBar({
                     }
                     activeColor={theme.colors.accent.primary}
                     inactiveColor={theme.colors.text.tertiary}
-                    accentSecondary={theme.colors.accent.secondary}
                     pillX={pillX}
                     pillStretchW={pillStretchW}
                     pillBaseWidth={pillBaseWidth}
@@ -1528,18 +1452,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     height: TAB_BUTTON_HEIGHT,
     zIndex: 6,
-  },
-  createCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 4,
   },
   pill: {
     position: 'absolute',

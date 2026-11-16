@@ -28,6 +28,13 @@ import {
   LocalConversation,
 } from './cacheService';
 
+/** The Worker returns `header_scene` as TEXT JSON; anything else is normalised to text (or null). */
+export function toSceneText(raw: unknown): string | null {
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'string') return raw;
+  try { return JSON.stringify(raw); } catch { return null; }
+}
+
 /**
  * Sync the main feed: fetch posts via the Worker, update entity store,
  * persist to cache.
@@ -146,6 +153,11 @@ export async function syncProfile(profileId: string): Promise<void> {
         links: (profile as any).links ? JSON.stringify((profile as any).links) : null,
         badge: (profile as any).badge || null,
         is_verified: (profile as any).is_verified || false,
+        // Both were dropped here, so another user's header decorations and their screenshot lock
+        // never reached the profile screen, which renders from this store.
+        // Stored as TEXT so the store's field-by-field equality check can skip unchanged rows.
+        header_scene: toSceneText((profile as any).header_scene),
+        screenshots_disabled: !!(profile as any).screenshots_disabled,
         created_at: profile.created_at || null,
         updated_at: profile.updated_at || null,
       };

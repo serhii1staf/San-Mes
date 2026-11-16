@@ -60,12 +60,11 @@ function shouldPresent(notification: any): boolean {
     if (data.type === 'message') {
       return !isActiveThread('chat', typeof data.conversation_id === 'string' ? data.conversation_id : null);
     }
-    if (data.type === 'comment') {
-      return !isActiveThread('post', typeof data.post_id === 'string' ? data.post_id : null);
-    }
-    // 'follow' and anything unrecognised: always present. A follow is never "already on
-    // screen", and an unknown type must fail OPEN — silently swallowing a notification is a
-    // worse failure than showing one banner too many.
+    // Comments, likes and follows belong to features that were removed (publishing, followers).
+    // An older Worker deploy may still send them; they are not shown while the app is open.
+    if (data.type === 'comment' || data.type === 'like' || data.type === 'follow') return false;
+    // Anything unrecognised: always present. An unknown type must fail OPEN — silently
+    // swallowing a notification is a worse failure than showing one banner too many.
     return true;
   } catch {
     return true;
@@ -106,13 +105,10 @@ function enqueueInAppAlert(notification: any): void {
   const content = notification?.request?.content;
   const data = content?.data;
   const rawType = typeof data?.type === 'string' ? data.type : '';
-  const kind =
-    rawType === 'message' || rawType === 'comment' || rawType === 'like' || rawType === 'follow'
-      ? (rawType as 'message' | 'comment' | 'like' | 'follow')
-      : null;
-  // Unknown type: no pill. Unlike the banner decision, which fails OPEN because swallowing a
-  // notification is worse than one banner too many, an ambient pill for an unrecognised event would
-  // have no honest text to show.
+  // Only messages raise a pill now: comments, likes and follows were removed with publishing and
+  // followers. Unknown type: no pill either — unlike the banner decision, which fails OPEN, an
+  // ambient pill for an unrecognised event would have no honest text to show.
+  const kind = rawType === 'message' ? ('message' as const) : null;
   if (!kind) return;
 
   const actorId =
@@ -124,7 +120,7 @@ function enqueueInAppAlert(notification: any): void {
     ? content.title.trim()
     : 'Someone';
 
-  let emoji = kind === 'follow' ? '👤' : kind === 'like' ? '❤️' : kind === 'comment' ? '💬' : '✉️';
+  let emoji = '✉️';
   try {
     if (actorId) {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -357,10 +353,9 @@ export function routeForNotificationData(data: unknown): string | null {
       const id = str(d.conversation_id);
       return id ? `/chat/${encodeURIComponent(id)}` : null;
     }
-    case 'comment': {
-      const id = str(d.post_id);
-      return id ? `/comments/${encodeURIComponent(id)}` : null;
-    }
+    case 'comment':
+      // Posts were removed; an old comment push just opens the app.
+      return null;
     case 'follow': {
       // The follower's profile is the useful destination — it is what the user wants to look
       // at, and it is where the follow-back action lives.

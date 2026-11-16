@@ -483,6 +483,7 @@ const ru: Record<string, string> = {
   'chat.paste_image': 'Вставить изображение',
   'chat.menu.edit': 'Редактировать',
   'chat.menu.delete': 'Удалить',
+  'chat.menu.report': 'Пожаловаться',
   'chat.menu.translate': 'Перевести',
   // Day-separator chips in the transcript. Absolute dates are formatted by
   // `Intl.DateTimeFormat` from the active locale, so only these two relative
@@ -1136,6 +1137,12 @@ const ru: Record<string, string> = {
   'chat.link': 'Ссылка',
   'chat.reply_label': 'Ответ',
   'profile.message': 'Сообщение',
+  'profile.more': 'Ещё',
+  'profile.media_empty': 'Здесь появятся фото из чатов',
+  'profile.edit_short': 'Изменить',
+  'profile.customize': 'Оформить',
+  'profile.switch_account': 'Сменить аккаунт',
+  'profile.blocked_hint': 'Вы заблокировали этого пользователя. Разблокировать можно в меню «Ещё».',
   'errors.boundary_title': 'Что-то пошло не так',
   'errors.boundary_body': 'Произошла непредвиденная ошибка. Попробуйте ещё раз.',
   'errors.boundary_retry': 'Попробовать снова',

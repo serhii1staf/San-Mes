@@ -483,6 +483,7 @@ const en: Record<string, string> = {
   'chat.paste_image': 'Paste image',
   'chat.menu.edit': 'Edit',
   'chat.menu.delete': 'Delete',
+  'chat.menu.report': 'Report',
 
   // ─── AI chat ───────────────────────────────────────────────────────────
   'ai_chat.title': 'San AI',
@@ -1126,6 +1127,12 @@ const en: Record<string, string> = {
   'chat.link': 'Link',
   'chat.reply_label': 'Reply',
   'profile.message': 'Message',
+  'profile.more': 'More',
+  'profile.media_empty': 'Photos from your chats will appear here',
+  'profile.edit_short': 'Edit',
+  'profile.customize': 'Customize',
+  'profile.switch_account': 'Switch account',
+  'profile.blocked_hint': 'You blocked this user. You can unblock them from the More menu.',
   'errors.boundary_title': 'Something went wrong',
   'errors.boundary_body': 'An unexpected error occurred. Please try again.',
   'errors.boundary_retry': 'Try again',

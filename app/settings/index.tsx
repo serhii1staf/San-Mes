@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, InteractionManager, Platform } from 'react-native';
+import { View, Animated, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, InteractionManager, Platform } from 'react-native';
 /**
  * ── WHY MaterialIcons AND NOT Feather FOR THE SETTINGS TILES ───────────────────
  *
@@ -41,8 +41,7 @@ import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { isNativeGlassCapable } from '../../src/components/ui/LiquidGlass';
 import { useT } from '../../src/i18n/store';
-import { PROFILE_THEMES_ENABLED } from '../../src/theme/profileThemes';
-import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColors, SCRIM_LOCATIONS } from '../../src/theme/scrim';
 
 // Per-row tint pairs (icon color + soft tile bg) — picked to be readable in
 // both light and dark mode without being eye-piercing. Same hue family as
@@ -195,6 +194,16 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Nav-bar fill: transparent at rest, opaque once a few points of content have scrolled under it.
+  const scrollY = React.useRef(new Animated.Value(0)).current;
+  const onScroll = React.useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
+    [scrollY],
+  );
+  const barOpacity = React.useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 12], outputRange: [0, 1], extrapolate: 'clamp' }),
+    [scrollY],
+  );
   // Field-level selector — destructuring the whole auth store re-rendered
   // this screen on every unrelated auth-state change.
   const logout = useAuthStore((s) => s.logout);
@@ -338,8 +347,6 @@ export default function SettingsScreen() {
   };
 
   const bgColor = theme.colors.background.primary;
-  const bgTransparent = theme.colors.background.primary + '00';
-  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   const sectionCardStyle: ViewStyle = {
     backgroundColor: theme.colors.background.elevated,
@@ -355,12 +362,25 @@ export default function SettingsScreen() {
 
   return (
     <View style={containerStyle}>
-      {/* Gradient fade header */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
-        <LinearGradient
-          colors={topScrimColors(theme.isDark, bgColor)}
-          locations={SCRIM_LOCATIONS}
-          style={StyleSheet.absoluteFill}
+      {/* ── A NAV BAR THAT TURNS SOLID, NOT A SCRIM ─────────────────────────────
+          This header was a darkening ramp over the list. A ramp only dims what passes under it,
+          so a row scrolled up behind the title was still legible THROUGH the title — two lines of
+          text on top of each other (seen on device: "Данные и память" under "Настройки").
+          Telegram and iOS Settings put a real bar there: transparent at rest, an opaque fill plus a
+          hairline as soon as content scrolls under it. The fill is the page colour, animated on the
+          native driver, so it costs nothing per frame. */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: insets.top + 48 }} pointerEvents="box-none">
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundColor: bgColor,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: theme.colors.border.light,
+              opacity: barOpacity,
+            },
+          ]}
         />
         <View
           style={{
@@ -385,39 +405,58 @@ export default function SettingsScreen() {
       </View>
 
       {/* Scrollable Content */}
-      <ScrollView contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: theme.spacing.lg, paddingTop: headerContentHeight }} showsVerticalScrollIndicator={false}>
+      <Animated.ScrollView
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 56 }}
+        showsVerticalScrollIndicator={false}
+      >
         {/* General */}
         <View style={sectionTitleStyle}>
           <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
             {t('settings.section.general')}
           </Text>
         </View>
+        {/* ── GENERAL: notifications + the device-behaviour settings, one card ──────
+            Trimmed for the messenger: the "Profile" row is gone (this screen is opened FROM the
+            profile, which has its own Edit tile), the notifications inbox went with likes /
+            comments / follows, and "Data and device" was folded in here — four rows did not need
+            two cards. */}
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="person"
-            iconTint="blue"
-            label={t('settings.profile')}
-            onPress={() => router.push('/profile/edit')}
-            isFirst
-          />
-          <SettingsRow
-            icon="inbox"
-            iconTint="red"
-            label={t('settings.notifications')}
-            onPress={() => router.push('/notifications')}
-          />
-          {/* ── PUSH IS A SUB-SCREEN NOW, NOT AN INLINE SWITCH ──────────────────
-              It grew a second dimension. There are per-category preferences (messages / comments /
-              follows / likes) alongside the master switch, and four more toggles inlined here would
-              have made this the longest card on the screen while burying the one switch that
-              actually stops delivery. The row shows the master state as its value so the
-              information is not lost by moving. */}
-          <SettingsRow
             icon="notifications-active"
-            iconTint="pink"
+            iconTint="red"
             label={t('settings.push_notifications', 'Push-уведомления')}
             value={pushNotificationsEnabled !== false ? t('common.on', 'Вкл.') : t('common.off', 'Выкл.')}
             onPress={() => router.push('/settings/notifications' as any)}
+            isFirst
+          />
+          <SettingsRow
+            icon="storage"
+            iconTint="green"
+            label={t('settings.data_storage')}
+            onPress={() => router.push('/settings/storage')}
+          />
+          <SettingsRow
+            icon="public"
+            iconTint="cyan"
+            label={t('settings.browser')}
+            value={useInAppBrowser ? t('settings.browser.in_app') : t('settings.browser.external')}
+            onPress={() => router.push('/settings/browser')}
+          />
+          <SettingsRow
+            icon="vibration"
+            iconTint="orange"
+            label={t('settings.haptic')}
+            showChevron={false}
+            rightElement={
+              <Switch
+                value={hapticEnabled}
+                onValueChange={setHaptic}
+                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                thumbColor="#FFFFFF"
+              />
+            }
             isLast
           />
         </View>
@@ -449,46 +488,6 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* ── Data ─────────────────────────────────────────────────────────────
-            Storage, the browser choice and haptics were mixed into "General" alongside the profile
-            and notifications. They are all device-behaviour settings, so they group. */}
-        <View style={sectionTitleStyle}>
-          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
-            {t('settings.section.data', 'Данные и устройство')}
-          </Text>
-        </View>
-        <View style={sectionCardStyle}>
-          <SettingsRow
-            icon="storage"
-            iconTint="green"
-            label={t('settings.data_storage')}
-            onPress={() => router.push('/settings/storage')}
-            isFirst
-          />
-          <SettingsRow
-            icon="public"
-            iconTint="cyan"
-            label={t('settings.browser')}
-            value={useInAppBrowser ? t('settings.browser.in_app') : t('settings.browser.external')}
-            onPress={() => router.push('/settings/browser')}
-          />
-          <SettingsRow
-            icon="vibration"
-            iconTint="orange"
-            label={t('settings.haptic')}
-            showChevron={false}
-            rightElement={
-              <Switch
-                value={hapticEnabled}
-                onValueChange={setHaptic}
-                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
-                thumbColor="#FFFFFF"
-              />
-            }
-            isLast
-          />
-        </View>
-
         {/* Appearance */}
         <View style={sectionTitleStyle}>
           <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
@@ -503,14 +502,6 @@ export default function SettingsScreen() {
             onPress={() => router.push('/settings/appearance')}
             isFirst
           />
-          {PROFILE_THEMES_ENABLED && (
-            <SettingsRow
-              icon="wallpaper"
-              iconTint="pink"
-              label={t('settings.profile_theme', 'Тема профиля')}
-              onPress={() => router.push('/settings/profile-theme' as any)}
-            />
-          )}
           <SettingsRow
             icon="text-fields"
             iconTint="indigo"
@@ -537,36 +528,18 @@ export default function SettingsScreen() {
               `isLast` moves with it: it marks the row that draws no bottom separator, and it used to
               sit on the widget row. Without that adjustment the list would end on a row still
               drawing a separator into empty space. It is computed from what is actually rendered. */}
+          {/* Removed from this list in the messenger trim: "Pixel icons" (still reachable from the
+              chat, where it picks the reply icon), "Материал платформы" (a design-comparison concept
+              screen, not a setting) and "Превью мини-приложений". Their routes are untouched. */}
           {IS_IOS ? (
             <SettingsRow
               icon="apps"
               iconTint="pink"
               label={t('settings.app_icon')}
               onPress={() => setIconModalVisible(true)}
+              isLast={!glassCapable}
             />
           ) : null}
-          <SettingsRow
-            icon="grid-view"
-            iconTint="orange"
-            label="Pixel icons"
-            onPress={() => router.push('/settings/pixel-icons' as any)}
-          />
-          {/* Concept screen, not a setting: shows Liquid Glass beside Material 3 Expressive so the
-              two platform philosophies can be compared on one device. Changes nothing about the real
-              UI — see the header note in that file. */}
-          <SettingsRow
-            icon="auto-awesome"
-            iconTint="indigo"
-            label={t('settings.platform_design', 'Материал платформы')}
-            onPress={() => router.push('/settings/platform-design' as any)}
-          />
-          <SettingsRow
-            icon="web-asset"
-            iconTint="pink"
-            label={t('settings.mini_app_preview')}
-            onPress={() => router.push('/settings/mini-app-preview' as any)}
-            isLast={!glassCapable && !IS_ANDROID}
-          />
           {glassCapable && (
             <SettingsRow
               icon="blur-on"
@@ -783,7 +756,7 @@ export default function SettingsScreen() {
         <Text variant="caption" align="center" color={theme.colors.text.tertiary} style={{ marginTop: 14, fontSize: 11 }}>
           {t('settings.version', undefined, { version: appVersion })}
         </Text>
-      </ScrollView>
+      </Animated.ScrollView>
 
       {/* Bottom fade — mirrors the top header fade so the settings list
           dissolves into the background at the bottom edge instead of cutting
