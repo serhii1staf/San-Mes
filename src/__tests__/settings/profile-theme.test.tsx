@@ -30,8 +30,8 @@ import {
   BUILT_IN_THEME_LIST,
   DEFAULT_THEME_ID,
   type ProfileTheme,
-} from '../../src/theme/profileThemes';
-import { ProfileThemePreviewCard } from '../../src/components/profile/ProfileThemePreviewCard';
+} from '../../theme/profileThemes';
+import { ProfileThemePreviewCard } from '../../components/profile/ProfileThemePreviewCard';
 
 // ─── Controllable mock state ─────────────────────────────────────────────────
 // (jest.mock factories may only close over vars prefixed `mock*`.)
@@ -47,7 +47,7 @@ const mockUpdateProfile = jest.fn(() => Promise.resolve({ error: null }));
 
 // Per-account owner-theme store: drive what the screen treats as the persisted
 // selection without touching MMKV/AsyncStorage.
-jest.mock('../../src/store/profileThemeStore', () => {
+jest.mock('../../store/profileThemeStore', () => {
   const store = (selector: (s: any) => any) =>
     selector({
       setThemeId: mockSetThemeId,
@@ -66,7 +66,7 @@ jest.mock('../../src/store/profileThemeStore', () => {
 });
 
 // Auth store: a logged-in account whose row `themeId` is controllable.
-jest.mock('../../src/store/authStore', () => ({
+jest.mock('../../store/authStore', () => ({
   useAuthStore: (selector: (s: any) => any) =>
     selector({
       user: { id: 'acc-1', themeId: mockUserThemeId },
@@ -75,7 +75,7 @@ jest.mock('../../src/store/authStore', () => ({
 }));
 
 // Profile persistence: never hit the network.
-jest.mock('../../src/lib/supabase', () => ({
+jest.mock('../../lib/supabase', () => ({
   updateProfile: (...args: unknown[]) => mockUpdateProfile(...(args as [])),
 }));
 
@@ -105,13 +105,13 @@ jest.mock('@expo/vector-icons', () => ({
 }));
 jest.mock('react-native-webview', () => ({ WebView: () => null }));
 jest.mock('react-native-youtube-iframe', () => ({ __esModule: true, default: () => null }));
-jest.mock('../../src/components/ui/LiquidGlass', () => ({
+jest.mock('../../components/ui/LiquidGlass', () => ({
   useLiquidGlassActive: () => false,
   NativeGlassView: ({ children }: { children?: React.ReactNode }) => children ?? null,
 }));
 
-import { ThemeProvider } from '../../src/theme';
-import ProfileThemeScreen from './profile-theme';
+import { ThemeProvider } from '../../theme';
+import ProfileThemeScreen from '../../../app/settings/profile-theme';
 
 // ─── Deferred-mount control ───────────────────────────────────────────────────
 // Capture the InteractionManager callback the screen schedules for `cardsReady`

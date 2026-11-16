@@ -1138,6 +1138,8 @@ const ru: Record<string, string> = {
   'chat.reply_label': 'Ответ',
   'profile.message': 'Сообщение',
   'profile.more': 'Ещё',
+  'profile.media_empty': 'Здесь появятся фото из чатов',
+  'profile.edit_short': 'Изменить',
   'profile.customize': 'Оформить',
   'profile.switch_account': 'Сменить аккаунт',
   'profile.blocked_hint': 'Вы заблокировали этого пользователя. Разблокировать можно в меню «Ещё».',

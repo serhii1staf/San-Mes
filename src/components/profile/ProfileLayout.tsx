@@ -1,697 +1,384 @@
 /**
- * Telegram-style profile building blocks, shared by the own-profile tab (`app/(tabs)/profile.tsx`)
- * and someone else's profile (`app/profile/[id].tsx`).
+ * Profile building blocks shared by the own-profile tab (`app/(tabs)/profile.tsx`) and someone
+ * else's profile (`app/profile/[id].tsx`).
  *
- * Layout, top to bottom:
- *   - cover: optional banner / drawn background / stickers, a large round avatar, name, @username
- *   - a row of equal action tiles (Message / Share / More, or Edit / Customize / Share)
- *   - an info card: bio, username, links
- * plus a top bar that stays transparent over the cover and turns solid, with the name as its title,
- * once the name scrolls under it.
+ * The header is the app's ORIGINAL profile design (banner card, rounded-square avatar, left-aligned
+ * name / @handle, social chips, bio, action pills, floating buttons that slide away on scroll),
+ * kept as it was minus the follower counts. Below it, where the post tabs used to be, a "Медиа"
+ * grid shows recent photos from chats, so the screen is not empty.
  *
- * Everything that moves is driven by ONE `Animated.Value` (the scroll offset) through the native
- * driver, so scrolling and the collapse never touch the JS thread. Only `opacity` and `transform`
- * are animated; neither re-runs layout.
- *
- * Sizes come from `useWindowDimensions`, not a module-level `Dimensions.get`, so the screen
- * re-lays itself out when the window changes size (rotation, split view, iPhone Duo open/close).
+ * Performance: one ScrollView with a fixed handful of views instead of a post list; scroll effects
+ * are opacity / translate on the native driver; the media grid is read from the small per-chat tail
+ * cache AFTER the push transition, never on the open frame.
  */
-import React, { memo, useMemo } from 'react';
+import React, { memo, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Pressable,
   Animated,
   StyleSheet,
-  Text as RNText,
   Image,
   Modal,
-  Platform,
+  InteractionManager,
   useWindowDimensions,
 } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
+import { Avatar } from '../ui/Avatar';
 import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { UserBadge } from '../ui/UserBadge';
 import { CachedImage } from '../ui/CachedImage';
+import { BlurView } from '../ui/AppBlurView';
 import { NativeGlassView } from '../ui/LiquidGlass';
-import { emojiTextStyle } from '../ui/emojiText';
 import { LinkedText } from '../ui/LinkedText';
 import { HeaderBackgroundLayer } from './HeaderBackgroundLayer';
 import { HeaderSceneLayer } from './HeaderSceneLayer';
 import type { HeaderScene } from '../../services/headerScene';
 import type { BannerTransform } from '../../utils/bannerTransform';
+import { kvGetJSONSync } from '../../services/kvStore';
+import { useEntityStore } from '../../services/entityStore';
 import { triggerHaptic } from '../../utils/haptics';
 import { openUrl } from '../../utils/openUrl';
 import { useT } from '../../i18n/store';
 
-export const PROFILE_TOP_BAR_HEIGHT = 52;
-export const PROFILE_AVATAR_SIZE = 104;
-const AVATAR_TOP_GAP = 4;
+// ─── Scroll-driven values (same curves as the original screens) ─────────────
 
-// ─── Scroll-driven values ────────────────────────────────────────────────────
-
-export interface ProfileScrollAnim {
-  scrollY: Animated.Value;
-  onScroll: (...args: any[]) => void;
-  avatarStyle: any;
-  bannerStyle: any;
-  barBackgroundOpacity: Animated.AnimatedInterpolation<number>;
-  titleStyle: any;
-}
-
-/**
- * One scroll value, every interpolation derived from it once.
- *
- * The title and the bar background appear while the NAME passes under the bar. The name sits
- * `PROFILE_AVATAR_SIZE + AVATAR_TOP_GAP + 12` below the bar's bottom edge, so that is where the
- * hand-off is centred.
- */
-export function useProfileScrollAnim(): ProfileScrollAnim {
+export function useProfileScrollAnim() {
   const scrollY = React.useRef(new Animated.Value(0)).current;
-  return useMemo(() => {
-    const nameUnderBar = PROFILE_AVATAR_SIZE + AVATAR_TOP_GAP + 12;
-    return {
-      scrollY,
-      onScroll: Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
-      avatarStyle: {
-        opacity: scrollY.interpolate({
-          inputRange: [PROFILE_AVATAR_SIZE * 0.35, PROFILE_AVATAR_SIZE * 0.85],
-          outputRange: [1, 0],
-          extrapolate: 'clamp',
-        }),
-        transform: [
-          {
-            // Shrinks towards the bar as it scrolls away; grows slightly on an iOS pull-down.
-            scale: scrollY.interpolate({
-              inputRange: [-140, 0, PROFILE_AVATAR_SIZE],
-              outputRange: [1.14, 1, 0.55],
-              extrapolate: 'clamp',
-            }),
-          },
-          {
-            translateY: scrollY.interpolate({
-              inputRange: [0, PROFILE_AVATAR_SIZE],
-              outputRange: [0, PROFILE_AVATAR_SIZE * 0.3],
-              extrapolate: 'clamp',
-            }),
-          },
-        ],
-      },
-      // Over-scroll only (iOS bounce): the banner stretches to keep the gap above it filled.
-      // Positive scroll leaves it attached to the content.
-      bannerStyle: {
-        transform: [
-          {
-            translateY: scrollY.interpolate({
-              inputRange: [-300, 0, 1],
-              outputRange: [-150, 0, 0],
-              extrapolate: 'clamp',
-            }),
-          },
-          {
-            scale: scrollY.interpolate({
-              inputRange: [-300, 0, 1],
-              outputRange: [1.9, 1, 1],
-              extrapolate: 'clamp',
-            }),
-          },
-        ],
-      },
-      barBackgroundOpacity: scrollY.interpolate({
-        inputRange: [nameUnderBar - 24, nameUnderBar + 8],
-        outputRange: [0, 1],
-        extrapolate: 'clamp',
-      }),
-      titleStyle: {
-        opacity: scrollY.interpolate({
-          inputRange: [nameUnderBar - 6, nameUnderBar + 18],
-          outputRange: [0, 1],
-          extrapolate: 'clamp',
-        }),
-        transform: [
-          {
-            translateY: scrollY.interpolate({
-              inputRange: [nameUnderBar - 6, nameUnderBar + 18],
-              outputRange: [10, 0],
-              extrapolate: 'clamp',
-            }),
-          },
-        ],
-      },
-    };
-  }, [scrollY]);
+  return useMemo(() => ({
+    scrollY,
+    onScroll: Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
+    headerOpacity: scrollY.interpolate({ inputRange: [0, 36, 210], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
+    leftTranslateX: scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' }),
+    rightTranslateX: scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' }),
+  }), [scrollY]);
 }
+export type ProfileScrollAnim = ReturnType<typeof useProfileScrollAnim>;
 
-// ─── Top bar ─────────────────────────────────────────────────────────────────
+// ─── Floating chrome buttons (QR / settings, or back / menu) ─────────────────
 
-/**
- * Round 36 pt chrome button. Liquid glass when it is on; otherwise a flat translucent disc.
- *
- * Deliberately NOT a BlurView: this sits on every profile and a blur layer per button is the kind of
- * fixed cost that shows up as dropped frames during the push transition on weak Android devices.
- * Pressed feedback is a scale, never an opacity, because an opacity on any ancestor of a GlassView
- * discards the glass (expo/expo#41024).
- */
-export const ProfileChromeButton = memo(function ProfileChromeButton({
-  icon,
-  onPress,
-  onLongPress,
-  overMedia,
-  glassActive,
-  accessibilityLabel,
-  iconFamily = 'feather',
-}: {
-  icon: string;
-  onPress: () => void;
-  onLongPress?: () => void;
-  /** True when the button sits on a banner/drawing, which needs a dark disc and a white glyph. */
-  overMedia: boolean;
-  glassActive: boolean;
-  accessibilityLabel: string;
-  iconFamily?: 'feather' | 'fa5';
-}) {
-  const theme = useTheme();
-  // Over media the disc is always dark (dark glass, or a 32 % black fill), so a white glyph reads
-  // both on the cover and after the bar behind it has turned solid.
-  const color = overMedia ? '#FFFFFF' : theme.colors.text.primary;
-  const glyph =
-    iconFamily === 'fa5' ? (
-      <FontAwesome5 name={icon} size={15} color={color} />
-    ) : (
-      <Feather name={icon as any} size={19} color={color} />
-    );
+function ChromeButton({ glassActive, onPress, children, label }: { glassActive: boolean; onPress: () => void; children: React.ReactNode; label: string }) {
   return (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onLongPress}
-      hitSlop={8}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      style={({ pressed }) => ({ borderRadius: 18, transform: [{ scale: pressed ? 0.92 : 1 }] })}
-    >
+    <Pressable onPress={onPress} hitSlop={8} accessibilityRole="button" accessibilityLabel={label} style={{ borderRadius: 17, overflow: glassActive ? undefined : 'hidden' }}>
       {glassActive ? (
-        <NativeGlassView
-          glassStyle="regular"
-          colorScheme={overMedia || theme.isDark ? 'dark' : 'light'}
-          style={styles.chromeButton}
-        >
-          {glyph}
-        </NativeGlassView>
+        <NativeGlassView glassStyle="regular" colorScheme="dark" style={styles.chrome}>{children}</NativeGlassView>
       ) : (
-        <View
-          style={[
-            styles.chromeButton,
-            {
-              backgroundColor: overMedia
-                ? 'rgba(0,0,0,0.32)'
-                : theme.isDark
-                  ? 'rgba(255,255,255,0.10)'
-                  : 'rgba(0,0,0,0.06)',
-            },
-          ]}
-        >
-          {glyph}
-        </View>
+        <BlurView role="scrim" intensity={80} tint="dark" style={styles.chrome}>{children}</BlurView>
       )}
     </Pressable>
   );
-});
+}
 
-/**
- * Transparent over the cover; a solid bar with the name as its title once the name has scrolled
- * under it. The background is a plain fill, not a blur: animating the alpha of a
- * UIVisualEffectView renders it incorrectly until the alpha returns to 1, and a solid fill is
- * free on every device.
- */
-export const ProfileTopBar = memo(function ProfileTopBar({
-  topInset,
-  title,
-  anim,
-  left,
-  right,
+export const ProfileFloatingButtons = memo(function ProfileFloatingButtons({
+  topInset, anim, glassActive, left, right,
 }: {
   topInset: number;
-  title: string;
   anim: ProfileScrollAnim;
-  left?: React.ReactNode;
-  right?: React.ReactNode;
+  glassActive: boolean;
+  left?: { icon: string; fa5?: boolean; label: string; onPress: () => void };
+  right?: { icon: string; fa5?: boolean; label: string; onPress: () => void };
 }) {
-  const theme = useTheme();
+  const glyph = (b: { icon: string; fa5?: boolean }) =>
+    b.fa5 ? <FontAwesome5 name={b.icon} size={15} color="#FFFFFF" /> : <Feather name={b.icon as any} size={17} color="#FFFFFF" />;
   return (
-    <View
-      pointerEvents="box-none"
-      style={{ position: 'absolute', top: 0, left: 0, right: 0, height: topInset + PROFILE_TOP_BAR_HEIGHT, zIndex: 20 }}
-    >
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            backgroundColor: theme.colors.background.primary,
-            borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: theme.colors.border.light,
-            opacity: anim.barBackgroundOpacity,
-          },
-        ]}
-      />
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          top: topInset,
-          left: 0,
-          right: 0,
-          height: PROFILE_TOP_BAR_HEIGHT,
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingHorizontal: 12,
-        }}
-      >
-        <View style={styles.barSide} pointerEvents="box-none">{left}</View>
-        <Animated.View pointerEvents="none" style={[{ flex: 1, alignItems: 'center' }, anim.titleStyle]}>
-          <Text variant="body" weight="semibold" numberOfLines={1}>{title}</Text>
-        </Animated.View>
-        <View style={[styles.barSide, { alignItems: 'flex-end' }]} pointerEvents="box-none">{right}</View>
-      </View>
+    <View pointerEvents="box-none" style={{ position: 'absolute', top: topInset + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', zIndex: 100 }}>
+      <Animated.View style={{ transform: [{ translateX: anim.leftTranslateX }] }}>
+        {left ? <ChromeButton glassActive={glassActive} onPress={left.onPress} label={left.label}>{glyph(left)}</ChromeButton> : null}
+      </Animated.View>
+      <Animated.View style={{ transform: [{ translateX: anim.rightTranslateX }] }}>
+        {right ? <ChromeButton glassActive={glassActive} onPress={right.onPress} label={right.label}>{glyph(right)}</ChromeButton> : null}
+      </Animated.View>
     </View>
   );
 });
 
-// ─── Cover ───────────────────────────────────────────────────────────────────
+// ─── Social link chip (unchanged from the original header) ──────────────────
 
-export interface ProfileCoverProps {
+function detectLinkType(url: string): string {
+  const l = url.toLowerCase();
+  if (l.includes('github.com')) return 'github';
+  if (l.includes('twitter.com') || l.includes('x.com')) return 'twitter';
+  if (l.includes('instagram.com')) return 'instagram';
+  if (l.includes('youtube.com') || l.includes('youtu.be')) return 'youtube';
+  if (l.includes('t.me') || l.includes('telegram.me')) return 'telegram';
+  if (l.includes('tiktok.com')) return 'tiktok';
+  if (l.includes('linkedin.com')) return 'linkedin';
+  if (l.includes('discord.gg') || l.includes('discord.com')) return 'discord';
+  if (l.includes('twitch.tv')) return 'twitch';
+  if (l.includes('spotify.com')) return 'spotify';
+  return 'website';
+}
+
+function SocialChip({ url, glassActive }: { url: string; glassActive: boolean }) {
+  const theme = useTheme();
+  const t = useT();
+  const map: Record<string, { name: string; color: string; brand: boolean; label: string }> = {
+    github: { name: 'github', color: theme.isDark ? '#FFF' : '#333', brand: true, label: 'GitHub' },
+    twitter: { name: 'twitter', color: '#1DA1F2', brand: true, label: 'Twitter' },
+    instagram: { name: 'instagram', color: '#E4405F', brand: true, label: 'Instagram' },
+    youtube: { name: 'youtube', color: '#FF0000', brand: true, label: 'YouTube' },
+    telegram: { name: 'telegram-plane', color: '#0088CC', brand: true, label: 'Telegram' },
+    tiktok: { name: 'tiktok', color: theme.isDark ? '#FFF' : '#000', brand: true, label: 'TikTok' },
+    linkedin: { name: 'linkedin-in', color: '#0A66C2', brand: true, label: 'LinkedIn' },
+    discord: { name: 'discord', color: '#5865F2', brand: true, label: 'Discord' },
+    twitch: { name: 'twitch', color: '#9146FF', brand: true, label: 'Twitch' },
+    spotify: { name: 'spotify', color: '#1DB954', brand: true, label: 'Spotify' },
+    website: { name: 'globe', color: '#2563EB', brand: false, label: t('edit_profile.link_website') },
+  };
+  const icon = map[detectLinkType(url)] || map.website;
+  const content = (
+    <>
+      {icon.brand ? <FontAwesome5 name={icon.name} size={13} color={icon.color} brand /> : <Feather name={icon.name as any} size={13} color={icon.color} />}
+      <Text variant="caption" weight="semibold">{icon.label}</Text>
+    </>
+  );
+  const onPress = () => { triggerHaptic('light'); openUrl(url); };
+  if (glassActive) {
+    return (
+      <Pressable onPress={onPress} style={{ borderRadius: 16 }}>
+        <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.chip}>{content}</NativeGlassView>
+      </Pressable>
+    );
+  }
+  return (
+    <Pressable onPress={onPress} style={{ borderRadius: 16, overflow: 'hidden' }}>
+      <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={styles.chip}>{content}</BlurView>
+    </Pressable>
+  );
+}
+
+// ─── Action pill (unchanged from the original header) ────────────────────────
+
+export function ProfileActionPill({ glassActive, onPress, square = false, accent = false, children }: { glassActive: boolean; onPress: () => void; square?: boolean; accent?: boolean; children: React.ReactNode }) {
+  const theme = useTheme();
+  const height = 38;
+  const radius = height / 2;
+  const surface = { height, width: square ? height : undefined, paddingHorizontal: square ? 0 : 20, borderRadius: radius, flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 6 };
+  const accentFill = theme.colors.accent.primary;
+  if (glassActive) {
+    return (
+      <Pressable onPress={onPress} style={{ borderRadius: radius }}>
+        <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={accent ? accentFill + 'D9' : undefined} style={surface}>{children}</NativeGlassView>
+      </Pressable>
+    );
+  }
+  return (
+    <Pressable onPress={onPress} style={{ borderRadius: radius, overflow: 'hidden' }}>
+      <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={surface}>
+        {accent ? <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: accentFill + 'E6' }]} /> : null}
+        {children}
+      </BlurView>
+    </Pressable>
+  );
+}
+
+// ─── Header card (the original design, minus follower counts) ───────────────
+
+export const ProfileHeaderCard = memo(function ProfileHeaderCard({
+  topInset, anim, glassActive, emoji, displayName, username, isVerified, badge, bio, links,
+  bannerUrl, bannerTransform, scene, sceneAnimate, onAvatarPress, actions,
+}: {
   topInset: number;
+  anim: ProfileScrollAnim;
+  glassActive: boolean;
   emoji: string;
   displayName: string;
   username: string;
   isVerified?: boolean;
   badge?: string | null;
+  bio?: string | null;
+  links: { url: string }[];
   bannerUrl?: string;
   bannerTransform: BannerTransform;
   scene: HeaderScene | null;
   sceneAnimate: boolean;
-  anim: ProfileScrollAnim;
   onAvatarPress?: () => void;
-  onAvatarLongPress?: () => void;
-  avatarAccessibilityLabel?: string;
-}
-
-/** True when the cover has something painted behind the text, which then has to be white. */
-export function coverHasMedia(bannerUrl: string | undefined, scene: HeaderScene | null): boolean {
-  return !!bannerUrl || !!scene?.background || (scene?.drawing?.length ?? 0) > 0;
-}
-
-export const ProfileCover = memo(function ProfileCover({
-  topInset,
-  emoji,
-  displayName,
-  username,
-  isVerified,
-  badge,
-  bannerUrl,
-  bannerTransform,
-  scene,
-  sceneAnimate,
-  anim,
-  onAvatarPress,
-  onAvatarLongPress,
-  avatarAccessibilityLabel,
-}: ProfileCoverProps) {
+  actions: React.ReactNode;
+}) {
   const theme = useTheme();
   const { width } = useWindowDimensions();
-  const proxyWidth = Math.round(width);
-  const hasMedia = coverHasMedia(bannerUrl, scene);
-  const nameColor = hasMedia ? '#FFFFFF' : theme.colors.text.primary;
-  const subColor = hasMedia ? 'rgba(255,255,255,0.86)' : theme.colors.text.secondary;
-  const textShadow = hasMedia ? styles.textShadow : null;
-  const bg = theme.colors.background.primary;
-
-  // Avatar fill: a soft tint of the accent on a plain cover, a translucent disc on media.
-  const avatarFill = hasMedia
-    ? 'rgba(255,255,255,0.18)'
-    : theme.isDark
-      ? 'rgba(255,255,255,0.08)'
-      : 'rgba(0,0,0,0.05)';
-
+  const avatar = glassActive ? (
+    <NativeGlassView glassStyle={bannerUrl ? 'clear' : 'regular'} colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.avatarTile}>
+      <Avatar emoji={emoji || '😊'} size="lg" />
+    </NativeGlassView>
+  ) : (
+    <View style={[styles.avatarTile, { overflow: 'hidden' }]}>
+      <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={styles.avatarTile}>
+        <Avatar emoji={emoji || '😊'} size="lg" />
+      </BlurView>
+    </View>
+  );
+  // White name over a cover; theme text on the plain card (white-on-cream was unreadable in light).
+  const onMedia = !!bannerUrl || !!scene?.background || (scene?.drawing?.length ?? 0) > 0 || theme.isDark;
+  const nameColor = onMedia ? '#FFFFFF' : theme.colors.text.primary;
+  const handleColor = onMedia ? 'rgba(255,255,255,0.85)' : theme.colors.text.secondary;
+  const shadow = onMedia ? styles.textShadow : null;
   return (
-    <View style={{ paddingTop: topInset + PROFILE_TOP_BAR_HEIGHT + AVATAR_TOP_GAP, paddingBottom: 22 }}>
-      {/* Backdrop layers. Absolute, so the identity block alone decides the cover's height. */}
-      {hasMedia ? (
-        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, anim.bannerStyle]}>
-          {bannerUrl ? (
-            <CachedImage
-              uri={bannerUrl}
-              style={{
-                width: '100%',
-                height: '100%',
-                transform: [
-                  { translateX: bannerTransform.translateX },
-                  { translateY: bannerTransform.translateY },
-                  { scale: bannerTransform.scale },
-                ],
-              }}
-              resizeMode="cover"
-              proxyWidth={proxyWidth}
-              skeleton
-            />
-          ) : null}
-          <HeaderBackgroundLayer
-            backgroundId={scene?.background}
-            drawing={scene?.drawing}
-            hasBanner={!!bannerUrl}
-            blend={scene?.bgBlend}
+    <View style={{ borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+      {bannerUrl ? (
+        <View style={StyleSheet.absoluteFill}>
+          <CachedImage
+            uri={bannerUrl}
+            style={{ width: '100%', height: '100%', transform: [{ translateX: bannerTransform.translateX }, { translateY: bannerTransform.translateY }, { scale: bannerTransform.scale }] }}
+            resizeMode="cover"
+            proxyWidth={Math.round(width)}
+            skeleton
           />
-          {/* Darkens the top for the status bar and fades the bottom into the page, so the cover
-              ends without a hard edge and the action tiles sit on the page colour. */}
-          <LinearGradient
-            colors={['rgba(0,0,0,0.30)', 'rgba(0,0,0,0)', bg + '00', bg + 'E6']}
-            locations={[0, 0.3, 0.62, 1]}
-            style={StyleSheet.absoluteFill}
-          />
-        </Animated.View>
+          <LinearGradient colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '55']} style={StyleSheet.absoluteFill} pointerEvents="none" />
+        </View>
       ) : null}
-      <HeaderSceneLayer scene={scene} animate={sceneAnimate} />
+      <HeaderBackgroundLayer backgroundId={scene?.background} drawing={scene?.drawing} hasBanner={!!bannerUrl} blend={scene?.bgBlend} />
 
-      <View style={{ alignItems: 'center', paddingHorizontal: 24 }}>
-        <Animated.View style={anim.avatarStyle}>
-          <Pressable
-            onPress={onAvatarPress}
-            onLongPress={onAvatarLongPress}
-            disabled={!onAvatarPress && !onAvatarLongPress}
-            accessibilityRole={onAvatarPress ? 'button' : 'image'}
-            accessibilityLabel={avatarAccessibilityLabel}
-            style={({ pressed }) => [
-              styles.avatar,
-              { backgroundColor: avatarFill, transform: [{ scale: pressed ? 0.96 : 1 }] },
-            ]}
-          >
-            <RNText allowFontScaling={false} style={[emojiTextStyle(54), { textAlign: 'center' }]}>
-              {emoji || '🙂'}
-            </RNText>
-          </Pressable>
-        </Animated.View>
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14, maxWidth: '100%' }}>
-          <Text
-            variant="heading"
-            weight="bold"
-            color={nameColor}
-            numberOfLines={1}
-            style={{ flexShrink: 1, fontSize: 24, lineHeight: 29, textAlign: 'center', ...(textShadow || {}) }}
-          >
-            {displayName}
-          </Text>
+      <View style={{ paddingTop: topInset + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
+        {onAvatarPress ? (
+          <Pressable onPress={onAvatarPress} style={{ borderRadius: 26, alignSelf: 'flex-start' }}>{avatar}</Pressable>
+        ) : (
+          <View style={{ alignSelf: 'flex-start' }}>{avatar}</View>
+        )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+          <Text variant="heading" weight="bold" color={nameColor} numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28, ...(shadow || {}) }}>{displayName}</Text>
           {isVerified ? <VerifiedBadge size={18} /> : null}
           {badge ? <UserBadge badge={badge} size="md" /> : null}
         </View>
-        <Text
-          variant="body"
-          color={subColor}
-          numberOfLines={1}
-          style={{ marginTop: 3, fontSize: 15, ...(textShadow || {}) }}
-        >
-          @{username}
-        </Text>
+        <Text variant="body" color={handleColor} numberOfLines={1} style={{ marginTop: 2, ...(shadow || {}) }}>@{username}</Text>
+        {links.length > 0 ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+            {links.slice(0, 5).map((l, i) => <SocialChip key={`${l.url}-${i}`} url={l.url} glassActive={glassActive} />)}
+          </View>
+        ) : null}
+        {bio ? (
+          <View style={{ marginTop: 14 }}>
+            <LinkedText style={{ color: theme.colors.text.secondary, fontSize: 15, lineHeight: 21 }}>{bio}</LinkedText>
+          </View>
+        ) : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}>{actions}</View>
       </View>
+
+      <HeaderSceneLayer scene={scene} animate={sceneAnimate} />
+
+      {/* Frost fades in over the whole card as it scrolls away (native-driver opacity). */}
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: anim.headerOpacity }]}>
+        <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.isDark ? 'rgba(20,21,28,0.32)' : 'rgba(255,255,255,0.34)' }]} />
+      </Animated.View>
     </View>
   );
 });
 
-// ─── Action tiles ────────────────────────────────────────────────────────────
+// ─── "Медиа": recent photos from chats ───────────────────────────────────────
 
-export interface ProfileAction {
-  key: string;
-  icon: string;
-  label: string;
-  onPress: () => void;
-  destructive?: boolean;
-}
+export interface ProfileMediaItem { url: string; conversationId: string }
+
+const MEDIA_LIMIT = 24;
+const isAnimated = (u: string) => /\.gif(\?|$)/i.test(u) || /giphy\.com|tenor\.com/i.test(u);
 
 /**
- * Equal-width tiles, icon over label, like Telegram's Message / Mute / Call / More row.
- * Glass tiles on iOS when Liquid Glass is on, tonal tiles otherwise (Material 3 on Android).
+ * Photos from chats, newest first. `peerId` set: the DM with that person (both directions).
+ * `peerId` null: photos THIS account sent in its most recent chats.
+ *
+ * Read from `chat_tail:<conversationId>` (the bounded ~60-message tail the chat keeps for its own
+ * first paint), after interactions, so a profile push never pays for it. GIFs are skipped: a grid of
+ * animating GIFs is the decode load the chat screen gates for a reason.
  */
-export const ProfileActionRow = memo(function ProfileActionRow({
-  actions,
-  glassActive,
-}: {
-  actions: ProfileAction[];
-  glassActive: boolean;
-}) {
-  const theme = useTheme();
-  const tileBg = theme.colors.background.elevated;
-  return (
-    <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16 }}>
-      {actions.map((a) => {
-        const color = a.destructive ? theme.colors.status.error : theme.colors.accent.primary;
-        const content = (
-          <>
-            <Feather name={a.icon as any} size={21} color={color} />
-            <Text variant="caption" weight="medium" color={color} numberOfLines={1} style={{ fontSize: 12.5 }}>
-              {a.label}
-            </Text>
-          </>
-        );
-        return (
-          <Pressable
-            key={a.key}
-            onPress={() => { triggerHaptic('light'); a.onPress(); }}
-            accessibilityRole="button"
-            accessibilityLabel={a.label}
-            android_ripple={glassActive ? undefined : { color: theme.colors.accent.primary + '22', foreground: true }}
-            style={({ pressed }) => [
-              { flex: 1, borderRadius: 16, overflow: glassActive ? 'visible' : 'hidden' },
-              Platform.OS === 'ios' ? { transform: [{ scale: pressed ? 0.96 : 1 }] } : null,
-            ]}
-          >
-            {glassActive ? (
-              <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.tile}>
-                {content}
-              </NativeGlassView>
-            ) : (
-              <View style={[styles.tile, { backgroundColor: tileBg }]}>{content}</View>
-            )}
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-});
-
-// ─── Info card ───────────────────────────────────────────────────────────────
-
-export const ProfileInfoCard = memo(function ProfileInfoCard({ children }: { children: React.ReactNode }) {
-  const theme = useTheme();
-  const rows = React.Children.toArray(children).filter(Boolean);
-  if (rows.length === 0) return null;
-  return (
-    <View style={{ marginHorizontal: 16, marginTop: 16, borderRadius: 20, backgroundColor: theme.colors.background.elevated, overflow: 'hidden' }}>
-      {rows.map((row, i) => (
-        <View key={i}>
-          {i > 0 ? (
-            <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.border.light, marginLeft: 16 }} />
-          ) : null}
-          {row}
-        </View>
-      ))}
-    </View>
-  );
-});
-
-/** Value on top, caption under it — Telegram's "bio" / "username" rows. */
-export const ProfileInfoRow = memo(function ProfileInfoRow({
-  value,
-  caption,
-  onPress,
-  onLongPress,
-  linkify,
-  right,
-}: {
-  value: string;
-  caption: string;
-  onPress?: () => void;
-  onLongPress?: () => void;
-  /** Render the value through LinkedText so URLs and @mentions in a bio are tappable. */
-  linkify?: boolean;
-  right?: React.ReactNode;
-}) {
-  const theme = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onLongPress}
-      disabled={!onPress && !onLongPress}
-      android_ripple={onPress || onLongPress ? { color: theme.colors.text.primary + '14', foreground: true } : undefined}
-      style={({ pressed }) => [
-        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11 },
-        Platform.OS === 'ios' && pressed && (onPress || onLongPress) ? { backgroundColor: theme.colors.text.primary + '0D' } : null,
-      ]}
-    >
-      <View style={{ flex: 1 }}>
-        {linkify ? (
-          <LinkedText style={{ color: theme.colors.text.primary, fontSize: 16, lineHeight: 21 }}>{value}</LinkedText>
-        ) : (
-          <Text variant="body" style={{ fontSize: 16, lineHeight: 21 }}>{value}</Text>
-        )}
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2, fontSize: 13 }}>
-          {caption}
-        </Text>
-      </View>
-      {right}
-    </Pressable>
-  );
-});
-
-// ─── Links ───────────────────────────────────────────────────────────────────
-
-type LinkKind =
-  | 'github' | 'twitter' | 'instagram' | 'youtube' | 'telegram' | 'tiktok' | 'linkedin'
-  | 'discord' | 'twitch' | 'spotify' | 'reddit' | 'vk' | 'website';
-
-function detectLinkKind(url: string): LinkKind {
-  const lower = url.toLowerCase();
-  if (lower.includes('github.com')) return 'github';
-  if (lower.includes('twitter.com') || lower.includes('x.com')) return 'twitter';
-  if (lower.includes('instagram.com')) return 'instagram';
-  if (lower.includes('youtube.com') || lower.includes('youtu.be')) return 'youtube';
-  if (lower.includes('t.me') || lower.includes('telegram.me')) return 'telegram';
-  if (lower.includes('tiktok.com')) return 'tiktok';
-  if (lower.includes('linkedin.com')) return 'linkedin';
-  if (lower.includes('discord.gg') || lower.includes('discord.com')) return 'discord';
-  if (lower.includes('twitch.tv')) return 'twitch';
-  if (lower.includes('spotify.com')) return 'spotify';
-  if (lower.includes('reddit.com')) return 'reddit';
-  if (lower.includes('vk.com')) return 'vk';
-  return 'website';
+export function useProfileMedia(myId: string | undefined, peerId: string | null): ProfileMediaItem[] {
+  const [items, setItems] = useState<ProfileMediaItem[]>([]);
+  useEffect(() => {
+    if (!myId) return;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      try {
+        const convs = (useEntityStore.getState().conversations || []) as Array<{ id: string; participantId?: string; lastMessageAt?: string }>;
+        const picked = (peerId ? convs.filter((c) => c.participantId === peerId) : [...convs])
+          .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
+          .slice(0, peerId ? 2 : 10);
+        const out: { url: string; conversationId: string; ts: string }[] = [];
+        const seen = new Set<string>();
+        for (const c of picked) {
+          const tail = kvGetJSONSync<any[]>(`chat_tail:${c.id}`, []);
+          for (let i = tail.length - 1; i >= 0; i--) {
+            const m = tail[i];
+            if (!m || !Array.isArray(m.imageUrls)) continue;
+            if (!peerId && m.senderId !== myId) continue;
+            for (const u of m.imageUrls) {
+              if (typeof u !== 'string' || !u.startsWith('http') || isAnimated(u) || seen.has(u)) continue;
+              seen.add(u);
+              out.push({ url: u, conversationId: c.id, ts: String(m.createdAt || '') });
+            }
+          }
+        }
+        out.sort((a, b) => b.ts.localeCompare(a.ts));
+        setItems(out.slice(0, MEDIA_LIMIT).map(({ url, conversationId }) => ({ url, conversationId })));
+      } catch {
+        setItems([]);
+      }
+    });
+    return () => handle.cancel();
+  }, [myId, peerId]);
+  return items;
 }
 
-const LINK_META: Record<LinkKind, { icon: string; brand: boolean; label: string; color?: string }> = {
-  github: { icon: 'github', brand: true, label: 'GitHub' },
-  twitter: { icon: 'twitter', brand: true, label: 'X', color: '#1DA1F2' },
-  instagram: { icon: 'instagram', brand: true, label: 'Instagram', color: '#E4405F' },
-  youtube: { icon: 'youtube', brand: true, label: 'YouTube', color: '#FF0000' },
-  telegram: { icon: 'telegram-plane', brand: true, label: 'Telegram', color: '#2AABEE' },
-  tiktok: { icon: 'tiktok', brand: true, label: 'TikTok' },
-  linkedin: { icon: 'linkedin-in', brand: true, label: 'LinkedIn', color: '#0A66C2' },
-  discord: { icon: 'discord', brand: true, label: 'Discord', color: '#5865F2' },
-  twitch: { icon: 'twitch', brand: true, label: 'Twitch', color: '#9146FF' },
-  spotify: { icon: 'spotify', brand: true, label: 'Spotify', color: '#1DB954' },
-  reddit: { icon: 'reddit-alien', brand: true, label: 'Reddit', color: '#FF4500' },
-  vk: { icon: 'vk', brand: true, label: 'VK', color: '#0077FF' },
-  website: { icon: 'globe', brand: false, label: '' },
-};
-
-function displayUrl(url: string): string {
-  return url.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/$/, '');
-}
-
-export const ProfileLinkRow = memo(function ProfileLinkRow({ url }: { url: string }) {
+export const ProfileMediaGrid = memo(function ProfileMediaGrid({ items, onPressItem }: { items: ProfileMediaItem[]; onPressItem: (item: ProfileMediaItem) => void }) {
   const theme = useTheme();
   const t = useT();
-  const kind = detectLinkKind(url);
-  const meta = LINK_META[kind];
-  const iconColor = meta.color || theme.colors.text.primary;
+  const { width } = useWindowDimensions();
+  const gap = 3;
+  const cell = Math.floor((width - 32 - gap * 2) / 3);
   return (
-    <ProfileInfoRow
-      value={displayUrl(url)}
-      caption={meta.label || t('edit_profile.link_website')}
-      onPress={() => { triggerHaptic('light'); openUrl(url); }}
-      right={
-        meta.brand ? (
-          <FontAwesome5 name={meta.icon} size={17} color={iconColor} brand />
-        ) : (
-          <Feather name="globe" size={17} color={theme.colors.accent.primary} />
-        )
-      }
-    />
+    <View style={{ paddingHorizontal: 16, marginTop: 18 }}>
+      <View style={{ alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 16, backgroundColor: theme.colors.accent.primary + '1F', marginBottom: 12 }}>
+        <Text variant="caption" weight="bold">{t('profile.media')}</Text>
+      </View>
+      {items.length === 0 ? (
+        <View style={{ alignItems: 'center', paddingVertical: 28, gap: 8 }}>
+          <Feather name="image" size={26} color={theme.colors.text.tertiary} />
+          <Text variant="caption" color={theme.colors.text.tertiary} align="center">{t('profile.media_empty', 'Здесь появятся фото из чатов')}</Text>
+        </View>
+      ) : (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap }}>
+          {items.map((it) => (
+            <Pressable key={it.url} onPress={() => { triggerHaptic('light'); onPressItem(it); }} style={{ width: cell, height: cell, borderRadius: 10, overflow: 'hidden', backgroundColor: theme.colors.background.elevated }}>
+              <CachedImage uri={it.url} style={{ width: cell, height: cell }} resizeMode="cover" proxyWidth={cell * 2} />
+            </Pressable>
+          ))}
+        </View>
+      )}
+    </View>
   );
 });
+
+// ─── Links / QR helpers ──────────────────────────────────────────────────────
 
 /** Links are stored either as an array or as a JSON string; anything unparseable is no links. */
 export function parseProfileLinks(raw: unknown): { type?: string; url: string }[] {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw.filter((l) => l && typeof l.url === 'string' && l.url.length > 0);
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter((l) => l && typeof l.url === 'string' && l.url.length > 0) : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
+  let v: unknown = raw;
+  if (typeof v === 'string') { try { v = JSON.parse(v); } catch { return []; } }
+  return Array.isArray(v) ? v.filter((l: any) => l && typeof l.url === 'string' && l.url.length > 0) : [];
 }
-
-// ─── QR ──────────────────────────────────────────────────────────────────────
 
 export function profileUrl(profileId: string): string {
   return `https://san-m-app.com/profile/${profileId}`;
 }
 
-export function ProfileQRModal({
-  visible,
-  onClose,
-  profileId,
-  title,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  profileId: string;
-  title: string;
-}) {
+export function ProfileQRModal({ visible, onClose, profileId, title }: { visible: boolean; onClose: () => void; profileId: string; title: string }) {
   const t = useT();
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(profileUrl(profileId))}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(profileUrl(profileId))}`;
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }}
-        onPress={onClose}
-        accessibilityRole="button"
-        accessibilityLabel={t('profile.qr_close_hint')}
-      >
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }} onPress={onClose}>
         <Text variant="body" weight="bold" color="#FFFFFF" style={{ marginBottom: 20 }}>{title}</Text>
-        <View style={{ backgroundColor: '#FFF', borderRadius: 24, padding: 20 }}>
-          {visible ? <Image source={{ uri: qrUrl }} style={{ width: 220, height: 220 }} resizeMode="contain" /> : null}
+        <View style={{ backgroundColor: '#FFF', borderRadius: 20, padding: 20 }}>
+          {visible ? <Image source={{ uri: qrUrl }} style={{ width: 200, height: 200 }} resizeMode="contain" /> : null}
         </View>
-        <Text variant="caption" color="rgba(255,255,255,0.7)" style={{ marginTop: 20 }}>{t('profile.qr_close_hint')}</Text>
+        <Text variant="caption" color="#FFFFFF" style={{ marginTop: 20, opacity: 0.7 }}>{t('profile.qr_close_hint')}</Text>
       </Pressable>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  chromeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  barSide: {
-    width: 84,
-    flexDirection: 'row',
-    gap: 8,
-  },
-  avatar: {
-    width: PROFILE_AVATAR_SIZE,
-    height: PROFILE_AVATAR_SIZE,
-    borderRadius: PROFILE_AVATAR_SIZE / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tile: {
-    height: 62,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingHorizontal: 6,
-  },
-  textShadow: {
-    textShadowColor: 'rgba(0,0,0,0.35)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
+  chrome: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 },
+  avatarTile: { width: 84, height: 84, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  textShadow: { textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
 });

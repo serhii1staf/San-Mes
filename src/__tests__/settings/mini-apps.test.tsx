@@ -16,20 +16,20 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 type ReactTestInstance = ReturnType<typeof TestRenderer.create>['root'];
 
-import { ThemeProvider } from '../../src/theme';
-import { useI18nStore, Locale } from '../../src/i18n/store';
-import en from '../../src/i18n/locales/en';
-import { openLegalLink } from '../../src/components/mini-apps/openLegalLink';
+import { ThemeProvider } from '../../theme';
+import { useI18nStore, Locale } from '../../i18n/store';
+import en from '../../i18n/locales/en';
+import { openLegalLink } from '../../components/mini-apps/openLegalLink';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
 // Record openLegalLink calls without touching real Linking/navigation.
-jest.mock('../../src/components/mini-apps/openLegalLink', () => ({
+jest.mock('../../components/mini-apps/openLegalLink', () => ({
   openLegalLink: jest.fn(() => Promise.resolve(true)),
 }));
 
 // Keep the consent dialog a no-op so the test stays focused on the form links.
-jest.mock('../../src/components/mini-apps/MiniAppConsentDialog', () => ({
+jest.mock('../../components/mini-apps/MiniAppConsentDialog', () => ({
   MiniAppConsentDialog: () => null,
 }));
 
@@ -60,18 +60,18 @@ jest.mock('expo-blur', () => ({
 jest.mock('@expo/vector-icons', () => ({
   Feather: () => null,
 }));
-jest.mock('../../src/components/ui/LiquidGlass', () => ({
+jest.mock('../../components/ui/LiquidGlass', () => ({
   useLiquidGlassActive: () => false,
   NativeGlassView: ({ children }: { children?: React.ReactNode }) => children ?? null,
 }));
 
 // Auth store — return a logged-in user via the selector pattern the screen uses.
-jest.mock('../../src/store', () => ({
+jest.mock('../../store', () => ({
   useAuthStore: (selector: (s: any) => any) => selector({ user: { id: 'user-1' } }),
 }));
 
 // Mini-apps store — empty list, not loading, action selectors as no-ops.
-jest.mock('../../src/store/miniAppsStore', () => ({
+jest.mock('../../store/miniAppsStore', () => ({
   useMiniAppsStore: (selector: (s: any) => any) =>
     selector({
       apps: [],
@@ -83,7 +83,7 @@ jest.mock('../../src/store/miniAppsStore', () => ({
     }),
 }));
 
-import MiniAppsScreen from './mini-apps';
+import MiniAppsScreen from '../../../app/settings/mini-apps';
 
 const mockedOpenLegalLink = openLegalLink as jest.MockedFunction<typeof openLegalLink>;
 

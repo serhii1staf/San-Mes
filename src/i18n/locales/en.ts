@@ -1128,6 +1128,8 @@ const en: Record<string, string> = {
   'chat.reply_label': 'Reply',
   'profile.message': 'Message',
   'profile.more': 'More',
+  'profile.media_empty': 'Photos from your chats will appear here',
+  'profile.edit_short': 'Edit',
   'profile.customize': 'Customize',
   'profile.switch_account': 'Switch account',
   'profile.blocked_hint': 'You blocked this user. You can unblock them from the More menu.',
