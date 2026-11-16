@@ -339,7 +339,7 @@ export default function CreateScreen() {
         setImageUris([]);
         setRepostData(null);
         setIsPosting(false);
-        router.replace('/(tabs)');
+        router.replace('/(tabs)/profile');
         return;
       }
 
@@ -444,7 +444,7 @@ export default function CreateScreen() {
               setContent('');
               setImageUris([]);
               setIsSpoilerPhoto(false);
-              router.replace('/(tabs)');
+              router.replace('/(tabs)/profile');
               return;
             }
 
@@ -489,7 +489,7 @@ export default function CreateScreen() {
             setImageUris([]);
             setEditingPostId(null);
             setIsSpoilerPhoto(false);
-            router.replace('/(tabs)');
+            router.replace('/(tabs)/profile');
             return;
           }
 
@@ -503,7 +503,7 @@ export default function CreateScreen() {
 
           setContent('');
           setImageUris([]);
-          router.replace('/(tabs)');
+          router.replace('/(tabs)/profile');
         } catch (e) {
           // Network error — fall back to queue silently
           setImageUploading(false);
@@ -516,7 +516,7 @@ export default function CreateScreen() {
 
           setContent('');
           setImageUris([]);
-          router.replace('/(tabs)');
+          router.replace('/(tabs)/profile');
         }
       } else {
         // Offline: queue mutation with local image URIs
@@ -529,7 +529,7 @@ export default function CreateScreen() {
 
         setContent('');
         setImageUris([]);
-        router.replace('/(tabs)');
+        router.replace('/(tabs)/profile');
       }
     } finally {
       setIsPosting(false);
