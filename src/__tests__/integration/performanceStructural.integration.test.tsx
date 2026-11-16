@@ -357,12 +357,6 @@ function usesFlashList(source: string): boolean {
 }
 
 describe('Performance integration — heavy screens declare FlatList virtualization', () => {
-  // (tabs)/index — main feed. Migrated to FlashList v2 (cell recycling).
-  it('(tabs)/index.tsx uses a recycling list (FlashList)', () => {
-    const src = readScreen('app/(tabs)/index.tsx');
-    expect(usesFlashList(src)).toBe(true);
-  });
-
   // (tabs)/profile — own profile.
   it('(tabs)/profile.tsx FlatList is virtualised', () => {
     const src = readScreen('app/(tabs)/profile.tsx');
@@ -429,11 +423,6 @@ describe('Performance integration — heavy screens use useCallback for list cal
     expect(src).toMatch(/useCallback\b/);
     // MemoMessageBubble defined with React.memo + custom comparator
     expect(src).toMatch(/React\.memo\(MessageBubble/);
-  });
-
-  it('(tabs)/index.tsx defines list callbacks with useCallback', () => {
-    const src = readScreen('app/(tabs)/index.tsx');
-    expect(src).toMatch(/useCallback\b/);
   });
 
   it('app/profile/[id].tsx uses memoized UserProfilePostCard', () => {

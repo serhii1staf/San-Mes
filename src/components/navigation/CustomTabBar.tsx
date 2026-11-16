@@ -32,12 +32,12 @@ import { useChatUnread, totalChatUnread } from '../../store/chatUnreadStore';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-// The main capsule now holds ONLY 4 tabs (index, search, create, messages).
-// Profile lives in a SEPARATE detached capsule to the right, so all the
-// lens/gesture slot math below operates over 4 slots, not 5.
-const TAB_COUNT = 4;
-// Create is still the middle button of the 4-tab main bar (index 0,1,[2],3).
-const CREATE_INDEX = 2;
+// The main capsule holds 3 tabs (search, create, messages) after the Home feed
+// tab was removed. Profile lives in a SEPARATE detached capsule to the right, so
+// the lens/gesture slot math below operates over 3 slots.
+const TAB_COUNT = 3;
+// Create is the middle button of the 3-tab main bar (search 0, [create 1], messages 2).
+const CREATE_INDEX = 1;
 const TAB_BUTTON_HEIGHT = 48;
 const TAB_ROW_PADDING_H = 6;
 const TAB_ROW_PADDING_V = 6;
@@ -193,7 +193,9 @@ function snapToStandardSlot(fingerSlot: number): number {
   if (fingerSlot <= 0) return 0;
   if (fingerSlot >= TAB_COUNT - 1) return TAB_COUNT - 1;
   if (fingerSlot === CREATE_INDEX) {
-    return fingerSlot < CREATE_INDEX ? 1 : 3;
+    // Create is a button, not a lens tab, so the lens never rests on it: snap to
+    // the adjacent real tab. Count-relative so it tracks CREATE_INDEX/TAB_COUNT.
+    return fingerSlot < CREATE_INDEX ? CREATE_INDEX - 1 : CREATE_INDEX + 1;
   }
   return fingerSlot;
 }

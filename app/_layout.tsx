@@ -40,7 +40,6 @@ import { enableFreeze } from 'react-native-screens';
 import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
 import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
 import { installNotificationsBadgeForegroundRefresh } from '../src/store/notificationsBadgeStore';
-import { DynamicOverlayHost } from '../src/components/dynamic-overlay/DynamicOverlayHost';
 import { InAppAlertHost } from '../src/components/ui/InAppAlertHost';
 import { RealtimeAccountBridge } from '../src/components/realtime/RealtimeAccountBridge';
 import { NavigationBarController } from '../src/components/system/NavigationBarController';
@@ -771,13 +770,6 @@ function RootLayout() {
             another user sends them. Effects-only, no rendered output.
             Connection is dropped by switchAccount() on logout / switch. */}
         <RealtimeAccountBridge />
-        {/* Dynamic Island companion overlay. Triggered by a long-press on
-            the Home tab in the bottom navigation (see app/(tabs)/_layout.tsx
-            `homeListeners`). Mounts only when the user activates it
-            (zIndex 9998 — above the perf bubble's container). All OTA-safe
-            — no native modules, no new permissions, never draws above
-            `insets.top`. */}
-        <DynamicOverlayHost />
         {/* In-app activity pill. Replaces the OS banner while the app is in the foreground: the
             actor's emoji arrives as a circle, then the glass capsule expands outward with the
             action text. Renders null when nothing is queued, so it costs nothing at idle, and the
