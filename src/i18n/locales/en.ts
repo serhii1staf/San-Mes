@@ -483,6 +483,7 @@ const en: Record<string, string> = {
   'chat.paste_image': 'Paste image',
   'chat.menu.edit': 'Edit',
   'chat.menu.delete': 'Delete',
+  'chat.menu.report': 'Report',
 
   // ─── AI chat ───────────────────────────────────────────────────────────
   'ai_chat.title': 'San AI',

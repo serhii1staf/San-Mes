@@ -483,6 +483,7 @@ const ru: Record<string, string> = {
   'chat.paste_image': 'Вставить изображение',
   'chat.menu.edit': 'Редактировать',
   'chat.menu.delete': 'Удалить',
+  'chat.menu.report': 'Пожаловаться',
   'chat.menu.translate': 'Перевести',
   // Day-separator chips in the transcript. Absolute dates are formatted by
   // `Intl.DateTimeFormat` from the active locale, so only these two relative

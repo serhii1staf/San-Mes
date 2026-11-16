@@ -32,7 +32,7 @@ const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.45;
  */
 const SHEET_BOTTOM_GAP = 16;
 
-export type MessageAction = 'reply' | 'copy' | 'copyImage' | 'edit' | 'delete' | 'translate';
+export type MessageAction = 'reply' | 'copy' | 'copyImage' | 'edit' | 'delete' | 'translate' | 'report';
 
 // Absolute window-space hit-zone for one action row. The bubble's LongPress
 // gesture (UI thread) reads this registry to decide which row the finger is
@@ -265,6 +265,8 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
     // flow.
     if (isOwn) list.push({ action: 'edit', icon: 'edit-2', label: t('chat.menu.edit') });
     if (isOwn) list.push({ action: 'delete', icon: 'trash-2', label: t('chat.menu.delete'), destructive: true });
+    // Someone else's message can be reported (App Review 1.2 — chat is the app's UGC now).
+    if (!isOwn) list.push({ action: 'report', icon: 'flag', label: t('chat.menu.report', 'Пожаловаться'), destructive: true });
     return list;
   }, [message, isOwn, t]);
 

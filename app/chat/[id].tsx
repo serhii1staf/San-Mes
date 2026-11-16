@@ -4876,6 +4876,23 @@ export default function ChatScreen() {
       }
     } else if (action === 'reply') {
       startReply(message);
+    } else if (action === 'report') {
+      // App Review guideline 1.2: user-generated content must be reportable. Chat messages are
+      // the main UGC surface now that posts are gone. `submitReport` never throws; the Worker
+      // accepts targetType 'message' (routes/reports.ts ALLOWED_TARGET_TYPES).
+      const send = (category: string) => {
+        void import('../../src/services/moderation')
+          .then(({ submitReport }) => submitReport({ targetType: 'message', targetId: message.id, category }))
+          .catch(() => {});
+        showToast(t('toast.report_sent'), 'flag');
+      };
+      Alert.alert(t('report.title'), '', [
+        { text: t('report.cat.spam'), onPress: () => send('spam') },
+        { text: t('report.cat.violence'), onPress: () => send('violence') },
+        { text: t('report.cat.fraud'), onPress: () => send('fraud') },
+        { text: t('report.cat.other'), onPress: () => send('other') },
+        { text: t('common.cancel'), style: 'cancel' },
+      ]);
     } else if (action === 'translate') {
       // Open the translation sheet with the source message text. The sheet
       // does the LibreTranslate fetch + result UI itself.
