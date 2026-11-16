@@ -44,7 +44,7 @@ export default function ProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const { width } = useWindowDimensions();
+  const { width, height: winHeight } = useWindowDimensions();
   const user = useAuthStore((s) => s.user);
   const updateProfile = useAuthStore((s) => s.updateProfile);
   const glassActive = useLiquidGlassActive();
@@ -116,7 +116,9 @@ export default function ProfileScreen() {
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         bounces={false}
-        contentContainerStyle={{ paddingBottom: getTabBarHeight(insets.bottom) + 28 }}
+        // Always a little taller than the window, so the header (and the avatar-to-island
+        // animation) can collapse even when there are no photos yet.
+        contentContainerStyle={{ paddingBottom: getTabBarHeight(insets.bottom) + 28, minHeight: winHeight + 180 }}
       >
         <ProfileHeaderCard
           topInset={insets.top}

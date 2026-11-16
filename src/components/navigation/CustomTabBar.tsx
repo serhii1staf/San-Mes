@@ -39,6 +39,9 @@ const TAB_COUNT = 2;
 const TAB_BUTTON_HEIGHT = 48;
 const TAB_ROW_PADDING_H = 6;
 const TAB_ROW_PADDING_V = 6;
+// Fixed slot width for the compact capsule (two 80 pt slots plus the row padding).
+const TAB_SLOT_WIDTH = 80;
+const MAIN_CAPSULE_WIDTH = TAB_COUNT * TAB_SLOT_WIDTH + 2 * TAB_ROW_PADDING_H;
 
 // Gap between the main capsule and the detached Profile capsule.
 const BAR_GAP = 10;
@@ -349,17 +352,19 @@ const MessagesTabIconWithBadge = memo(function MessagesTabIconWithBadge({
   // disagree.
   const counts = useChatUnread((s) => s.counts);
   const unread = totalChatUnread(counts);
+  const label = unread > 99 ? '99+' : String(unread);
+  // Explicit width per digit count: as an absolute child of a 22 pt box the pill was measured
+  // against that box, so "99+" rendered as "9…" (seen on device).
+  const badgeWidth = label.length <= 1 ? 16 : label.length === 2 ? 22 : 28;
   return (
     <View style={tabIconStyles.iconBox}>
       <Ionicons name={iconName} size={23} color={color} />
       {unread > 0 ? (
         // `pointerEvents: none` because the whole button is the touch target — a badge that
         // intercepted taps would put a dead spot in the middle of it.
-        <View style={tabIconStyles.badge} pointerEvents="none">
+        <View style={[tabIconStyles.badge, { width: badgeWidth, right: -(badgeWidth - 7) }]} pointerEvents="none">
           <RNText style={tabIconStyles.badgeText} allowFontScaling={false} numberOfLines={1}>
-            {/* Capped: three digits would widen the pill past the icon and start shifting the
-                button's layout, and the exact number stops mattering well before 100. */}
-            {unread > 99 ? '99+' : String(unread)}
+            {label}
           </RNText>
         </View>
       ) : null}
@@ -1394,15 +1399,18 @@ const styles = StyleSheet.create({
   // Horizontal split-nav row: main capsule (flex:1) + gap + profile capsule.
   // Bottom-aligned so both capsules sit at the same baseline. Horizontal
   // padding replaces the old per-capsule marginHorizontal.
+  // Centered: with two tabs a full-width capsule read as stretched edge to edge (reported). The main
+  // capsule now has a fixed width and the pair (capsule + profile) sits in the middle.
   row: {
     flexDirection: 'row',
     alignItems: 'flex-end',
+    justifyContent: 'center',
     paddingHorizontal: BAR_HORIZONTAL_MARGIN,
   },
   bottomFade: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   container: {
     position: 'relative',
-    flex: 1,
+    width: MAIN_CAPSULE_WIDTH,
     flexDirection: 'row',
     borderRadius: BAR_BORDER_RADIUS,
     borderWidth: 0.5,

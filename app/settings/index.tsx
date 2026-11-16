@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Animated, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, InteractionManager, Platform } from 'react-native';
+import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, InteractionManager, Platform } from 'react-native';
 /**
  * ── WHY MaterialIcons AND NOT Feather FOR THE SETTINGS TILES ───────────────────
  *
@@ -41,7 +41,7 @@ import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { isNativeGlassCapable } from '../../src/components/ui/LiquidGlass';
 import { useT } from '../../src/i18n/store';
-import { bottomScrimColors, SCRIM_LOCATIONS } from '../../src/theme/scrim';
+import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
 // Per-row tint pairs (icon color + soft tile bg) — picked to be readable in
 // both light and dark mode without being eye-piercing. Same hue family as
@@ -194,16 +194,6 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  // Nav-bar fill: transparent at rest, opaque once a few points of content have scrolled under it.
-  const scrollY = React.useRef(new Animated.Value(0)).current;
-  const onScroll = React.useMemo(
-    () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
-    [scrollY],
-  );
-  const barOpacity = React.useMemo(
-    () => scrollY.interpolate({ inputRange: [0, 12], outputRange: [0, 1], extrapolate: 'clamp' }),
-    [scrollY],
-  );
   // Field-level selector — destructuring the whole auth store re-rendered
   // this screen on every unrelated auth-state change.
   const logout = useAuthStore((s) => s.logout);
@@ -347,6 +337,7 @@ export default function SettingsScreen() {
   };
 
   const bgColor = theme.colors.background.primary;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   const sectionCardStyle: ViewStyle = {
     backgroundColor: theme.colors.background.elevated,
@@ -362,25 +353,13 @@ export default function SettingsScreen() {
 
   return (
     <View style={containerStyle}>
-      {/* ── A NAV BAR THAT TURNS SOLID, NOT A SCRIM ─────────────────────────────
-          This header was a darkening ramp over the list. A ramp only dims what passes under it,
-          so a row scrolled up behind the title was still legible THROUGH the title — two lines of
-          text on top of each other (seen on device: "Данные и память" under "Настройки").
-          Telegram and iOS Settings put a real bar there: transparent at rest, an opaque fill plus a
-          hairline as soon as content scrolls under it. The fill is the page colour, animated on the
-          native driver, so it costs nothing per frame. */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: insets.top + 48 }} pointerEvents="box-none">
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              backgroundColor: bgColor,
-              borderBottomWidth: StyleSheet.hairlineWidth,
-              borderBottomColor: theme.colors.border.light,
-              opacity: barOpacity,
-            },
-          ]}
+      {/* Gradient fade header — the dark scrim this screen always had (the solid bar that briefly
+          replaced it was reverted on request). */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
+        <LinearGradient
+          colors={topScrimColors(theme.isDark, bgColor)}
+          locations={SCRIM_LOCATIONS}
+          style={StyleSheet.absoluteFill}
         />
         <View
           style={{
@@ -405,10 +384,8 @@ export default function SettingsScreen() {
       </View>
 
       {/* Scrollable Content */}
-      <Animated.ScrollView
-        onScroll={onScroll}
-        scrollEventThrottle={16}
-        contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 56 }}
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: theme.spacing.lg, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
       >
         {/* General */}
@@ -756,7 +733,7 @@ export default function SettingsScreen() {
         <Text variant="caption" align="center" color={theme.colors.text.tertiary} style={{ marginTop: 14, fontSize: 11 }}>
           {t('settings.version', undefined, { version: appVersion })}
         </Text>
-      </Animated.ScrollView>
+      </ScrollView>
 
       {/* Bottom fade — mirrors the top header fade so the settings list
           dissolves into the background at the bottom edge instead of cutting

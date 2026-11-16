@@ -43,7 +43,7 @@ export default function UserProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const { width } = useWindowDimensions();
+  const { width, height: winHeight } = useWindowDimensions();
   const { id, fromChat } = useLocalSearchParams<{ id: string; fromChat?: string }>();
   const profileId = id ?? '';
   const currentUserId = useAuthStore((s) => s.user?.id);
@@ -164,7 +164,7 @@ export default function UserProfileScreen() {
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         bounces={false}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 32, minHeight: winHeight + 180 }}
       >
         <ProfileHeaderCard
           topInset={insets.top}
