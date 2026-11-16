@@ -4,6 +4,7 @@ import { apiPost } from './apiClient';
 import { kvGetStringRawSync, kvSetStringRaw } from './kvStore';
 import { useSettingsStore, isAlertCategoryEnabled } from '../store/settingsStore';
 import { isActiveThread } from './activeThread';
+import { isChatMuted } from '../store/chatSettingsStore';
 
 // ── Push notifications (Expo Push) ──────────────────────────────────────────
 //
@@ -58,7 +59,10 @@ function shouldPresent(notification: any): boolean {
     const data = notification?.request?.content?.data;
     if (!data || typeof data !== 'object') return true;
     if (data.type === 'message') {
-      return !isActiveThread('chat', typeof data.conversation_id === 'string' ? data.conversation_id : null);
+      const convId = typeof data.conversation_id === 'string' ? data.conversation_id : null;
+      // A chat the user muted from the chat-list menu: no banner, no sound while the app is open.
+      if (isChatMuted(convId)) return false;
+      return !isActiveThread('chat', convId);
     }
     // Comments, likes and follows belong to features that were removed (publishing, followers).
     // An older Worker deploy may still send them; they are not shown while the app is open.

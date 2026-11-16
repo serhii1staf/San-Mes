@@ -1,11 +1,11 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Pressable, StyleSheet, Platform, LayoutChangeEvent, Text as RNText } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from '../../components/ui/AppBlurView';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Feather, FontAwesome5, Ionicons } from '@expo/vector-icons';
 import {
   Gesture,
   GestureDetector,
@@ -15,6 +15,7 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
   withTiming,
+  withDelay,
   Easing,
   runOnJS,
   SharedValue,
@@ -29,6 +30,7 @@ import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/Liqui
 import { useTabBarStore } from '../../store/tabBarStore';
 import { useAuthStore } from '../../store';
 import { useChatUnread, totalChatUnread } from '../../store/chatUnreadStore';
+import { useT } from '../../i18n/store';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -795,6 +797,8 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
       <Pressable
         onPress={onPress}
         onLongPress={onLongPress}
+        // Opens the QR / Settings dial; a little quicker than the 500 ms default.
+        delayLongPress={350}
         onPressIn={() => { pressScale.value = withSpring(PRESS_SCALE, PRESS_SPRING); }}
         onPressOut={() => { pressScale.value = withSpring(1, PRESS_SPRING); }}
         accessibilityRole="button"
@@ -858,6 +862,159 @@ const ProfileCapsuleAvatar = memo(function ProfileCapsuleAvatar({ fallbackColor 
       {emoji}
     </RNText>
   );
+});
+
+// ─── Profile quick dial (QR + Settings) ──────────────────────────────────────
+//
+// The own profile no longer carries QR / Settings buttons in its header. Double-tap or long-press
+// the profile capsule and the two rise out of it, spinning one turn as they go; tap either, tap the
+// capsule again, or tap anywhere else to put them away.
+//
+// Transforms only — no opacity anywhere in the chain. A GlassView with an alpha below 1 on itself or
+// any ancestor stops rendering its glass (expo/expo#41024), which is why the buttons start hidden
+// BEHIND the capsule (the dial renders before the row) instead of fading in.
+//
+// The dial is laid out in the wrapper's flow, above the row, rather than absolutely positioned over
+// it: Android does not deliver touches to a child outside its parent's bounds, so the wrapper has to
+// actually grow to contain the buttons. Mounted only while open or closing.
+
+const DIAL_BUTTON = 50;
+const DIAL_GAP = 10;
+const DIAL_SPRING = { damping: 14, stiffness: 170, mass: 0.8 };
+const DIAL_CLOSE = { duration: 200, easing: Easing.in(Easing.cubic) };
+// From the capsule's centre to each button's resting centre.
+const DIAL_QR_TRAVEL = DIAL_GAP + DIAL_BUTTON / 2 + TAB_BAR_INNER_HEIGHT / 2;
+const DIAL_SETTINGS_TRAVEL = DIAL_QR_TRAVEL + DIAL_BUTTON + DIAL_GAP;
+const DIAL_TRACK_WIDTH = MAIN_CAPSULE_WIDTH + BAR_GAP + PROFILE_CAPSULE_WIDTH;
+
+const DialButton = memo(function DialButton({
+  progress,
+  travel,
+  isDark,
+  glassActive,
+  label,
+  onPress,
+  children,
+}: {
+  progress: SharedValue<number>;
+  travel: number;
+  isDark: boolean;
+  glassActive: boolean;
+  label: string;
+  onPress: () => void;
+  children: React.ReactNode;
+}) {
+  const style = useAnimatedStyle(() => {
+    const v = progress.value;
+    return {
+      transform: [
+        { translateY: (1 - v) * travel },
+        { rotate: `${(1 - v) * -360}deg` },
+        { scale: 0.3 + 0.7 * v },
+      ],
+    };
+  });
+  return (
+    <Animated.View
+      style={[
+        dialStyles.button,
+        {
+          borderColor: glassActive ? 'transparent' : isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)',
+          shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.18)',
+        },
+        glassActive ? { overflow: 'visible' } : null,
+        style,
+      ]}
+    >
+      <Pressable onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={label} style={dialStyles.inner}>
+        <GlassBackdrop isDark={isDark} interactive radius={DIAL_BUTTON / 2} />
+        {children}
+      </Pressable>
+    </Animated.View>
+  );
+});
+
+const ProfileQuickDial = memo(function ProfileQuickDial({
+  open,
+  isDark,
+  glassActive,
+  iconColor,
+  qrLabel,
+  settingsLabel,
+  onQR,
+  onSettings,
+  onClosed,
+}: {
+  open: boolean;
+  isDark: boolean;
+  glassActive: boolean;
+  iconColor: string;
+  qrLabel: string;
+  settingsLabel: string;
+  onQR: () => void;
+  onSettings: () => void;
+  onClosed: () => void;
+}) {
+  const qr = useSharedValue(0);
+  const settings = useSharedValue(0);
+  useEffect(() => {
+    if (open) {
+      qr.value = withSpring(1, DIAL_SPRING);
+      settings.value = withDelay(55, withSpring(1, DIAL_SPRING));
+    } else {
+      settings.value = withTiming(0, DIAL_CLOSE);
+      // Interrupted by a re-open → `done` is false and the dial stays mounted.
+      qr.value = withDelay(40, withTiming(0, DIAL_CLOSE, (done) => {
+        if (done) runOnJS(onClosed)();
+      }));
+    }
+  }, [open, qr, settings, onClosed]);
+
+  return (
+    <View style={dialStyles.track} pointerEvents="box-none">
+      <View style={dialStyles.column} pointerEvents="box-none">
+        <DialButton progress={settings} travel={DIAL_SETTINGS_TRAVEL} isDark={isDark} glassActive={glassActive} label={settingsLabel} onPress={onSettings}>
+          <Feather name="settings" size={21} color={iconColor} />
+        </DialButton>
+        <View style={{ height: DIAL_GAP }} pointerEvents="none" />
+        <DialButton progress={qr} travel={DIAL_QR_TRAVEL} isDark={isDark} glassActive={glassActive} label={qrLabel} onPress={onQR}>
+          <FontAwesome5 name="qrcode" size={19} color={iconColor} />
+        </DialButton>
+        <View style={{ height: DIAL_GAP }} pointerEvents="none" />
+      </View>
+    </View>
+  );
+});
+
+/**
+ * The QR sheet, opened from the dial on any tab. `ProfileLayout` is required lazily so the tab bar —
+ * mounted at launch — does not pull the whole profile header module into startup.
+ */
+const TabBarProfileQR = memo(function TabBarProfileQR({ onClose }: { onClose: () => void }) {
+  const userId = useAuthStore((s) => s.user?.id);
+  const t = useT();
+  if (!userId) return null;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { ProfileQRModal } = require('../profile/ProfileLayout') as typeof import('../profile/ProfileLayout');
+  return <ProfileQRModal visible onClose={onClose} profileId={userId} title={t('profile.qr_title')} />;
+});
+
+const dialStyles = StyleSheet.create({
+  // Same width and centring as the row below, so the column lands exactly over the capsule.
+  track: { width: DIAL_TRACK_WIDTH, alignSelf: 'center', alignItems: 'flex-end' },
+  column: { width: PROFILE_CAPSULE_WIDTH, alignItems: 'center' },
+  button: {
+    width: DIAL_BUTTON,
+    height: DIAL_BUTTON,
+    borderRadius: DIAL_BUTTON / 2,
+    borderWidth: 0.5,
+    overflow: 'hidden',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  inner: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });
 
 // ─── Main Tab Bar ────────────────────────────────────────────────────────────
@@ -1082,12 +1239,70 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   // Stable handlers for the detached Profile capsule. Hoisting these out of
   // the JSX (where they were inline arrows) keeps their identity steady across
   // renders so the memoized ProfileCapsule isn't re-rendered by fresh closures.
+  // ── Profile quick dial state ─────────────────────────────────────────────
+  // `dialOpen` drives the animation; `dialMounted` keeps the dial alive through its close animation.
+  // The ref mirrors `dialOpen` so the press handlers stay stable (ProfileCapsule is memoised).
+  const t = useT();
+  const [dialOpen, setDialOpen] = useState(false);
+  const [dialMounted, setDialMounted] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const dialOpenRef = useRef(false);
+  const dialOpenedAtRef = useRef(0);
+  const lastProfileTapRef = useRef(0);
+  const openDial = useCallback(() => {
+    dialOpenRef.current = true;
+    dialOpenedAtRef.current = Date.now();
+    triggerHaptic('medium');
+    setDialMounted(true);
+    setDialOpen(true);
+  }, []);
+  const closeDial = useCallback(() => {
+    if (!dialOpenRef.current) return;
+    dialOpenRef.current = false;
+    setDialOpen(false);
+  }, []);
+  const onDialClosed = useCallback(() => {
+    if (!dialOpenRef.current) setDialMounted(false);
+  }, []);
+  const onDialQR = useCallback(() => {
+    closeDial();
+    triggerHaptic('light');
+    setQrOpen(true);
+  }, [closeDial]);
+  const onDialSettings = useCallback(() => {
+    closeDial();
+    triggerHaptic('light');
+    router.push('/settings');
+  }, [closeDial]);
+  const closeQr = useCallback(() => setQrOpen(false), []);
+  // Any tab change puts the dial away. The grace period covers a double-tap from another tab: the
+  // first tap navigates, and its re-render may land just after the second tap opened the dial.
+  const focusedKey = focusedRoute?.key;
+  useEffect(() => {
+    if (dialOpenRef.current && Date.now() - dialOpenedAtRef.current > 450) closeDial();
+  }, [focusedKey, closeDial]);
+
+  // Single tap navigates immediately, exactly as before — waiting to rule out a second tap would
+  // make every profile-tab switch feel late. A second tap within 320 ms opens the dial; a tap while
+  // it is open closes it. Long-press opens it too.
   const handleProfilePress = useCallback(() => {
+    if (dialOpenRef.current) {
+      closeDial();
+      return;
+    }
+    const now = Date.now();
+    if (now - lastProfileTapRef.current < 320) {
+      lastProfileTapRef.current = 0;
+      openDial();
+      return;
+    }
+    lastProfileTapRef.current = now;
     if (profileRoute) handleTabPress(profileRoute, isProfileFocused);
-  }, [handleTabPress, profileRoute, isProfileFocused]);
+  }, [handleTabPress, profileRoute, isProfileFocused, openDial, closeDial]);
   const handleProfileLongPress = useCallback(() => {
-    if (profileRoute) navigation.emit({ type: 'tabLongPress', target: profileRoute.key });
-  }, [navigation, profileRoute]);
+    if (dialOpenRef.current) closeDial();
+    else openDial();
+  }, [openDial, closeDial]);
 
   // ─── JS-thread navigation triggered from the gesture (declared BEFORE pan
   //     so the worklet captures a defined function and not a TDZ binding). ─
@@ -1226,8 +1441,23 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const hideStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: hideProgress.value * hideTravel }],
   }));
+  // The bar sliding away takes the dial with it.
+  useEffect(() => {
+    if (hidden) closeDial();
+  }, [hidden, closeDial]);
 
   return (
+    <>
+    {/* Tap-anywhere-to-dismiss while the dial is up. A sibling BEFORE the bar, so the bar and the
+        dial stay tappable above it; transparent, so nothing visibly changes behind. */}
+    {dialMounted ? (
+      <Pressable
+        style={StyleSheet.absoluteFill}
+        onPress={closeDial}
+        accessibilityRole="button"
+        accessibilityLabel={t('common.close')}
+      />
+    ) : null}
     <Animated.View
       style={[styles.wrapper, hideStyle]}
       pointerEvents={hidden ? 'none' : 'box-none'}
@@ -1247,6 +1477,22 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         ]}
         pointerEvents="none"
       />
+
+      {/* QR + Settings, rising out of the profile capsule. BEFORE the row so the capsule covers
+          the buttons at their start position. */}
+      {dialMounted ? (
+        <ProfileQuickDial
+          open={dialOpen}
+          isDark={isDark}
+          glassActive={glassActive}
+          iconColor={theme.colors.text.primary}
+          qrLabel={t('tabbar.quick.qr')}
+          settingsLabel={t('tabbar.quick.settings')}
+          onQR={onDialQR}
+          onSettings={onDialSettings}
+          onClosed={onDialClosed}
+        />
+      ) : null}
 
       {/* Split navigation row: main capsule (flex:1) + gap + detached profile
           capsule. `box-none` lets taps fall through the gap between them. The
@@ -1384,6 +1630,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         )}
       </View>
     </Animated.View>
+    {qrOpen ? <TabBarProfileQR onClose={closeQr} /> : null}
+    </>
   );
 });
 

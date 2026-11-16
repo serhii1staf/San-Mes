@@ -22,7 +22,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { BOTTOM_CHROME_SPRING } from '../../src/theme/motion';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
-import ContextMenu from 'react-native-context-menu-view';
+import { ChatPeekMenu, type ChatPeekAction, type ChatPeekAnchor } from '../../src/components/chat/ChatPeekMenu';
+import { markConversationRead } from '../../src/services/readState';
 import { toPreviewText } from '../../src/utils/previewText';
 import { useChatUnread } from '../../src/store/chatUnreadStore';
 import { useTheme } from '../../src/theme';
@@ -515,89 +516,69 @@ function ConversationItemBase({
   );
   const previewText = toPreviewText(item.lastMessage, previewLabels) || (item.lastMessageAt ? t('chat.photo') : '');
 
-  // Defer the native ContextMenu wrapper off the cold-mount frame. iOS's
-  // `UIContextMenuInteraction` is set up per-view by the ContextMenu library;
-  // arming all visible rows in one commit (the previous one-RAF-after-mount
-  // approach) landed as the dominant ~182 ms long task behind the residual
-  // `LONG @ (tabs)/messages` the perf monitor flagged on cold open. Instead we
-  // enqueue into a shared scheduler (see `scheduleRowArm`) that arms at most
-  // ONE row per animation frame, AFTER the navigation transition completes
-  // (InteractionManager). The plain Pressable renders on the first frame and
-  // each row upgrades to ContextMenu on its staggered turn — the visible UI is
-  // byte-identical (the wrapper is transparent) and long-press still works
-  // because arming finishes within a few frames of the list settling, well
-  // before the user can physically reach + hold a row for >250 ms.
+  // ── LONG-PRESS MENU: TELEGRAM-STYLE PEEK ─────────────────────────────────
+  //
+  // Long-press opens `ChatPeekMenu`: the chat as a preview card plus a compact action list, over a
+  // blurred list. It replaced the native `react-native-context-menu-view` wrapper, whose custom
+  // preview cannot work under the New Architecture (see the note in ChatPeekMenu). Nothing is
+  // computed for the menu until a row is actually held — the action list is built on open, so an
+  // idle row carries no menu state at all.
+  const muted = useChatSettingsStore((s) => (s.muted ?? []).includes(item.id));
+  const rowRef = useRef<View>(null);
+  const [peek, setPeek] = useState<ChatPeekAnchor | null>(null);
+  const closePeek = useCallback(() => setPeek(null), []);
 
-  // Each action has a stable `id` we dispatch on, plus a localized `title`
-  // shown by the native context menu. Matching by id (or index) keeps logic
-  // independent of the user's interface language.
-  type ActionDef = { id: 'unarchive' | 'archive' | 'chat_settings' | 'block' | 'unblock' | 'unblock_user' | 'restore' | 'delete' | 'delete_forever'; title: string; systemIcon?: string; destructive?: boolean };
-  // Memoized so the native ContextMenu doesn't re-register its actions
-  // on every parent re-render. The previous unmemoized build allocated
-  // a new array + closures every render, which on iOS forced
-  // UIContextMenuInteraction to flush + re-bind its action set per
-  // ConversationItem commit. With 6 visible rows that was the dominant
-  // cost behind the 127 ms long task users saw 47 ms after navigating
-  // into (tabs)/messages.
-  const actionDefs = useMemo<ActionDef[]>(() => {
-    if (tab === 'archive') {
-      return [
-        { id: 'unarchive', title: t('messages.action.unarchive'), systemIcon: 'tray.and.arrow.up' },
-        { id: 'chat_settings', title: t('messages.action.chat_settings'), systemIcon: 'gearshape' },
-        { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
-      ];
-    }
+  type PeekId =
+    | 'archive' | 'unarchive' | 'mark_read' | 'mark_unread' | 'pin' | 'unpin' | 'mute' | 'unmute'
+    | 'unblock' | 'unblock_user' | 'restore' | 'delete' | 'delete_forever';
+  const buildPeekActions = (): ChatPeekAction<PeekId>[] => {
+    const del: ChatPeekAction<PeekId> = { id: 'delete', title: t('messages.action.delete'), icon: { set: 'feather', name: 'trash-2' }, destructive: true };
     if (tab === 'blocked') {
-      // User-level blocked rows expose a different unblock that targets
-      // the user's id rather than the chatId. Same visible label but a
-      // distinct dispatch id keeps both code paths cleanly separated.
+      // User-level blocked rows unblock the USER, not a chat id.
       if (isSyntheticUserBlockId(item.id)) {
-        return [
-          { id: 'unblock_user', title: t('block.menu.unblock'), systemIcon: 'checkmark.circle' },
-        ];
+        return [{ id: 'unblock_user', title: t('block.menu.unblock'), icon: { set: 'feather', name: 'unlock' } }];
       }
-      return [
-        { id: 'unblock', title: t('messages.action.unblock'), systemIcon: 'checkmark.circle' },
-        { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
-      ];
+      return [{ id: 'unblock', title: t('messages.action.unblock'), icon: { set: 'feather', name: 'unlock' } }, del];
     }
     if (tab === 'deleted') {
       return [
-        { id: 'restore', title: t('messages.action.restore'), systemIcon: 'arrow.uturn.backward' },
-        { id: 'delete_forever', title: t('messages.action.delete_forever'), destructive: true, systemIcon: 'trash' },
+        { id: 'restore', title: t('messages.action.restore'), icon: { set: 'feather', name: 'rotate-ccw' } },
+        { id: 'delete_forever', title: t('messages.action.delete_forever'), icon: { set: 'feather', name: 'trash-2' }, destructive: true },
       ];
     }
+    // Chats and Archive: the Telegram set.
     return [
-      { id: 'archive', title: t('messages.action.archive'), systemIcon: 'archivebox' },
-      { id: 'chat_settings', title: t('messages.action.chat_settings'), systemIcon: 'gearshape' },
-      { id: 'block', title: t('messages.action.block'), systemIcon: 'nosign' },
-      { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
+      tab === 'archive'
+        ? { id: 'unarchive', title: t('messages.action.unarchive'), icon: { set: 'feather', name: 'inbox' } }
+        : { id: 'archive', title: t('messages.action.archive'), icon: { set: 'feather', name: 'archive' } },
+      item.unreadCount > 0
+        ? { id: 'mark_read', title: t('messages.action.mark_read'), icon: { set: 'feather', name: 'check-circle' } }
+        : { id: 'mark_unread', title: t('messages.action.mark_unread'), icon: { set: 'feather', name: 'message-circle' } },
+      isPinned
+        ? { id: 'unpin', title: t('messages.action.unpin'), icon: { set: 'mci', name: 'pin-off-outline' } }
+        : { id: 'pin', title: t('messages.action.pin'), icon: { set: 'mci', name: 'pin-outline' } },
+      muted
+        ? { id: 'unmute', title: t('messages.action.unmute'), icon: { set: 'feather', name: 'bell' } }
+        : { id: 'mute', title: t('messages.action.mute'), icon: { set: 'feather', name: 'bell-off' } },
+      del,
     ];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, locale]);
-  // Bridge-friendly action descriptor for the native ContextMenu. Memoized
-  // so the array reference is stable across re-renders — without this the
-  // native side sees a "new" actions prop each render and re-creates its
-  // UIMenu, which on a 6-row mount accounts for the bulk of the long task.
-  const actions = useMemo(() => actionDefs.map(({ id: _id, ...rest }) => rest), [actionDefs]);
+  };
 
-  const handleAction = (e: any) => {
-    const idx = typeof e.nativeEvent.index === 'number' ? e.nativeEvent.index : -1;
-    const title = (e.nativeEvent.name as string) || '';
-    const def = actionDefs[idx] || actionDefs.find(d => d.title === title);
-    if (!def) return;
-    triggerHaptic('medium');
+  const onPeekSelect = (id: PeekId) => {
+    triggerHaptic('light');
     const s = store.getState();
-    switch (def.id) {
+    switch (id) {
       case 'unarchive': s.unarchiveChat(item.id); break;
       case 'archive': s.archiveChat(item.id); break;
-      case 'chat_settings': router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any); break;
-      case 'block':
-        Alert.alert(t('messages.confirm.block_title'), item.participantName, [
-          { text: t('common.cancel'), style: 'cancel' },
-          { text: t('messages.action.block'), style: 'destructive', onPress: () => s.blockChat(item.id) },
-        ]);
+      case 'mark_read':
+        useChatUnread.getState().clear(item.id);
+        markConversationRead(item.id);
         break;
+      case 'mark_unread': useChatUnread.getState().bump(item.id); break;
+      case 'pin':
+      case 'unpin': s.togglePinChat(item.id); break;
+      case 'mute':
+      case 'unmute': s.toggleMuteChat(item.id); break;
       case 'unblock': s.unblockChat(item.id); break;
       case 'unblock_user': {
         // User-level unblock — remove from `useBlockedUsersStore`. Confirm
@@ -648,6 +629,17 @@ function ConversationItemBase({
   // idempotent (expo-image dedupes by URL).
   const onRowLongPress = () => {
     void prefetchRecentChatMedia({ conversationIds: [item.id], budgetUris: 8 });
+    // Selection mode owns long-press (ticking and dragging); no menu there.
+    if (editMode) return;
+    const node = rowRef.current;
+    if (!node) {
+      setPeek({ y: 0, height: 0 });
+      return;
+    }
+    // The card grows out of the held row, so the menu needs where the row is on screen.
+    node.measureInWindow((_x, y, _w, h) => {
+      setPeek({ y: Number.isFinite(y) ? y : 0, height: Number.isFinite(h) ? h : 0 });
+    });
   };
 
   // ── Reorder: this row's own displacement ────────────────────────────────────
@@ -795,9 +787,11 @@ function ConversationItemBase({
       // trigger of it; the arming swap was left in place and did the identical damage
       // once per row at mount, which is not a toggle the user has to perform to feel.
       // The wrapper is now unconditional and only `disabled` ever changes.
-      menuDisabled={editMode}
-      actions={actions}
-      onAction={handleAction}
+      //
+      // FOLLOW-UP 2: the native ContextMenu wrapper itself is gone (see ChatPeekMenu), so the row
+      // root is a plain Pressable in every mode and the long-press handler decides whether a menu
+      // opens. The lesson above still holds: never switch the element type at the row root.
+      rowRef={rowRef}
       onPress={editMode ? () => onToggleSelect(item.id) : openChat}
       onLongPress={onRowLongPress}
     >
@@ -837,6 +831,8 @@ function ConversationItemBase({
           </Text>
           {item.participantVerified && <VerifiedBadge size={13} />}
           {item.participantBadge && <UserBadge badge={item.participantBadge} size="sm" />}
+          {/* Muted from the long-press menu — the same marker Telegram shows next to the name. */}
+          {muted ? <MaterialIcons name="notifications-off" size={13} color={theme.colors.text.tertiary} /> : null}
         </View>
         {previewText ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
@@ -879,7 +875,7 @@ function ConversationItemBase({
         <View style={conversationStatusStyles.column}>
           {/* Count FIRST, pin SECOND — the requested reading order, on one level. */}
           {item.unreadCount > 0 ? (
-            <Reanimated.View style={[conversationStatusStyles.unreadPill, { backgroundColor: theme.colors.accent.primary }, editFade]}>
+            <Reanimated.View style={[conversationStatusStyles.unreadPill, { backgroundColor: muted ? theme.colors.text.tertiary : theme.colors.accent.primary }, editFade]}>
               <Text variant="caption" weight="bold" color={theme.colors.text.inverse}>
                 {item.unreadCount > 99 ? '99+' : item.unreadCount}
               </Text>
@@ -901,6 +897,21 @@ function ConversationItemBase({
         color={theme.colors.text.tertiary}
       />
     </ConditionalContextMenuRow>
+    {/* Mounted only while held. A Modal, so where it sits in the tree does not affect layout. */}
+    {peek ? (
+      <ChatPeekMenu
+        anchor={peek}
+        conversation={
+          isSyntheticUserBlockId(item.id)
+            ? null
+            : { id: item.id, name: displayName, emoji: item.participantEmoji, verified: item.participantVerified }
+        }
+        actions={buildPeekActions()}
+        onSelect={onPeekSelect}
+        onOpen={openChat}
+        onClosed={closePeek}
+      />
+    ) : null}
     </Reanimated.View>
   );
 }
@@ -1230,16 +1241,13 @@ const SelectionCheckbox = React.memo(function SelectionCheckbox({
 // ConversationItem so the wrapper logic doesn't re-allocate the Pressable JSX
 // twice — the children are passed through whichever wrapper is active.
 function ConditionalContextMenuRow({
-  menuDisabled,
-  actions,
-  onAction,
+  rowRef,
   onPress,
   onLongPress,
   children,
 }: {
-  menuDisabled: boolean;
-  actions: any[];
-  onAction: (e: any) => void;
+  /** Measured on long-press so the peek menu can grow out of this row. */
+  rowRef: React.RefObject<View | null>;
   onPress: () => void;
   onLongPress: () => void;
   children: React.ReactNode;
@@ -1257,17 +1265,11 @@ function ConditionalContextMenuRow({
     // animation jerking for five rounds.
     overflow: 'hidden',
   };
-  const inner = (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={250}
-      style={rowStyle}
-    >
-      {children}
-    </Pressable>
-  );
   // ALWAYS the same element type. See the long note at the call site.
+  //
+  // The native ContextMenu wrapper that used to sit around this Pressable is gone: the
+  // long-press menu is now `ChatPeekMenu`, opened from `onLongPress`. The history below is
+  // kept because it explains why the row root must never change type.
   //
   // This used to be `if (!menuReady) return inner;` -- a bare <Pressable> for the first
   // frame, then <ContextMenu> wrapping it once armed. That is an ELEMENT TYPE change at
@@ -1293,9 +1295,15 @@ function ConditionalContextMenuRow({
   // taken it must STAY taken for the lifetime of the row, or the row's content subtree is
   // rebuilt from scratch in the middle of the edit-mode slide.
   return (
-    <ContextMenu actions={actions} onPress={onAction} disabled={menuDisabled}>
-      {inner}
-    </ContextMenu>
+    <Pressable
+      ref={rowRef}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={250}
+      style={rowStyle}
+    >
+      {children}
+    </Pressable>
   );
 }
 

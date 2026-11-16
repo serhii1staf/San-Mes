@@ -13,6 +13,7 @@ import {
 import { isActiveThread } from '../../services/activeThread';
 import { useInAppAlert } from '../../store/inAppAlertStore';
 import { isAlertCategoryEnabled } from '../../store/settingsStore';
+import { isChatMuted } from '../../store/chatSettingsStore';
 
 /**
  * Is this URL an animated image, so the alert can say "sent you a GIF" rather than "a photo"?
@@ -218,7 +219,7 @@ export function RealtimeAccountBridge(): null {
             // while the app is open. The unread bump above is deliberately NOT gated — muting an
             // alert is a statement about being interrupted, not about the message being read, and
             // silently zeroing the counter would lose the message.
-            if (isFromOther && isAlertCategoryEnabled('message') && !isActiveThread('chat', conversationId)) {
+            if (isFromOther && isAlertCategoryEnabled('message') && !isActiveThread('chat', conversationId) && !isChatMuted(conversationId)) {
               const previewRaw = String(payload.lastMessage || payload.preview || '');
               const imgs = Array.isArray(payload.imageUrls) ? payload.imageUrls : [];
               const firstImg = typeof imgs[0] === 'string' ? imgs[0] : '';
