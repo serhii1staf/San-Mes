@@ -127,6 +127,11 @@ const profileOptions = { title: 'Profile', tabBarIcon: ProfileTabIcon };
 export default function TabLayout() {
   return (
     <Tabs tabBar={renderTabBar} screenOptions={screenOptions}>
+      {/* `index` is kept ONLY as a redirect to Messages (see app/(tabs)/index.tsx):
+          the group needs a default leaf or `/(tabs)` renders a black screen.
+          `href: null` drops it from expo-router's own linking, and CustomTabBar
+          filters it out of the tab row, so it is never shown as a tab. */}
+      <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="search" options={searchOptions} />
       <Tabs.Screen name="create" options={createOptions} />
       <Tabs.Screen name="messages" options={messagesOptions} />

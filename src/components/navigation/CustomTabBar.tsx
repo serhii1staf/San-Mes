@@ -978,7 +978,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     let profile: (typeof state.routes)[number] | undefined;
     for (const r of state.routes) {
       if (r.name === 'profile') profile = r;
-      else main.push(r);
+      // `index` is a hidden redirect-to-Messages route (the group's default leaf),
+      // never a tab. Excluded here so it can never render a ghost button, no matter
+      // how `href: null` is handled by the installed expo-router version.
+      else if (r.name !== 'index') main.push(r);
     }
     return { mainRoutes: main, profileRoute: profile };
   }, [state.routes]);
