@@ -823,6 +823,8 @@ function AppStack() {
           chat's message list instead of leaving it laying out underneath. */}
       <Stack.Screen name="chat/fullscreen" />
       <Stack.Screen name="profile/edit" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      {/* New post, opened from «Публикации» on your own profile. */}
+      <Stack.Screen name="post/new" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
       <Stack.Screen name="profile/[id]" options={SWIPE_BACK_ANYWHERE} />
       {/* @mention resolver. A username is not an id, so tapping a mention lands here, the lookup
           runs, and it either `replace`s itself with the profile or shows "no such user". */}
