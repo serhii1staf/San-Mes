@@ -1,43 +1,73 @@
 import { useThemeStore, ACCENT_COLORS } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
+import { useAccountsStore } from '../store/accountsStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { kvGetJSONSync, kvGetStringSync, kvSetJSON, kvSetString } from './kvStore';
+import { t, useI18nStore } from '../i18n/store';
 
 const API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
+// SECURITY: this key ships inside the app bundle, so anyone can extract it. It should live behind
+// a server proxy (the Worker) and be rotated; tracked as an open item, not fixed here.
 const API_KEY = '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';
-const MODEL = 'meta/llama-3.3-70b-instruct';
-const DAILY_LIMIT = 50;
-const RATE_KEY = '@san:ai_usage';
-const CHAT_HISTORY_KEY = '@san:ai_chat';
+// Tried in order. NVIDIA retires hosted models on a schedule: `meta/llama-3.3-70b-instruct`
+// answers 410 Gone since 2026-08-26, and with a single hard-coded model that turned every San AI
+// request into «Ошибка подключения». A retired model (404/410) is skipped for the rest of the
+// session; one that is merely unavailable (400/5xx) is skipped for that request only.
+// Measured 2026-11-17 with the real system prompt, thinking disabled: super 0.8–3 s, ultra
+// 0.9–5 s, lightning 0.7–1.5 s, all emitting the [ACTION:...] tags correctly.
+const MODELS = [
+  'nvidia/nemotron-3.5-super-vl-120b-a12b',
+  'nvidia/nemotron-3-ultra-550b-a55b',
+  'nvidia/nemotron-3.5-lightning-30b-a3b',
+];
+const retiredModels = new Set<string>();
+export const AI_DAILY_LIMIT = 50;
+const DAILY_LIMIT = AI_DAILY_LIMIT;
+
+// Per-account keys (kvStore prefixes them with the active account). They used to be global
+// AsyncStorage keys, so switching account showed the previous account's AI conversation.
+const USAGE_KEY = 'ai_usage';
+const HISTORY_KEY = 'ai_chat_history';
+const CONSENT_KEY = 'ai_consent_v1';
+const LEGACY_HISTORY_KEY = '@san:ai_chat';
+const LEGACY_USAGE_KEY = '@san:ai_usage';
+
+// ─── Consent ─────────────────────────────────────────────────────────────────
+//
+// Replies come from a third-party model host (NVIDIA). Before the first request the user is told
+// exactly what is sent and agrees; nothing is sent without that. Stored per account.
+
+export function hasAiConsent(): boolean {
+  return kvGetStringSync(CONSENT_KEY) === '1';
+}
+
+export function grantAiConsent(): void {
+  kvSetString(CONSENT_KEY, '1');
+}
 
 // ─── Rate Limiting ───────────────────────────────────────────────────────────
 
 interface UsageData { date: string; count: number; }
 
-export async function getRemainingRequests(): Promise<number> {
-  try {
-    const raw = await AsyncStorage.getItem(RATE_KEY);
-    if (!raw) return DAILY_LIMIT;
-    const data: UsageData = JSON.parse(raw);
-    const today = new Date().toISOString().split('T')[0];
-    if (data.date !== today) return DAILY_LIMIT;
-    return Math.max(0, DAILY_LIMIT - data.count);
-  } catch { return DAILY_LIMIT; }
+const today = () => new Date().toISOString().split('T')[0];
+
+export function getRemainingRequestsSync(): number {
+  const data = kvGetJSONSync<UsageData | null>(USAGE_KEY, null);
+  if (!data || data.date !== today()) return DAILY_LIMIT;
+  return Math.max(0, DAILY_LIMIT - (Number(data.count) || 0));
 }
 
-async function incrementUsage(): Promise<boolean> {
-  const today = new Date().toISOString().split('T')[0];
-  try {
-    const raw = await AsyncStorage.getItem(RATE_KEY);
-    let data: UsageData = { date: today, count: 0 };
-    if (raw) {
-      data = JSON.parse(raw);
-      if (data.date !== today) data = { date: today, count: 0 };
-    }
-    if (data.count >= DAILY_LIMIT) return false;
-    data.count++;
-    await AsyncStorage.setItem(RATE_KEY, JSON.stringify(data));
-    return true;
-  } catch { return true; }
+export async function getRemainingRequests(): Promise<number> {
+  return getRemainingRequestsSync();
+}
+
+function incrementUsage(): boolean {
+  const d = today();
+  let data = kvGetJSONSync<UsageData | null>(USAGE_KEY, null);
+  if (!data || data.date !== d) data = { date: d, count: 0 };
+  if (data.count >= DAILY_LIMIT) return false;
+  kvSetJSON(USAGE_KEY, { date: d, count: data.count + 1 });
+  return true;
 }
 
 // ─── System Prompt ───────────────────────────────────────────────────────────
@@ -47,7 +77,9 @@ function buildSystemPrompt(): string {
   const themeState = useThemeStore.getState();
   const currentTheme = ACCENT_COLORS.find(c => c.key === themeState.accent);
 
-  return `Ты — San AI, ассистент приложения San. Отвечай на русском, коротко и по делу. Ты дружелюбный и понимаешь контекст.
+  const replyLanguage = useI18nStore.getState().locale === 'en' ? 'английском (English)' : 'русском';
+
+  return `Ты — San AI, ассистент приложения San. Отвечай на ${replyLanguage}, если пользователь сам не пишет на другом языке; коротко и по делу. Ты дружелюбный и понимаешь контекст.
 
 Текущий пользователь: ${user?.displayName || 'Пользователь'} (@${user?.username || 'user'}), эмодзи: ${user?.emoji || '😊'}
 Текущая тема: ${currentTheme?.label || 'Стандартная'} (${themeState.accent}), режим: ${themeState.mode}
@@ -61,6 +93,7 @@ function buildSystemPrompt(): string {
 6. ОДНА тема за один ответ. Либо [ACTION:theme:...] (переключение на встроенную), ЛИБО [ACTION:custom_theme:...] (создание новой). НИКОГДА не добавляй оба тега в одном ответе.
 7. Если создаёшь НОВУЮ тему — используй ТОЛЬКО [ACTION:custom_theme:Название:#hex]. НЕ дублируй её через [ACTION:theme:...].
 8. Если переключаешь на СУЩЕСТВУЮЩУЮ тему из списка — используй ТОЛЬКО [ACTION:theme:ключ]. НЕ добавляй custom_theme.
+9. Тег — ЕДИНСТВЕННЫЙ способ что-то изменить. Без тега ничего не произойдёт. НИКОГДА не пиши «готово», «применена», «включён», если в этом же ответе нет нужного тега.
 
 Теги действий (ТОЛЬКО при явной просьбе):
 [ACTION:theme:ключ] — применить существующую тему
@@ -91,7 +124,7 @@ function buildSystemPrompt(): string {
 - Природный → forest, emerald, olive
 - Романтичный → rose, lavender, berry, plum
 
-О San: соцсеть, посты, чаты, мини-приложения, оффлайн, форматирование. Данные в безопасности.`;
+О San: мессенджер с чатами, профилями с публикациями, музыкой и мини-приложениями.`;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -122,6 +155,20 @@ export interface ParsedAction {
    * Persisted alongside the rest of the action via `saveChatHistory`.
    */
   appliedIconId?: string | null;
+}
+
+/**
+ * A transcript message as the model should see it. Replies are stored with their [ACTION:...]
+ * tags parsed out (`cleanText`), so the history sent back read «Готово, тема применена!» with no
+ * tag, and the model copied that: the next theme request came back as text only and changed
+ * nothing. Putting the tags back keeps the history consistent with the format it must produce.
+ */
+export function toModelMessage(m: AIMessage): { role: string; content: string } {
+  if (m.role !== 'assistant' || !m.actions || m.actions.length === 0) {
+    return { role: m.role, content: m.content };
+  }
+  const tags = m.actions.map((a) => `[ACTION:${a.type}:${a.value}]`).join(' ');
+  return { role: m.role, content: `${m.content} ${tags}`.trim() };
 }
 
 // ─── Action Parsing ──────────────────────────────────────────────────────────
@@ -280,22 +327,54 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
 // ─── API Call ────────────────────────────────────────────────────────────────
 
 export async function sendMessage(messages: { role: string; content: string }[]): Promise<string> {
+  // The screen asks first; this is the backstop so no caller can send without consent.
+  if (!hasAiConsent()) throw new Error('ai_consent_required');
   // Check rate limit
-  const allowed = await incrementUsage();
+  const allowed = incrementUsage();
   if (!allowed) {
-    return 'Лимит запросов на сегодня исчерпан (50/день). Попробуй завтра!';
+    return t('ai_chat.error_limit', undefined, { limit: DAILY_LIMIT });
   }
 
-  const body = {
-    model: MODEL,
-    messages: [{ role: 'system', content: buildSystemPrompt() }, ...messages],
-    temperature: 0.6,
-    max_tokens: 300,
-  };
+  const full = [{ role: 'system', content: buildSystemPrompt() }, ...messages];
+  let lastError: unknown = null;
+  for (const model of MODELS) {
+    if (retiredModels.has(model)) continue;
+    const res = await requestCompletion(model, full);
+    switch (res.kind) {
+      case 'ok':
+        return res.text || t('ai_chat.error_empty');
+      case 'busy':
+        return t('ai_chat.error_busy');
+      case 'timeout':
+        return t('ai_chat.error_timeout');
+      case 'retired':
+        retiredModels.add(model);
+        lastError = new Error(`model retired: ${model}`);
+        continue;
+      case 'unavailable':
+        lastError = new Error(`model unavailable: ${model} (${res.status})`);
+        continue;
+      case 'error':
+        throw res.error;
+    }
+  }
+  throw lastError ?? new Error('no AI model available');
+}
 
+type CompletionResult =
+  | { kind: 'ok'; text: string }
+  | { kind: 'busy' }
+  | { kind: 'timeout' }
+  | { kind: 'retired' }
+  | { kind: 'unavailable'; status: number }
+  | { kind: 'error'; error: unknown };
+
+async function requestCompletion(
+  model: string,
+  messages: { role: string; content: string }[],
+): Promise<CompletionResult> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
-
+  const timer = setTimeout(() => controller.abort(), 45000);
   try {
     const response = await fetch(API_URL, {
       method: 'POST',
@@ -303,39 +382,72 @@ export async function sendMessage(messages: { role: string; content: string }[])
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${API_KEY}`,
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        model,
+        messages,
+        // Lower than the old 0.6: at 0.6 the replacement models sometimes wrote «тема применена»
+        // and left out the [ACTION:...] tag, so nothing changed.
+        temperature: 0.3,
+        // Cyrillic costs more tokens per word; 300 cut longer Russian answers mid-list.
+        max_tokens: 400,
+        // These are reasoning models. With thinking on, the whole budget went to hidden
+        // reasoning and `content` came back null after up to 60 s.
+        chat_template_kwargs: { enable_thinking: false },
+      }),
       signal: controller.signal,
     });
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      if (response.status === 429) return 'Слишком много запросов. Подожди немного.';
-      throw new Error(`API error: ${response.status}`);
-    }
-
+    if (response.status === 429) return { kind: 'busy' };
+    if (response.status === 404 || response.status === 410) return { kind: 'retired' };
+    if (response.status === 400 || response.status >= 500) return { kind: 'unavailable', status: response.status };
+    if (!response.ok) return { kind: 'error', error: new Error(`API error: ${response.status}`) };
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || 'Не удалось получить ответ.';
+    const raw = data?.choices?.[0]?.message?.content;
+    // Belt and braces: drop an inline reasoning block if a model emits one despite the flag.
+    const text = typeof raw === 'string' ? raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim() : '';
+    return { kind: 'ok', text };
   } catch (e: any) {
-    clearTimeout(timeout);
-    if (e?.name === 'AbortError') return 'Превышено время ожидания. Попробуй ещё раз.';
-    throw e;
+    if (e?.name === 'AbortError') return { kind: 'timeout' };
+    return { kind: 'error', error: e };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 // ─── Chat Persistence ────────────────────────────────────────────────────────
 
-export async function saveChatHistory(messages: AIMessage[]): Promise<void> {
-  try {
-    // Keep last 50 messages
-    const toSave = messages.slice(-50);
-    await AsyncStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(toSave));
-  } catch {}
+/** Synchronous read so the screen opens with its history already on the first frame. */
+export function loadChatHistorySync(): AIMessage[] {
+  const v = kvGetJSONSync<AIMessage[] | null>(HISTORY_KEY, null);
+  return Array.isArray(v) ? v : [];
+}
+
+export function saveChatHistory(messages: AIMessage[]): void {
+  // Keep last 50 messages
+  kvSetJSON(HISTORY_KEY, messages.slice(-50));
 }
 
 export async function loadChatHistory(): Promise<AIMessage[]> {
+  return loadChatHistorySync();
+}
+
+/**
+ * The history used to sit under one device-wide key. Move it into the account namespace once,
+ * but only on a single-account device: with several accounts there is no telling whose it was,
+ * and handing one account another's conversation is the leak this fixes, so it is dropped.
+ * Returns the moved history, or null when there was nothing to move.
+ */
+export async function migrateLegacyAiStorage(): Promise<AIMessage[] | null> {
   try {
-    const raw = await AsyncStorage.getItem(CHAT_HISTORY_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch { return []; }
+    const raw = await AsyncStorage.getItem(LEGACY_HISTORY_KEY);
+    await AsyncStorage.multiRemove([LEGACY_HISTORY_KEY, LEGACY_USAGE_KEY]);
+    if (!raw) return null;
+    if (useAccountsStore.getState().accounts.length > 1) return null;
+    if (loadChatHistorySync().length > 0) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    saveChatHistory(parsed);
+    return parsed as AIMessage[];
+  } catch {
+    return null;
+  }
 }

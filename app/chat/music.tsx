@@ -1,19 +1,17 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText, Platform, LayoutAnimation, UIManager, Alert, Animated, InteractionManager, StyleSheet } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Platform, LayoutAnimation, UIManager, Alert, Animated, InteractionManager, StyleSheet } from 'react-native';
 import type { ScrollViewProps } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { ChatKeyboardScrollView } from '../../src/components/ui/ChatKeyboardScrollView';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { bottomScrimColorsStrong, composerScrimHeight, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
-import { BlurView } from '../../src/components/ui/AppBlurView';
+import { bottomScrimColorsStrong, composerScrimHeight, SCRIM_LOCATIONS } from '../../src/theme/scrim';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
-import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
+import { SpecialChatHeader, SpecialChatEmpty, useSpecialChatHeaderHeight, type SpecialChatSuggestion } from '../../src/components/chat/SpecialChatChrome';
 import { TrackResultCard } from '../../src/components/ui/TrackResultCard';
 import { AuthorInfoModal } from '../../src/components/ui/AuthorInfoModal';
 import { PlaylistSheet } from '../../src/components/ui/PlaylistSheet';
@@ -24,10 +22,12 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
+import { useDeferredPersist } from '../../src/hooks/useDeferredPersist';
 
 interface MusicMessage { id: string; query: string; track?: Track | null; tracks?: Track[]; ts: number }
 
 const HISTORY_KEY = 'music_chat_history';
+const saveHistory = (messages: MusicMessage[]) => kvSetJSON(HISTORY_KEY, messages.slice(-50));
 
 type CommandId = 'last' | 'clear' | 'playlist';
 interface CommandDef { id: CommandId; icon: string; label: string; description: string }
@@ -40,6 +40,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 // FlatList doesn't receive a fresh style object on every keystroke re-render.
 const styles = StyleSheet.create({
   listContent: { paddingHorizontal: 16, paddingTop: 8 },
+  listContentEmpty: { flexGrow: 1 },
 });
 
 export default function MusicChatScreen() {
@@ -61,7 +62,12 @@ export default function MusicChatScreen() {
     { id: 'playlist', icon: 'list', label: t('music_chat.command.playlist_label'), description: t('music_chat.command.playlist_desc') },
   ], [t]);
   const [messages, setMessages] = useState<MusicMessage[]>(() => {
-    try { return kvGetJSONSync<MusicMessage[]>(HISTORY_KEY, []); } catch { return []; }
+    try {
+      const saved = kvGetJSONSync<MusicMessage[]>(HISTORY_KEY, []);
+      // A search still running when the app was closed was saved without `tracks`, and on the
+      // next open it showed «Ищу…» forever. Nothing will ever answer it, so settle it as a miss.
+      return saved.map((m) => (m.tracks === undefined && m.track === undefined ? { ...m, tracks: [] } : m));
+    } catch { return []; }
   });
   const [input, setInput] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -71,20 +77,9 @@ export default function MusicChatScreen() {
   const [playlistOpen, setPlaylistOpen] = useState(false);
   const listRef = useRef<FlatList>(null);
 
-  // Defer the iOS BlurView in the back button past the navigation transition.
-  // UIVisualEffectView is one of the more expensive native views to construct
-  // on first mount; on weak devices that mount lands on the same RAF as the
-  // navigation animation and shaves the slide-in framerate from 60 → ~40.
-  // Show a flat fallback for the first frame and swap to the BlurView one
-  // interaction tick later.
-  const [chromeReady, setChromeReady] = useState(false);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
-    return () => handle.cancel();
-  }, []);
-  // Native iOS-26 liquid glass for the floating back button. White icon over
-  // the gradient header, so colorScheme 'dark' matches the profile chrome.
+  // Native iOS-26 liquid glass for the composer chrome (the header handles its own).
   const glassActive = useLiquidGlassActive();
+  const headerHeight = useSpecialChatHeaderHeight();
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const INPUT_BAR = 60;
@@ -111,13 +106,9 @@ export default function MusicChatScreen() {
   // Persist the trimmed message history to MMKV. The JSON.stringify of up to
   // 50 messages (each potentially carrying multiple tracks worth of metadata)
   // can spike to 30–60 ms on weak devices; defer past the current interaction
-  // so it never lands on the navigation frame.
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => {
-      kvSetJSON(HISTORY_KEY, messages.slice(-50));
-    });
-    return () => handle.cancel();
-  }, [messages]);
+  // so it never lands on the navigation frame, but flush on unmount so leaving
+  // right after a search does not lose its results.
+  useDeferredPersist(messages, saveHistory);
 
   // Seed the global "discovered" queue with everything already in the chat
   // history so the full-screen player has the user's library available even
@@ -224,6 +215,9 @@ export default function MusicChatScreen() {
       // played. Order is preserved (first-seen first).
       if (results.length > 0) useMusicStore.getState().addDiscovered(results);
       if (results[0]) useMusicStore.getState().play(results[0]);
+    } catch {
+      // Settle the bubble as "not found" rather than leaving it spinning.
+      setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, tracks: [] } : m)));
     } finally {
       setIsSearching(false);
       inFlightRef.current = false;
@@ -339,48 +333,26 @@ export default function MusicChatScreen() {
   // memoizing keeps FlatList from re-mounting the header/footer/empty subtrees
   // on every input change. Behaviour and layout are identical.
   const listHeader = useMemo(() => <View style={{ height: LIST_BOTTOM_SPACER }} />, [LIST_BOTTOM_SPACER]);
-  const listFooter = useMemo(() => <View style={{ height: insets.top + 72 }} />, [insets.top]);
+  const listFooter = useMemo(() => <View style={{ height: headerHeight + 8 }} />, [headerHeight]);
+  // Starter searches for the empty chat. Genre words rather than artist names: they return
+  // something on every source and read the same in both locales.
+  const suggestions = useMemo<SpecialChatSuggestion[]>(
+    () => ['lofi', 'synthwave', 'jazz', 'piano'].map((q) => ({ key: q, label: q, onPress: () => { void runSearch(q); } })),
+    [runSearch],
+  );
   const listEmpty = useMemo(() => (
-    <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
-      <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🎵</RNText>
-      <Text variant="body" weight="bold" style={{ marginTop: 12 }}>{t('music_chat.title')}</Text>
-      <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
-        {t('music_chat.empty_hint')}
-      </Text>
-    </View>
-  ), [theme, t]);
+    <SpecialChatEmpty icon="music-note" title={t('music_chat.title')} hint={t('music_chat.empty_hint')} suggestions={suggestions} />
+  ), [t, suggestions]);
+  // The empty state centres itself in the space between header and composer; that needs the
+  // content container to fill the list.
+  const listContentStyle = useMemo(
+    () => (messages.length === 0 ? [styles.listContent, styles.listContentEmpty] : styles.listContent),
+    [messages.length === 0],
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 }}>
-        <LinearGradient colors={topScrimColors(theme.isDark, theme.colors.background.primary)} locations={SCRIM_LOCATIONS} style={{ paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Pressable onPress={() => router.back()} style={glassActive ? { borderRadius: 17 } : { borderRadius: 17, overflow: 'hidden' }}>
-              {glassActive ? (
-                <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
-                </NativeGlassView>
-              ) : chromeReady ? (
-                <BlurView intensity={80} role="scrim" tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
-                </BlurView>
-              ) : (
-                <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
-                </View>
-              )}
-            </Pressable>
-            <View style={{ alignItems: 'center' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text variant="body" weight="bold">{t('music_chat.title')}</Text>
-                <VerifiedBadge size={13} />
-              </View>
-              <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{t('music_chat.subtitle')}</Text>
-            </View>
-            <View style={{ width: 34 }} />
-          </View>
-        </LinearGradient>
-      </View>
+      <SpecialChatHeader title={t('music_chat.title')} subtitle={t('music_chat.subtitle')} icon="music-note" />
 
       <FlatList
         ref={listRef}
@@ -388,7 +360,7 @@ export default function MusicChatScreen() {
         keyExtractor={keyExtractor}
         inverted
         renderScrollComponent={renderScrollComponent}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={listContentStyle}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -478,7 +450,7 @@ export default function MusicChatScreen() {
                     ? { backgroundColor: theme.colors.accent.primary, borderWidth: 1, borderColor: theme.colors.border.light }
                     : glassActive
                       ? null
-                      : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }),
+                      : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }),
                 }}
               >
                 {!commandsOpen && glassActive ? (
@@ -537,6 +509,9 @@ export default function MusicChatScreen() {
                   textAlignVertical="center"
                   style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
                   onSubmitEditing={handleSend}
+                  // A multiline field inserts a newline on Return unless told otherwise, so
+                  // `onSubmitEditing` never fired and the keyboard's «Поиск» key did nothing.
+                  submitBehavior="submit"
                   returnKeyType="search"
                   onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
                 />
@@ -545,7 +520,7 @@ export default function MusicChatScreen() {
                 </Pressable>
               </NativeGlassView>
             ) : (
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40, backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40, backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }}>
                 <TextInput
                   value={input}
                   onChangeText={setInput}
@@ -555,6 +530,9 @@ export default function MusicChatScreen() {
                   textAlignVertical="center"
                   style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
                   onSubmitEditing={handleSend}
+                  // A multiline field inserts a newline on Return unless told otherwise, so
+                  // `onSubmitEditing` never fired and the keyboard's «Поиск» key did nothing.
+                  submitBehavior="submit"
                   returnKeyType="search"
                   onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
                 />
