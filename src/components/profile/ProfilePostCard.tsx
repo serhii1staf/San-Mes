@@ -168,10 +168,6 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
             <Feather name="heart" size={12} color={tertiary} />
             <Text variant="caption" color={tertiary} style={styles.metaText}>{post.likes_count || 0}</Text>
           </View>
-          <View style={styles.metaItem}>
-            <Feather name="message-circle" size={12} color={tertiary} />
-            <Text variant="caption" color={tertiary} style={styles.metaText}>{post.comments_count || 0}</Text>
-          </View>
         </View>
       </View>
     </Pressable>
@@ -183,7 +179,6 @@ export const ProfilePostCard = memo(ProfilePostCardBase, (prev, next) =>
   prev.post.content === next.post.content &&
   prev.post.image_url === next.post.image_url &&
   prev.post.likes_count === next.post.likes_count &&
-  prev.post.comments_count === next.post.comments_count &&
   prev.post.created_at === next.post.created_at &&
   prev.postEmoji === next.postEmoji &&
   prev.authorName === next.authorName &&

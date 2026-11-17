@@ -158,7 +158,7 @@ export default function UserProfileScreen() {
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         bounces={false}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 32, minHeight: winHeight + 180 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
       >
         <ProfileHeaderCard
           topInset={insets.top}
@@ -196,6 +196,7 @@ export default function UserProfileScreen() {
           profileId={profileId}
           isOwn={isOwnProfile}
           author={{ name: profile.display_name || profile.username || '', emoji: profile.emoji || '😊', verified: !!profile.is_verified, badge: profile.badge }}
+          sticky={{ scrollY: anim.scrollY, top: insets.top + 6, bottomPad: insets.bottom + 32 }}
         />
       </Animated.ScrollView>
 

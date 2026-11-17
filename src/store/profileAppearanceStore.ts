@@ -1,12 +1,7 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const storage: StateStorage = {
-  setItem: async (n, v) => { await AsyncStorage.setItem(n, v); },
-  getItem: async (n) => await AsyncStorage.getItem(n),
-  removeItem: async (n) => { await AsyncStorage.removeItem(n); },
-};
+import { persist, createJSONStorage } from 'zustand/middleware';
+// Synchronous (MMKV): the post cards render with the chosen emoji in the first frame.
+import { syncPersistStorage as storage } from './syncPersistStorage';
 
 // Per-device choice of a decorative emoji shown faintly inside the user's own
 // profile post containers (Telegram-style). Empty string = off.

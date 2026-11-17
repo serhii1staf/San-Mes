@@ -12,8 +12,9 @@
  * thumbnails) in the same commit as the push animation, which is the lag seen on opening a profile.
  */
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, InteractionManager, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator } from 'react-native';
+import { Alert, Animated, InteractionManager, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator, type LayoutChangeEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
@@ -53,22 +54,39 @@ function openPost(id: string) {
 }
 
 /**
- * How many of `total` items to render: none until the screen's open transition has finished,
- * then `first`, then `step` more on each following frame. Keeps every commit small.
+ * How many of `total` items to render: the first `first` at once, then `step` more per frame once
+ * the screen's open transition has finished.
+ *
+ * The first batch used to wait for the transition too, so every open painted an empty profile and
+ * then filled it in waves, which read as "the data reloads every time" even though the posts come
+ * from the memory/disk cache. The first screenful is now in the very first frame; only the cards
+ * below the fold are added progressively, where nobody sees them arrive.
  */
-function useProgressiveCount(total: number, first = 4, step = 4): number {
+function useProgressiveCount(total: number, first = 5, step = 5): number {
   const [ready, setReady] = useState(false);
-  const [count, setCount] = useState(0);
+  const [count, setCount] = useState(first);
   useEffect(() => {
     const handle = InteractionManager.runAfterInteractions(() => setReady(true));
     return () => handle.cancel();
   }, []);
   useEffect(() => {
     if (!ready || count >= total) return;
-    const raf = requestAnimationFrame(() => setCount((c) => Math.min(total, c === 0 ? first : c + step)));
+    const raf = requestAnimationFrame(() => setCount((c) => Math.min(total, c + step)));
     return () => cancelAnimationFrame(raf);
-  }, [ready, count, total, first, step]);
+  }, [ready, count, total, step]);
   return Math.min(count, total);
+}
+
+/**
+ * Pins the tab strip under the status bar once the header has scrolled away.
+ *
+ * `top` is where the strip stops, from the top of the screen; `bottomPad` is the padding the screen
+ * adds under the tabs. Both screens drive it from the same native-driver scroll value as the header.
+ */
+export interface ProfileStickyTabs {
+  scrollY: Animated.Value;
+  top: number;
+  bottomPad: number;
 }
 
 const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; onChange: (k: TabKey) => void }) {
@@ -154,11 +172,43 @@ function Empty({ icon, text }: { icon: React.ComponentProps<typeof Feather>['nam
   );
 }
 
-export function ProfileContentTabs({ profileId, isOwn, author }: { profileId: string; isOwn: boolean; author: ProfileAuthor }) {
+export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profileId: string; isOwn: boolean; author: ProfileAuthor; sticky?: ProfileStickyTabs }) {
   const theme = useTheme();
   const t = useT();
-  const { width } = useWindowDimensions();
+  const { width, height: winHeight } = useWindowDimensions();
   const [tab, setTab] = useState<TabKey>('posts');
+
+  // ── Sticky strip ──────────────────────────────────────────────────────────
+  // The strip is the first child of the wrap, so the wrap's y in the scroll content is the strip's
+  // y. Past `stickAt` the strip is translated down by exactly the extra scroll, so it stays put
+  // under the status bar while the posts slide beneath it (native driver, no re-render).
+  //
+  // The wrap's minHeight is what stops the page: with little or no content the scroll ends exactly
+  // when the strip reaches the top, instead of scrolling the tabs away into empty space. It also
+  // keeps the translated strip inside the wrap's bounds; Android does not deliver touches to a
+  // child drawn outside its parent.
+  const [stripY, setStripY] = useState<number | null>(null);
+  const onWrapLayout = useCallback((e: LayoutChangeEvent) => {
+    const y = e.nativeEvent.layout.y;
+    setStripY((prev) => (prev !== null && Math.abs(prev - y) < 0.5 ? prev : y));
+  }, []);
+  const scrollY = sticky?.scrollY;
+  const stickyTop = sticky?.top ?? 0;
+  const stickAt = stripY === null ? null : Math.max(0, stripY - stickyTop);
+  const stickTranslate = useMemo(
+    () => (scrollY && stickAt !== null
+      ? scrollY.interpolate({ inputRange: [stickAt, stickAt + 1], outputRange: [0, 1], extrapolateLeft: 'clamp', extrapolateRight: 'extend' })
+      : null),
+    [scrollY, stickAt],
+  );
+  const scrimOpacity = useMemo(
+    () => (scrollY && stickAt !== null
+      ? scrollY.interpolate({ inputRange: [Math.max(0, stickAt - 18), stickAt], outputRange: [0, 1], extrapolate: 'clamp' })
+      : null),
+    [scrollY, stickAt],
+  );
+  const wrapMinHeight = sticky ? Math.max(0, winHeight - sticky.top - sticky.bottomPad) : undefined;
+  const bg = theme.colors.background.primary;
   const blocked = useIsBlocked(isOwn ? '' : profileId);
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
   const { posts, loading } = useProfilePosts(blocked ? undefined : profileId);
@@ -204,7 +254,7 @@ export function ProfileContentTabs({ profileId, isOwn, author }: { profileId: st
 
   if (blocked) {
     return (
-      <View style={styles.wrap}>
+      <View style={[styles.wrap, wrapMinHeight ? { minHeight: wrapMinHeight } : null]}>
         <Empty icon="slash" text={t('profile.blocked_content')} />
       </View>
     );
@@ -214,8 +264,20 @@ export function ProfileContentTabs({ profileId, isOwn, author }: { profileId: st
   const hairline = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
 
   return (
-    <View style={styles.wrap}>
-      <TabStrip value={tab} onChange={setTab} />
+    <View style={[styles.wrap, wrapMinHeight ? { minHeight: wrapMinHeight } : null]} onLayout={sticky ? onWrapLayout : undefined}>
+      <Animated.View style={[styles.stickyLayer, stickTranslate ? { transform: [{ translateY: stickTranslate }] } : null]}>
+        {/* Fades the posts out under the status bar once the strip is pinned. A sibling of the
+            strip, never its ancestor: an alpha on a glass view's ancestor drops the glass. */}
+        {sticky && scrimOpacity ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.scrim, { top: -stickyTop - 1, height: stickyTop + 26, opacity: scrimOpacity }]}
+          >
+            <LinearGradient colors={[bg, bg, bg + '00']} locations={[0, 0.7, 1]} style={StyleSheet.absoluteFill} />
+          </Animated.View>
+        ) : null}
+        <TabStrip value={tab} onChange={setTab} />
+      </Animated.View>
 
       {tab === 'posts' ? (
         <View style={{ marginTop: 12 }}>
@@ -290,6 +352,9 @@ export function ProfileContentTabs({ profileId, isOwn, author }: { profileId: st
 
 const styles = StyleSheet.create({
   wrap: { paddingHorizontal: 16, marginTop: 18 },
+  // Above the cards that slide under it while pinned.
+  stickyLayer: { zIndex: 10 },
+  scrim: { position: 'absolute', left: -16, right: -16 },
   strip: { flexDirection: 'row', borderRadius: 20, padding: 4, gap: 4, overflow: 'hidden' },
   stripItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 9, borderRadius: 16, overflow: 'hidden' },
   compose: {

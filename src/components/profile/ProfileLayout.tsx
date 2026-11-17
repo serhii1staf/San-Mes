@@ -232,7 +232,6 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
           left={20 + 84 + 16}
           height={108}
           active={sceneAnimate}
-          glassActive={glassActive}
         />
       ) : null}
 

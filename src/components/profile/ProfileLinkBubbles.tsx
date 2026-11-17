@@ -1,27 +1,29 @@
 /**
- * Profile links as floating liquid bubbles, in the space beside the avatar (the idea of Telegram's
- * profile gifts, drawn as soap-bubble glass instead of gift art).
+ * Profile links as floating liquid drops, in the space beside the avatar (the idea of Telegram's
+ * glowing profile gifts).
  *
- * Each bubble holds the link's brand icon, drifts slowly on its own rhythm, carries an iridescent
- * sheen that keeps turning, can be dragged in any direction and springs back with a little wobble
- * when let go. A tap opens the link.
+ * Each drop is a blob of coloured gel in the link's brand colour: its outline keeps changing shape,
+ * something lighter swirls inside it, it glows softly, it drifts on its own rhythm, and it can be
+ * grabbed and pulled in any direction. Let go and it springs home, wobbling more while it is pulled.
+ * A tap opens the link.
  *
  * Cost, since the profile is where lag was reported:
- *   - everything moves on the UI thread (Reanimated); nothing re-renders React while it animates;
- *   - the loops start only after the open transition and stop while the screen is not focused
- *     (the own-profile tab stays mounted behind the other tabs) or when Reduce Motion is on;
- *   - no blur views. On iOS 26 with liquid glass on, the base is the native glass material;
- *     everywhere else it is a translucent fill, a gradient sheen, a highlight and a rim.
+ *   - every frame is computed on the UI thread (Reanimated); React does not re-render while it moves;
+ *   - per drop and per frame: two SVG path strings (outline, inner swirl) and two transforms. No
+ *     clipping, no blur, no shadows, no native glass (glass cannot change shape anyway);
+ *   - the loop starts after the open transition and stops while the screen is not focused (the
+ *     own-profile tab stays mounted behind the other tabs) or when Reduce Motion is on.
  */
 import React, { memo, useCallback, useEffect, useMemo } from 'react';
 import { InteractionManager, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { FontAwesome5, Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle, Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
   Easing,
   cancelAnimation,
   runOnJS,
+  useAnimatedProps,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
@@ -29,8 +31,6 @@ import Reanimated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { useTheme } from '../../theme';
-import { NativeGlassView } from '../ui/LiquidGlass';
 import { triggerHaptic } from '../../utils/haptics';
 import { openUrl } from '../../utils/openUrl';
 import { useT } from '../../i18n/store';
@@ -54,24 +54,28 @@ export function detectLinkKind(url: string): LinkKind {
   return 'website';
 }
 
-const BRAND: Record<LinkKind, { icon: string; color: string; label: string; brand: boolean }> = {
-  github: { icon: 'github', color: '#FFFFFF', label: 'GitHub', brand: true },
-  twitter: { icon: 'twitter', color: '#1DA1F2', label: 'Twitter', brand: true },
-  instagram: { icon: 'instagram', color: '#F56A8C', label: 'Instagram', brand: true },
-  youtube: { icon: 'youtube', color: '#FF3B3B', label: 'YouTube', brand: true },
-  telegram: { icon: 'telegram-plane', color: '#2AABEE', label: 'Telegram', brand: true },
-  tiktok: { icon: 'tiktok', color: '#FFFFFF', label: 'TikTok', brand: true },
-  linkedin: { icon: 'linkedin-in', color: '#3D8BFF', label: 'LinkedIn', brand: true },
-  discord: { icon: 'discord', color: '#8C97FF', label: 'Discord', brand: true },
-  twitch: { icon: 'twitch', color: '#A970FF', label: 'Twitch', brand: true },
-  spotify: { icon: 'spotify', color: '#1ED760', label: 'Spotify', brand: true },
-  website: { icon: 'globe', color: '#6FA8FF', label: '', brand: false },
+/**
+ * Icon and gel colour per link kind. Brands whose own colour is black or white (GitHub, TikTok) get
+ * a colour from the same palette instead, so every drop glows.
+ */
+const BRAND: Record<LinkKind, { icon: string; gel: string; label: string; brand: boolean }> = {
+  github: { icon: 'github', gel: '#8A63FF', label: 'GitHub', brand: true },
+  twitter: { icon: 'twitter', gel: '#1DA1F2', label: 'Twitter', brand: true },
+  instagram: { icon: 'instagram', gel: '#F2477F', label: 'Instagram', brand: true },
+  youtube: { icon: 'youtube', gel: '#FF4040', label: 'YouTube', brand: true },
+  telegram: { icon: 'telegram-plane', gel: '#2AABEE', label: 'Telegram', brand: true },
+  tiktok: { icon: 'tiktok', gel: '#FF3D7F', label: 'TikTok', brand: true },
+  linkedin: { icon: 'linkedin-in', gel: '#3D8BFF', label: 'LinkedIn', brand: true },
+  discord: { icon: 'discord', gel: '#6F7BFF', label: 'Discord', brand: true },
+  twitch: { icon: 'twitch', gel: '#A970FF', label: 'Twitch', brand: true },
+  spotify: { icon: 'spotify', gel: '#1ED760', label: 'Spotify', brand: true },
+  website: { icon: 'globe', gel: '#22C7B8', label: '', brand: false },
 };
 
-/** Bubble diameters, by index. Different sizes read as a cluster rather than a row of buttons. */
-const SIZES = [58, 50, 54, 46, 52];
+/** Drop diameters, by index. Different sizes read as a cluster rather than a row of buttons. */
+const SIZES = [60, 52, 56, 48, 54];
 
-/** Bubble centres as fractions of the area, for 1..5 links. Staggered so neighbours never touch. */
+/** Drop centres as fractions of the area, for 1..5 links. Staggered so neighbours never touch. */
 const LAYOUTS: [number, number][][] = [
   [[0.5, 0.5]],
   [[0.3, 0.42], [0.72, 0.6]],
@@ -80,8 +84,51 @@ const LAYOUTS: [number, number][][] = [
   [[0.1, 0.62], [0.32, 0.28], [0.54, 0.7], [0.75, 0.3], [0.94, 0.66]],
 ];
 
-// Soap-film colours. Low alpha: the sheen tints the bubble, it does not paint it.
-const SHEEN = ['#FF7AD966', '#7AE7FF66', '#FFF07A55', '#A88BFF66', '#FF7AD966'] as const;
+/** `#RRGGBB` mixed toward `#RRGGBB` by `w` (0..1). */
+function mix(a: string, b: string, w: number): string {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const ch = (shift: number) => Math.round(((pa >> shift) & 255) * (1 - w) + ((pb >> shift) & 255) * w);
+  return `#${((1 << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).slice(1)}`;
+}
+
+const TAU = Math.PI * 2;
+const POINTS = 6;
+// Control-point distance that makes six evenly spaced points draw a circle: (4/3)·tan(15°)·R over
+// the 1.732·R chord between a point's neighbours.
+const SMOOTH = 0.357 / 1.732;
+
+/**
+ * A closed, smooth blob around (cx, cy). Each of the six points breathes on its own sine; every
+ * frequency is a whole number of turns per loop, so `t` wrapping from 1 back to 0 is seamless.
+ */
+function blobPath(cx: number, cy: number, R: number, t: number, phase: number, amp: number): string {
+  'worklet';
+  const th = t * TAU;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (let i = 0; i < POINTS; i++) {
+    const a = (i / POINTS) * TAU;
+    const k = (i % 2) + 1;
+    const r = R * (1 + amp * Math.sin(k * th + phase + i * 1.9) + amp * 0.45 * Math.sin((3 - k) * th + phase * 0.7 + i * 0.8));
+    xs.push(cx + r * Math.cos(a));
+    ys.push(cy + r * Math.sin(a));
+  }
+  let d = `M${xs[0].toFixed(2)} ${ys[0].toFixed(2)}`;
+  for (let i = 0; i < POINTS; i++) {
+    const i0 = (i + POINTS - 1) % POINTS;
+    const i2 = (i + 1) % POINTS;
+    const i3 = (i + 2) % POINTS;
+    const c1x = xs[i] + (xs[i2] - xs[i0]) * SMOOTH;
+    const c1y = ys[i] + (ys[i2] - ys[i0]) * SMOOTH;
+    const c2x = xs[i2] - (xs[i3] - xs[i]) * SMOOTH;
+    const c2y = ys[i2] - (ys[i3] - ys[i]) * SMOOTH;
+    d += ` C${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${xs[i2].toFixed(2)} ${ys[i2].toFixed(2)}`;
+  }
+  return `${d}Z`;
+}
+
+const AnimatedPath = Reanimated.createAnimatedComponent(Path);
 
 interface BubbleProps {
   url: string;
@@ -90,43 +137,30 @@ interface BubbleProps {
   top: number;
   index: number;
   running: boolean;
-  glassActive: boolean;
-  isDark: boolean;
   websiteLabel: string;
 }
 
-const Bubble = memo(function Bubble({ url, size, left, top, index, running, glassActive, isDark, websiteLabel }: BubbleProps) {
+const Bubble = memo(function Bubble({ url, size, left, top, index, running, websiteLabel }: BubbleProps) {
   const kind = detectLinkKind(url);
   const brand = BRAND[kind];
   const dx = useSharedValue(0);
   const dy = useSharedValue(0);
   const scale = useSharedValue(1);
-  const driftX = useSharedValue(0);
-  const driftY = useSharedValue(0);
-  const spin = useSharedValue(index * 0.21);
+  const t = useSharedValue(index * 0.17);
 
-  // Each bubble gets its own periods so the cluster never moves in step.
-  const periodY = 2600 + index * 430;
-  const periodX = 3400 + index * 370;
-  const periodSpin = 7000 + index * 900;
+  // Each drop has its own period and phase so the cluster never moves in step.
+  const period = 5600 + index * 820;
+  const phase = index * 1.37;
 
   useEffect(() => {
     if (!running) {
-      cancelAnimation(driftX);
-      cancelAnimation(driftY);
-      cancelAnimation(spin);
+      cancelAnimation(t);
       return;
     }
-    const sine = Easing.inOut(Easing.sin);
-    driftY.value = withRepeat(withTiming(1, { duration: periodY, easing: sine }), -1, true);
-    driftX.value = withRepeat(withTiming(1, { duration: periodX, easing: sine }), -1, true);
-    spin.value = withRepeat(withTiming(spin.value + 1, { duration: periodSpin, easing: Easing.linear }), -1, false);
-    return () => {
-      cancelAnimation(driftX);
-      cancelAnimation(driftY);
-      cancelAnimation(spin);
-    };
-  }, [running, driftX, driftY, spin, periodX, periodY, periodSpin]);
+    // Repeating from where it stopped: every term in `blobPath` and the drift has period 1 in `t`.
+    t.value = withRepeat(withTiming(t.value + 1, { duration: period, easing: Easing.linear }), -1, false);
+    return () => cancelAnimation(t);
+  }, [running, t, period]);
 
   const open = useCallback(() => {
     triggerHaptic('light');
@@ -138,13 +172,13 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, glas
     // Both gestures BEGIN on touch-down; the pan only STARTS once the finger has moved. So the
     // press-in lives on the tap's begin, the grab on the pan's start, and the one reset that always
     // runs is the pan's finalize (it fires for every touch that began, tap or drag).
-    // The bubbles sit inside the profile's ScrollView. A quick swipe that starts on a bubble must
-    // still scroll the page, so the drag only engages after a short hold ("grab the bubble"). A
-    // hold released without moving is still a tap.
+    // The drops sit inside the profile's ScrollView. A quick swipe that starts on one must still
+    // scroll the page, so the drag only engages after a short hold ("grab the drop"). A hold
+    // released without moving is still a tap.
     const pan = Gesture.Pan()
       .activateAfterLongPress(140)
       .onStart(() => {
-        scale.value = withSpring(1.14, { damping: 12, stiffness: 260 });
+        scale.value = withSpring(1.12, { damping: 12, stiffness: 260 });
         runOnJS(grabbed)();
       })
       .onChange((e) => {
@@ -155,7 +189,7 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, glas
         if (Math.abs(e.translationX) < 6 && Math.abs(e.translationY) < 6) runOnJS(open)();
       })
       .onFinalize((e) => {
-        // Low damping is the "liquid" part: it overshoots home and settles with a wobble.
+        // Low damping is the liquid part: it overshoots home and settles with a wobble.
         dx.value = withSpring(0, { velocity: e.velocityX, damping: 7, stiffness: 120, mass: 0.9 });
         dy.value = withSpring(0, { velocity: e.velocityY, damping: 7, stiffness: 120, mass: 0.9 });
         scale.value = withSpring(1, { damping: 6, stiffness: 180 });
@@ -163,7 +197,7 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, glas
     const tap = Gesture.Tap()
       .maxDuration(400)
       .onBegin(() => {
-        scale.value = withSpring(0.92, { damping: 14, stiffness: 320 });
+        scale.value = withSpring(0.9, { damping: 14, stiffness: 320 });
       })
       .onEnd((_e, success) => {
         if (success) runOnJS(open)();
@@ -171,30 +205,46 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, glas
     return Gesture.Race(pan, tap);
   }, [dx, dy, scale, open, grabbed]);
 
+  const R = size / 2;
+  // The outline swings up to ~22% past R, so the canvas leaves room for it on every side.
+  const canvas = Math.round(size * 1.4);
+  const c = canvas / 2;
+  const glow = Math.round(size * 1.95);
+
   const bodyStyle = useAnimatedStyle(() => {
-    const fx = (driftX.value - 0.5) * 6;
-    const fy = (driftY.value - 0.5) * 9;
-    // Squash a little along the drag direction while it is pulled away from home.
-    const pull = Math.min(1, Math.sqrt(dx.value * dx.value + dy.value * dy.value) / 160);
+    const th = t.value * TAU;
+    const fx = Math.sin(th + phase) * 3;
+    const fy = Math.cos(th * 2 + phase) * 3.5;
+    // Stretch along the pull while it is held away from home.
+    const pull = Math.min(1, Math.sqrt(dx.value * dx.value + dy.value * dy.value) / 140);
     return {
       transform: [
         { translateX: dx.value + fx },
         { translateY: dy.value + fy },
-        { scaleX: scale.value * (1 + pull * 0.06) },
-        { scaleY: scale.value * (1 - pull * 0.06) },
+        { scaleX: scale.value * (1 + pull * 0.08) },
+        { scaleY: scale.value * (1 - pull * 0.08) },
       ],
     };
   });
-  const sheenStyle = useAnimatedStyle(() => ({ transform: [{ rotate: `${spin.value * 360}deg` }] }));
+  const glowStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: 1 + 0.07 * Math.sin(t.value * TAU * 2 + phase) }],
+  }));
+  const outlineProps = useAnimatedProps(() => {
+    const pull = Math.min(1, Math.sqrt(dx.value * dx.value + dy.value * dy.value) / 120);
+    return { d: blobPath(c, c, R, t.value, phase, 0.07 + pull * 0.07) };
+  });
+  const swirlProps = useAnimatedProps(() => ({
+    d: blobPath(c + R * 0.1, c + R * 0.14, R * 0.56, t.value, phase + 2.4, 0.17),
+  }));
 
-  const r = size / 2;
-  // ── NO CLIPPING, ON PURPOSE ────────────────────────────────────────────────
-  // The first version rotated an oversized gradient inside an `overflow: hidden` circle. On
-  // Android a rounded clip with changing content is redrawn through an offscreen layer every frame,
-  // and the emulator measured it: idle with three bubbles, 74 frames in 5 s, p50 150 ms. Every layer
-  // is now a circle of its own (expo-linear-gradient draws inside its border radius natively), so
-  // the sheen's rotation, the drift and the drag are pure transforms on already-recorded views.
-  const circle = { position: 'absolute' as const, left: 0, top: 0, width: size, height: size, borderRadius: r };
+  const gel = brand.gel;
+  const light = mix(gel, '#FFFFFF', 0.5);
+  const deep = mix(gel, '#000000', 0.32);
+  const hx = c - R * 0.27;
+  const hy = c - R * 0.35;
+  const iconSize = Math.round(size * 0.38);
+  const id = `${kind}${index}`;
+
   return (
     <GestureDetector gesture={gesture}>
       <Reanimated.View
@@ -203,37 +253,60 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, glas
         accessibilityLabel={brand.label || websiteLabel}
         style={[{ position: 'absolute', left, top, width: size, height: size }, bodyStyle]}
       >
-        {glassActive ? (
-          <NativeGlassView glassStyle="clear" colorScheme={isDark ? 'dark' : 'light'} style={circle} />
-        ) : (
-          <View style={[circle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.5)' }]} />
-        )}
-        {/* Soap-film sheen: a diagonal gradient circle, turned slowly. The circle is symmetric, so
-            rotating it only swirls the colours. */}
-        <Reanimated.View pointerEvents="none" style={[circle, sheenStyle]}>
-          <LinearGradient colors={SHEEN} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={circle} />
+        {/* Soft glow: a radial fade drawn once; only its scale breathes. */}
+        <Reanimated.View
+          pointerEvents="none"
+          style={[{ position: 'absolute', left: (size - glow) / 2, top: (size - glow) / 2, width: glow, height: glow }, glowStyle]}
+        >
+          <Svg width={glow} height={glow}>
+            <Defs>
+              <RadialGradient id={`g${id}`} cx="50%" cy="50%" r="50%">
+                <Stop offset="0.3" stopColor={gel} stopOpacity={0.5} />
+                <Stop offset="1" stopColor={gel} stopOpacity={0} />
+              </RadialGradient>
+            </Defs>
+            <Circle cx={glow / 2} cy={glow / 2} r={glow / 2} fill={`url(#g${id})`} />
+          </Svg>
         </Reanimated.View>
-        {/* Depth: light from above, a touch of shade underneath. */}
-        <LinearGradient
-          pointerEvents="none"
-          colors={['rgba(255,255,255,0.22)', 'rgba(255,255,255,0)', 'rgba(0,0,0,0.22)']}
-          locations={[0, 0.5, 1]}
-          style={circle}
-        />
-        {/* Specular highlight. */}
-        <LinearGradient
-          pointerEvents="none"
-          colors={['rgba(255,255,255,0.9)', 'rgba(255,255,255,0)']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0.8, y: 1 }}
-          style={{ position: 'absolute', left: size * 0.17, top: size * 0.1, width: size * 0.42, height: size * 0.26, borderRadius: size * 0.13, transform: [{ rotate: '-22deg' }] }}
-        />
-        <View pointerEvents="none" style={[circle, styles.rim]} />
-        <View pointerEvents="none" style={[circle, styles.center]}>
+        <View pointerEvents="none" style={{ position: 'absolute', left: (size - canvas) / 2, top: (size - canvas) / 2, width: canvas, height: canvas }}>
+          <Svg width={canvas} height={canvas}>
+            <Defs>
+              {/* Gel shading: lit from the top left, deeper colour toward the far edge. */}
+              <RadialGradient id={`b${id}`} cx="36%" cy="30%" r="78%">
+                <Stop offset="0" stopColor={light} />
+                <Stop offset="0.55" stopColor={gel} />
+                <Stop offset="1" stopColor={deep} />
+              </RadialGradient>
+              <RadialGradient id={`h${id}`} cx="50%" cy="50%" r="50%">
+                <Stop offset="0" stopColor="#FFFFFF" stopOpacity={0.9} />
+                <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
+              </RadialGradient>
+            </Defs>
+            <AnimatedPath
+              animatedProps={outlineProps}
+              fill={`url(#b${id})`}
+              fillOpacity={0.95}
+              stroke="#FFFFFF"
+              strokeOpacity={0.35}
+              strokeWidth={1}
+            />
+            {/* Lighter liquid moving inside, on its own phase: the drop looks filled, not painted. */}
+            <AnimatedPath animatedProps={swirlProps} fill="#FFFFFF" fillOpacity={0.14} />
+            <Ellipse
+              cx={hx}
+              cy={hy}
+              rx={R * 0.3}
+              ry={R * 0.17}
+              fill={`url(#h${id})`}
+              transform={`rotate(-28 ${hx} ${hy})`}
+            />
+          </Svg>
+        </View>
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center]}>
           {brand.brand ? (
-            <FontAwesome5 name={brand.icon} size={Math.round(size * 0.38)} color={brand.color} brand style={styles.iconShadow} />
+            <FontAwesome5 name={brand.icon} size={iconSize} color="#FFFFFF" brand style={styles.iconShadow} />
           ) : (
-            <Feather name={brand.icon as any} size={Math.round(size * 0.38)} color={brand.color} style={styles.iconShadow} />
+            <Feather name={brand.icon as any} size={iconSize} color="#FFFFFF" style={styles.iconShadow} />
           )}
         </View>
       </Reanimated.View>
@@ -242,8 +315,8 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, glas
 });
 
 /**
- * The bubble field. Lays itself out in the header to the right of the avatar; `active` should be
- * the screen's focus state so the loops stop when the profile is not on screen.
+ * The drop field. Lays itself out in the header to the right of the avatar; `active` should be
+ * the screen's focus state so the loop stops when the profile is not on screen.
  */
 export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
   links,
@@ -251,16 +324,13 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
   left,
   height,
   active,
-  glassActive,
 }: {
   links: { url: string }[];
   top: number;
   left: number;
   height: number;
   active: boolean;
-  glassActive: boolean;
 }) {
-  const theme = useTheme();
   const t = useT();
   const { width } = useWindowDimensions();
   const reduceMotion = useReducedMotion();
@@ -292,8 +362,6 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
             top={cy - size / 2}
             index={i}
             running={running}
-            glassActive={glassActive}
-            isDark={theme.isDark}
             websiteLabel={t('edit_profile.link_website')}
           />
         );
@@ -303,7 +371,6 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
 });
 
 const styles = StyleSheet.create({
-  rim: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.38)' },
   center: { alignItems: 'center', justifyContent: 'center' },
-  iconShadow: { textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  iconShadow: { textShadowColor: 'rgba(0,0,0,0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
 });

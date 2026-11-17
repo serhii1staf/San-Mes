@@ -627,7 +627,9 @@ function ConversationItemBase({
   // independent of the bulk top-12 prefetch the screen already runs. Cheap,
   // idempotent (expo-image dedupes by URL).
   const onRowLongPress = () => {
-    void prefetchRecentChatMedia({ conversationIds: [item.id], budgetUris: 8 });
+    // After the menu has opened, not before it: this ran synchronously ahead of the peek and its
+    // work (tail reads, image requests) delayed the menu's first frame.
+    setTimeout(() => { void prefetchRecentChatMedia({ conversationIds: [item.id], budgetUris: 8 }); }, 450);
     // Selection mode owns long-press (ticking and dragging); no menu there.
     if (editMode) return;
     let shown = false;
@@ -2421,36 +2423,22 @@ export default function MessagesScreen() {
   const renderCategoryTab = useCallback(
     ({ item: tab }: { item: { key: ChatTab; label: string } }) => {
       const isActive = activeTab === tab.key;
-      const label = (
-        <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ fontSize: 12 }}>{tab.label}</Text>
-      );
-      // Interactive liquid glass capsule holding the label as a CHILD so it
-      // morphs outward on touch (gold-standard pattern). The ACTIVE chip gets a
-      // subtle accent tint so selection still reads clearly over the glass;
-      // inactive chips are clear glass. NO overflow clip, own borderRadius.
-      // Falls back to the flat accent fill when off.
-      if (glassActive) {
-        return (
-          <Pressable onPress={() => setActiveTab(tab.key)} style={{ borderRadius: 16 }}>
-            <NativeGlassView
-              glassStyle="regular"
-              isInteractive
-              colorScheme={theme.isDark ? 'dark' : 'light'}
-              tintColor={isActive ? theme.colors.accent.primary + '38' : undefined}
-              style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
-            >
-              {label}
-            </NativeGlassView>
-          </Pressable>
-        );
-      }
+      // Plain labels, no capsule around each chip (glass or not): a row of five glass pills read
+      // as a toolbar of empty containers above the list. Only the selected one keeps a faint
+      // accent fill, so the selection is still obvious.
       return (
-        <Pressable onPress={() => setActiveTab(tab.key)} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: isActive ? theme.colors.accent.primary + '20' : 'transparent' }}>
-          {label}
+        <Pressable
+          onPress={() => setActiveTab(tab.key)}
+          hitSlop={4}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: isActive }}
+          style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: isActive ? theme.colors.accent.primary + '1F' : 'transparent' }}
+        >
+          <Text variant="caption" weight={isActive ? 'bold' : 'medium'} color={isActive ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ fontSize: 13 }}>{tab.label}</Text>
         </Pressable>
       );
     },
-    [activeTab, glassActive, theme],
+    [activeTab, theme],
   );
 
   return (
