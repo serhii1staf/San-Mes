@@ -5,10 +5,9 @@ import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { ChatKeyboardScrollView } from '../../src/components/ui/ChatKeyboardScrollView';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { bottomScrimColorsStrong, composerScrimHeight, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColorsStrong, composerScrimHeight, SCRIM_LOCATIONS } from '../../src/theme/scrim';
 import { BlurView } from '../../src/components/ui/AppBlurView';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
@@ -20,7 +19,10 @@ import { MiniAppConsentDialog } from '../../src/components/mini-apps/MiniAppCons
 import { useThemeStore, ACCENT_COLORS } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store';
 import { useMiniAppsStore, MiniApp } from '../../src/store/miniAppsStore';
-import { sendMessage, parseActions, applyAction, AIMessage, ParsedAction, getRemainingRequests, saveChatHistory, loadChatHistory } from '../../src/services/aiService';
+import { useMusicStore } from '../../src/store/musicStore';
+import { sendMessage, parseActions, applyAction, toModelMessage, AIMessage, ParsedAction, getRemainingRequestsSync, saveChatHistory, loadChatHistorySync, migrateLegacyAiStorage, hasAiConsent, grantAiConsent, AI_DAILY_LIMIT } from '../../src/services/aiService';
+import { SpecialChatHeader, SpecialChatEmpty, useSpecialChatHeaderHeight, type SpecialChatSuggestion } from '../../src/components/chat/SpecialChatChrome';
+import { useDeferredPersist } from '../../src/hooks/useDeferredPersist';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { showToast } from '../../src/store/toastStore';
@@ -60,10 +62,10 @@ function MiniThemeCard({ themeKey }: { themeKey: string }) {
         <View style={{ height: 6, width: '50%', borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.05)' }} />
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6, borderTopWidth: 0.5, borderTopColor: themeOpt.darkBorder }}>
-        <Feather name="home" size={10} color={themeOpt.color} />
+        {/* The app's real tab bar: search, chats, profile. (The old preview still drew the
+            removed home feed and «Создать» tabs.) */}
         <Feather name="search" size={10} color="rgba(255,255,255,0.4)" />
-        <Feather name="plus-square" size={10} color="rgba(255,255,255,0.4)" />
-        <Feather name="message-circle" size={10} color="rgba(255,255,255,0.4)" />
+        <Feather name="message-circle" size={10} color={themeOpt.color} />
         <Feather name="user" size={10} color="rgba(255,255,255,0.4)" />
       </View>
       <View style={{ alignItems: 'center', paddingVertical: 4, backgroundColor: themeOpt.color + '15' }}>
@@ -263,6 +265,7 @@ function ManageListBubble({ ownerId, onEdit, onDelete, onShare }: ManageListBubb
 // re-running prop diffs / a content-container relayout on every render.
 const keyExtractor = (item: ChatItem) => item.id;
 const LIST_CONTENT_CONTAINER_STYLE = { paddingHorizontal: 16, paddingTop: 8 };
+const LIST_CONTENT_EMPTY_STYLE = { flexGrow: 1 };
 
 export default function AIChatScreen() {
   useScreenMountMark('chat/ai');
@@ -278,7 +281,10 @@ export default function AIChatScreen() {
   // Skipped at the call site when the monitor is off.
   // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
   // Measured from here it under-reported: every hook above it fell outside the window.
-  const [messages, setMessages] = useState<ChatItem[]>([]);
+  // Read synchronously (per-account MMKV) so the conversation is on screen on the first frame and
+  // a message sent before an async load finished can no longer be overwritten by that load.
+  const [messages, setMessages] = useState<ChatItem[]>(() => loadChatHistorySync());
+  useDeferredPersist(messages, saveChatHistory);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const user = useAuthStore((s) => s.user);
@@ -324,7 +330,10 @@ export default function AIChatScreen() {
   // (which relayout-jumped on the first focus and on dismiss) is gone. The
   // bottom spacer stays a STATIC height — it only reserves room for the
   // floating input bar while the keyboard is closed.
-  const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom;
+  // The floating music mini-player (MusicBottomIndicator, bottom: 102) sits over the end of the
+  // transcript while a track is loaded; reserve its height so the newest reply is not under it.
+  const musicBarShown = useMusicStore((s) => !!s.current && !s.playerOpen);
+  const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom + (musicBarShown ? 96 : 0);
 
   // Stable renderScrollComponent — FlatList requires a stable reference so it
   // doesn't tear down / rebuild the scroll view on every render. The wrapper
@@ -339,31 +348,21 @@ export default function AIChatScreen() {
     const open = Math.abs(keyboardHeight.value) > 1;
     return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 16) };
   });
-  const [remaining, setRemaining] = useState(50);
+  const [remaining, setRemaining] = useState(() => getRemainingRequestsSync());
   const flatListRef = useRef<FlatList>(null);
 
-  // Defer the iOS BlurView in the back button (and the "thinking" indicator)
-  // past the navigation transition. UIVisualEffectView is one of the more
-  // expensive native views to construct on first mount; on weak devices that
-  // mount lands on the same RAF as the navigation animation and shaved the
-  // slide-in framerate from 60 → ~40. Show a flat fallback for the first
-  // frame and swap to the BlurView one interaction tick later.
-  const [chromeReady, setChromeReady] = useState(false);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
-    return () => handle.cancel();
-  }, []);
-  // Native iOS-26 liquid glass for the floating back button. White icon over
-  // the gradient header, so colorScheme 'dark' matches the profile chrome.
+  // Native iOS-26 liquid glass for the composer chrome (the header handles its own).
   const glassActive = useLiquidGlassActive();
+  const headerHeight = useSpecialChatHeaderHeight();
 
   useEffect(() => {
-    // Defer all the cold-start side-effects (chat history hydrate, remaining
-    // requests fetch, special-chats `markOpened`) past the navigation
-    // transition so they never compete with the slide-in animation.
+    // Defer the cold-start side-effects (legacy history move, special-chats
+    // `markOpened`, mini-apps hydrate) past the navigation transition so they
+    // never compete with the slide-in animation.
     const handle = InteractionManager.runAfterInteractions(() => {
-      loadChatHistory().then(saved => { if (saved.length > 0) setMessages(saved); });
-      getRemainingRequests().then(setRemaining);
+      migrateLegacyAiStorage().then((moved) => {
+        if (moved) setMessages((prev) => (prev.length > 0 ? prev : moved));
+      });
       try { require('../../src/store/specialChatsStore').useSpecialChatsStore.getState().markOpened('ai'); } catch {}
       // Make sure the user's mini-apps list is hydrated — `Управление`
       // bubble reads from this store live, so a stale cache would render
@@ -387,11 +386,7 @@ export default function AIChatScreen() {
     // writes to `setMessages` directly — so easing here never touches the AI
     // request path where it could risk jank.
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setMessages((prev) => {
-      const next = [...prev, ...items];
-      saveChatHistory(next);
-      return next;
-    });
+    setMessages((prev) => [...prev, ...items]);
   }, []);
 
   const userBubble = (text: string): ChatItem => ({
@@ -578,8 +573,52 @@ export default function AIChatScreen() {
     flowStep === 'edit_emoji' ||
     flowStep === 'edit_url';
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  // ── Regular AI request ────────────────────────────────────────────────────
+  // Context for the model is the transcript as rendered plus the new message; every WRITE is a
+  // functional update. The old version wrote `[...messages, userMsg, aiMsg]` from a closure taken
+  // before the network call, so anything appended while the request was in flight (a command,
+  // the manage list) was silently dropped when the reply landed.
+  const requestReply = useCallback(async (text: string) => {
+    const userMsg: AIMessage = { id: nowId(), role: 'user', content: text, timestamp: Date.now() };
+    const context = [...messages, userMsg]
+      .filter((m) => !(m as ChatItem).kind)
+      .slice(-8)
+      .map(toModelMessage);
+    setMessages((prev) => [...prev, userMsg]);
+
+    setIsLoading(true);
+    try {
+      const response = await sendMessage(context);
+      const { cleanText, actions } = parseActions(response);
+
+      // Deduplicate actions (keep last). `theme` and `custom_theme` are
+      // bucketed together — otherwise an AI reply that emits both would
+      // apply a built-in theme AND create a custom one in the same turn,
+      // which the user reads as a duplicate.
+      const themeBucket = (a: ParsedAction) =>
+        a.type === 'theme' || a.type === 'custom_theme' ? 'theme-class' : a.type;
+      const deduped = actions.reduce((acc, a) => { acc.set(themeBucket(a), a); return acc; }, new Map<string, ParsedAction>());
+      const uniqueActions = Array.from(deduped.values());
+
+      const appliedActions: ParsedAction[] = [];
+      for (const action of uniqueActions) {
+        const success = await applyAction(action);
+        appliedActions.push({ ...action, applied: success });
+        if (success) triggerHaptic('medium');
+      }
+
+      const aiMsg: AIMessage = { id: nowId(), role: 'assistant', content: cleanText || (appliedActions.length > 0 ? t('ai_chat.done') : ''), actions: appliedActions.length > 0 ? appliedActions : undefined, timestamp: Date.now() };
+      setMessages((prev) => [...prev, aiMsg]);
+      setRemaining(getRemainingRequestsSync());
+    } catch {
+      const errMsg: AIMessage = { id: nowId(), role: 'assistant', content: t('ai_chat.error_connection'), timestamp: Date.now() };
+      setMessages((prev) => [...prev, errMsg]);
+    }
+    setIsLoading(false);
+  }, [messages, t]);
+
+  const submitText = useCallback(async (raw: string) => {
+    const text = raw.trim();
     if (!text || isLoading) return;
     setInput('');
     triggerHaptic('light');
@@ -642,45 +681,26 @@ export default function AIChatScreen() {
       return;
     }
 
-    // ── Default branch — regular AI request, untouched. ────────────────────
-    const userMsg: AIMessage = { id: nowId(), role: 'user', content: text, timestamp: Date.now() };
-    const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
-    saveChatHistory(newMessages);
-
-    setIsLoading(true);
-    try {
-      const recentMessages = newMessages.slice(-8).map(m => ({ role: m.role, content: m.content }));
-      const response = await sendMessage(recentMessages);
-      const { cleanText, actions } = parseActions(response);
-
-      // Deduplicate actions (keep last). `theme` and `custom_theme` are
-      // bucketed together — otherwise an AI reply that emits both would
-      // apply a built-in theme AND create a custom one in the same turn,
-      // which the user reads as a duplicate.
-      const themeBucket = (a: ParsedAction) =>
-        a.type === 'theme' || a.type === 'custom_theme' ? 'theme-class' : a.type;
-      const deduped = actions.reduce((acc, a) => { acc.set(themeBucket(a), a); return acc; }, new Map<string, ParsedAction>());
-      const uniqueActions = Array.from(deduped.values());
-
-      const appliedActions: ParsedAction[] = [];
-      for (const action of uniqueActions) {
-        const success = await applyAction(action);
-        appliedActions.push({ ...action, applied: success });
-        if (success) triggerHaptic('medium');
-      }
-
-      const aiMsg: AIMessage = { id: nowId(), role: 'assistant', content: cleanText || (appliedActions.length > 0 ? t('ai_chat.done') : ''), actions: appliedActions.length > 0 ? appliedActions : undefined, timestamp: Date.now() };
-      const finalMessages = [...newMessages, aiMsg];
-      setMessages(finalMessages);
-      saveChatHistory(finalMessages);
-      getRemainingRequests().then(setRemaining);
-    } catch {
-      const errMsg: AIMessage = { id: nowId(), role: 'assistant', content: t('ai_chat.error_connection'), timestamp: Date.now() };
-      setMessages(prev => [...prev, errMsg]);
+    // ── Default branch — regular AI request. ───────────────────────────────
+    // Replies come from a third-party model host, so nothing is sent until the user has been told
+    // what goes there and agreed (once per account). Declining puts the text back in the field.
+    if (!hasAiConsent()) {
+      const restore = () => setInput((cur) => (cur ? cur : text));
+      Alert.alert(
+        t('ai_chat.consent.title'),
+        t('ai_chat.consent.body'),
+        [
+          { text: t('common.cancel'), style: 'cancel', onPress: restore },
+          { text: t('ai_chat.consent.accept'), onPress: () => { grantAiConsent(); void requestReply(text); } },
+        ],
+        { cancelable: true, onDismiss: restore },
+      );
+      return;
     }
-    setIsLoading(false);
-  }, [input, isLoading, messages, t, flowStep, draft, user?.id, appendItems]);
+    await requestReply(text);
+  }, [isLoading, t, flowStep, draft, user?.id, appendItems, requestReply]);
+
+  const handleSend = useCallback(() => { void submitText(input); }, [input, submitText]);
 
   // Accept — the ONLY path from the AI chat that reaches the worker. Mirrors
   // the create_url/edit_url logic that used to run inline: a non-destructive
@@ -819,8 +839,7 @@ export default function AIChatScreen() {
           return { ...m, actions: newActions };
         });
         if (!changed) return prev;
-        // Persist exactly once per call — no debounce, no churn.
-        saveChatHistory(updated);
+        // Persisted by `useDeferredPersist` like every other change.
         return updated;
       });
     },
@@ -876,58 +895,39 @@ export default function AIChatScreen() {
   );
 
   const listFooter = useMemo(
-    () => <View style={{ height: insets.top + 72 }} />,
-    [insets.top],
+    () => <View style={{ height: headerHeight + 8 }} />,
+    [headerHeight],
   );
 
+  // Starters for an empty conversation: three requests the model handles well, and the
+  // mini-app flow, which otherwise hides behind «Команды».
+  const suggestions = useMemo<SpecialChatSuggestion[]>(() => {
+    const ask = (key: string) => ({ key, label: t(key), onPress: () => { void submitText(t(key)); } });
+    return [
+      ask('ai_chat.suggest.theme'),
+      ask('ai_chat.suggest.bio'),
+      ask('ai_chat.suggest.dark'),
+      { key: 'mini_app', label: t('ai_chat.suggest.mini_app'), onPress: () => runCommand('create') },
+    ];
+  }, [t, submitText, runCommand]);
+
   const listEmpty = useMemo(
-    () => (
-      <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
-        <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
-          <Text variant="body" weight="bold">{t('ai_chat.title')}</Text>
-          <VerifiedBadge size={14} />
-        </View>
-        <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
-          {t('ai_chat.empty_hint')}
-        </Text>
-      </View>
-    ),
-    [t, theme.colors.text.tertiary],
+    () => <SpecialChatEmpty icon="memory" title={t('ai_chat.title')} hint={t('ai_chat.empty_hint')} suggestions={suggestions} />,
+    [t, suggestions],
+  );
+  // The empty state centres itself between header and composer; that needs a full-height container.
+  const listContentStyle = useMemo(
+    () => (messages.length === 0 ? [LIST_CONTENT_CONTAINER_STYLE, LIST_CONTENT_EMPTY_STYLE] : LIST_CONTENT_CONTAINER_STYLE),
+    [messages.length === 0],
   );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      {/* Header */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 }}>
-        <LinearGradient colors={topScrimColors(theme.isDark, theme.colors.background.primary)} locations={SCRIM_LOCATIONS} style={{ paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Pressable onPress={() => router.back()} style={glassActive ? { borderRadius: 17 } : { borderRadius: 17, overflow: 'hidden' }}>
-              {glassActive ? (
-                <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
-                </NativeGlassView>
-              ) : chromeReady ? (
-                <BlurView intensity={80} role="scrim" tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
-                </BlurView>
-              ) : (
-                <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
-                </View>
-              )}
-            </Pressable>
-            <View style={{ alignItems: 'center' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text variant="body" weight="bold">{t('ai_chat.title')}</Text>
-                <VerifiedBadge size={13} />
-              </View>
-              <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{remaining}/50</Text>
-            </View>
-            <View style={{ width: 34 }} />
-          </View>
-        </LinearGradient>
-      </View>
+      <SpecialChatHeader
+        title={t('ai_chat.title')}
+        subtitle={t('ai_chat.remaining', undefined, { n: remaining, limit: AI_DAILY_LIMIT })}
+        icon="memory"
+      />
 
       {/* Inverted FlatList — newest at bottom. Content repositioning on
           keyboard open/close is handled natively by KeyboardChatScrollView
@@ -940,7 +940,7 @@ export default function AIChatScreen() {
         keyExtractor={keyExtractor}
         inverted
         renderScrollComponent={renderScrollComponent}
-        contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
+        contentContainerStyle={listContentStyle}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -1021,7 +1021,7 @@ export default function AIChatScreen() {
                   // can morph outward; otherwise the flat capsule is unchanged.
                   ...(glassActive
                     ? null
-                    : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }),
+                    : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }),
                 }}
               >
                 {glassActive ? (
@@ -1054,7 +1054,7 @@ export default function AIChatScreen() {
                       ? { backgroundColor: theme.colors.accent.primary, borderWidth: 1, borderColor: theme.colors.border.light }
                       : glassActive
                         ? null
-                        : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }),
+                        : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }),
                   }}
                 >
                   {!commandsOpen && glassActive ? (
@@ -1117,7 +1117,7 @@ export default function AIChatScreen() {
                 </Pressable>
               </NativeGlassView>
             ) : (
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40, backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40, backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }}>
                 <TextInput
                   value={input}
                   onChangeText={setInput}
