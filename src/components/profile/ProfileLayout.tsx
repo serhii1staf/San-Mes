@@ -35,13 +35,13 @@ import { BlurView } from '../ui/AppBlurView';
 import { NativeGlassView } from '../ui/LiquidGlass';
 import { LinkedText } from '../ui/LinkedText';
 import { HeaderBackgroundLayer } from './HeaderBackgroundLayer';
+import { ProfileLinkBubbles } from './ProfileLinkBubbles';
 import { HeaderSceneLayer } from './HeaderSceneLayer';
 import type { HeaderScene } from '../../services/headerScene';
 import type { BannerTransform } from '../../utils/bannerTransform';
 import { kvGetJSONSync } from '../../services/kvStore';
 import { useEntityStore } from '../../services/entityStore';
 import { triggerHaptic } from '../../utils/haptics';
-import { openUrl } from '../../utils/openUrl';
 import { useT } from '../../i18n/store';
 
 // ─── Scroll-driven values (same curves as the original screens) ─────────────
@@ -94,61 +94,6 @@ export const ProfileFloatingButtons = memo(function ProfileFloatingButtons({
     </View>
   );
 });
-
-// ─── Social link chip (unchanged from the original header) ──────────────────
-
-function detectLinkType(url: string): string {
-  const l = url.toLowerCase();
-  if (l.includes('github.com')) return 'github';
-  if (l.includes('twitter.com') || l.includes('x.com')) return 'twitter';
-  if (l.includes('instagram.com')) return 'instagram';
-  if (l.includes('youtube.com') || l.includes('youtu.be')) return 'youtube';
-  if (l.includes('t.me') || l.includes('telegram.me')) return 'telegram';
-  if (l.includes('tiktok.com')) return 'tiktok';
-  if (l.includes('linkedin.com')) return 'linkedin';
-  if (l.includes('discord.gg') || l.includes('discord.com')) return 'discord';
-  if (l.includes('twitch.tv')) return 'twitch';
-  if (l.includes('spotify.com')) return 'spotify';
-  return 'website';
-}
-
-function SocialChip({ url, glassActive }: { url: string; glassActive: boolean }) {
-  const theme = useTheme();
-  const t = useT();
-  const map: Record<string, { name: string; color: string; brand: boolean; label: string }> = {
-    github: { name: 'github', color: theme.isDark ? '#FFF' : '#333', brand: true, label: 'GitHub' },
-    twitter: { name: 'twitter', color: '#1DA1F2', brand: true, label: 'Twitter' },
-    instagram: { name: 'instagram', color: '#E4405F', brand: true, label: 'Instagram' },
-    youtube: { name: 'youtube', color: '#FF0000', brand: true, label: 'YouTube' },
-    telegram: { name: 'telegram-plane', color: '#0088CC', brand: true, label: 'Telegram' },
-    tiktok: { name: 'tiktok', color: theme.isDark ? '#FFF' : '#000', brand: true, label: 'TikTok' },
-    linkedin: { name: 'linkedin-in', color: '#0A66C2', brand: true, label: 'LinkedIn' },
-    discord: { name: 'discord', color: '#5865F2', brand: true, label: 'Discord' },
-    twitch: { name: 'twitch', color: '#9146FF', brand: true, label: 'Twitch' },
-    spotify: { name: 'spotify', color: '#1DB954', brand: true, label: 'Spotify' },
-    website: { name: 'globe', color: '#2563EB', brand: false, label: t('edit_profile.link_website') },
-  };
-  const icon = map[detectLinkType(url)] || map.website;
-  const content = (
-    <>
-      {icon.brand ? <FontAwesome5 name={icon.name} size={13} color={icon.color} brand /> : <Feather name={icon.name as any} size={13} color={icon.color} />}
-      <Text variant="caption" weight="semibold">{icon.label}</Text>
-    </>
-  );
-  const onPress = () => { triggerHaptic('light'); openUrl(url); };
-  if (glassActive) {
-    return (
-      <Pressable onPress={onPress} style={{ borderRadius: 16 }}>
-        <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.chip}>{content}</NativeGlassView>
-      </Pressable>
-    );
-  }
-  return (
-    <Pressable onPress={onPress} style={{ borderRadius: 16, overflow: 'hidden' }}>
-      <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={styles.chip}>{content}</BlurView>
-    </Pressable>
-  );
-}
 
 // ─── Action pill (unchanged from the original header) ────────────────────────
 
@@ -268,11 +213,6 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
           {badge ? <UserBadge badge={badge} size="md" /> : null}
         </View>
         <Text variant="body" color={handleColor} numberOfLines={1} style={{ marginTop: 2, ...(shadow || {}) }}>@{username}</Text>
-        {links.length > 0 ? (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
-            {links.slice(0, 5).map((l, i) => <SocialChip key={`${l.url}-${i}`} url={l.url} glassActive={glassActive} />)}
-          </View>
-        ) : null}
         {bio ? (
           <View style={{ marginTop: 14 }}>
             <LinkedText style={{ color: theme.colors.text.secondary, fontSize: 15, lineHeight: 21 }}>{bio}</LinkedText>
@@ -282,6 +222,19 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
       </View>
 
       <HeaderSceneLayer scene={scene} animate={sceneAnimate} />
+
+      {/* Links float as liquid bubbles in the space beside the avatar (they replaced the chip row
+          under the @handle). Under the frost, so they frost over with the rest of the card. */}
+      {links.length > 0 ? (
+        <ProfileLinkBubbles
+          links={links}
+          top={topInset + 44}
+          left={20 + 84 + 16}
+          height={108}
+          active={sceneAnimate}
+          glassActive={glassActive}
+        />
+      ) : null}
 
       {/* Frost fades in over the whole card as it scrolls away (native-driver opacity). */}
       <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: anim.headerOpacity }]}>

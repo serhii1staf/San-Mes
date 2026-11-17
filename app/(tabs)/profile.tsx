@@ -136,7 +136,11 @@ export default function ProfileScreen() {
             </>
           }
         />
-        <ProfileContentTabs profileId={user.id} isOwn />
+        <ProfileContentTabs
+          profileId={user.id}
+          isOwn
+          author={{ name: user.displayName || user.username || '', emoji: user.emoji || '😊', verified: !!user.is_verified, badge: user.badge }}
+        />
       </Animated.ScrollView>
 
       <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />

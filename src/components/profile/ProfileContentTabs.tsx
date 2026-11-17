@@ -5,25 +5,29 @@
  * profile and open a post to comment on it; the owner writes a new post from the «Публикации» tab.
  *
  * Rendered inside the profile's ScrollView as plain views (one page of 30 at most), not as a list
- * component: the profile screens are guarded to stay list-free so a profile push never pays for a
- * virtualised list's mount. Only the active tab is built, and «Ответы» is not even fetched until it
- * is opened.
+ * component: the profile screens are guarded to stay list-free. What keeps opening a profile cheap
+ * is WHEN the cards mount, not the list type: nothing below the tab strip is built during the
+ * open transition, then cards are added a few per frame (see `useProgressiveCount`). Before this,
+ * a profile with a full cached page mounted all thirty cards (text formatting, link previews,
+ * thumbnails) in the same commit as the push animation, which is the lag seen on opening a profile.
  */
-import React, { memo, useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, InteractionManager, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { CachedImage } from '../ui/CachedImage';
-import { FormattedText } from '../ui/FormattedText';
+import { GlassBg, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { triggerHaptic } from '../../utils/haptics';
 import { useT } from '../../i18n/store';
 import { useShortAgo } from '../../utils/shortAgo';
 import { deletePost, parseImageUrls } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
 import { useIsBlocked } from '../../store/blockedUsersStore';
+import { useProfileAppearanceStore } from '../../store/profileAppearanceStore';
 import { stripMarkers } from '../../utils/previewText';
+import { ProfilePostCard } from './ProfilePostCard';
 import {
   invalidateProfilePosts,
   useProfilePosts,
@@ -34,6 +38,13 @@ import {
 
 type TabKey = 'posts' | 'media' | 'replies';
 
+export interface ProfileAuthor {
+  name: string;
+  emoji: string;
+  verified?: boolean;
+  badge?: string | null;
+}
+
 const isAnimated = (u: string) => /\.gif(\?|$)/i.test(u) || /giphy\.com|tenor\.com/i.test(u);
 
 function openPost(id: string) {
@@ -41,16 +52,40 @@ function openPost(id: string) {
   router.push({ pathname: '/comments/[id]', params: { id } });
 }
 
+/**
+ * How many of `total` items to render: none until the screen's open transition has finished,
+ * then `first`, then `step` more on each following frame. Keeps every commit small.
+ */
+function useProgressiveCount(total: number, first = 4, step = 4): number {
+  const [ready, setReady] = useState(false);
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => setReady(true));
+    return () => handle.cancel();
+  }, []);
+  useEffect(() => {
+    if (!ready || count >= total) return;
+    const raf = requestAnimationFrame(() => setCount((c) => Math.min(total, c === 0 ? first : c + step)));
+    return () => cancelAnimationFrame(raf);
+  }, [ready, count, total, first, step]);
+  return Math.min(count, total);
+}
+
 const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; onChange: (k: TabKey) => void }) {
   const theme = useTheme();
   const t = useT();
+  const glassActive = useLiquidGlassActive();
+  const scheme = theme.isDark ? 'dark' : 'light';
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'posts', label: t('profile.publications') },
     { key: 'media', label: t('profile.media') },
     { key: 'replies', label: t('profile.replies') },
   ];
   return (
-    <View style={[styles.strip, { backgroundColor: theme.colors.background.elevated }]}>
+    <View style={[styles.strip, glassActive ? null : { backgroundColor: theme.colors.background.elevated }]}>
+      {/* Liquid glass behind the whole strip where the material exists (iOS 26 with glass on);
+          the flat elevated surface everywhere else. */}
+      {glassActive ? <GlassBg borderRadius={20} colorScheme={scheme} /> : null}
       {tabs.map((tab) => {
         const active = tab.key === value;
         return (
@@ -59,8 +94,14 @@ const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; on
             onPress={() => { if (!active) { triggerHaptic('selection'); onChange(tab.key); } }}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
-            style={[styles.stripItem, active ? { backgroundColor: theme.colors.accent.primary + '26' } : null]}
+            style={[
+              styles.stripItem,
+              active && !glassActive ? { backgroundColor: theme.colors.accent.primary + '26' } : null,
+            ]}
           >
+            {active && glassActive ? (
+              <GlassBg borderRadius={16} glassStyle="regular" colorScheme={scheme} tintColor={theme.colors.accent.primary + '59'} interactive={false} />
+            ) : null}
             <Text variant="caption" weight={active ? 'bold' : 'medium'} color={active ? theme.colors.accent.primary : theme.colors.text.secondary} style={{ fontSize: 14 }}>
               {tab.label}
             </Text>
@@ -68,92 +109,6 @@ const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; on
         );
       })}
     </View>
-  );
-});
-
-const PostImages = memo(function PostImages({ urls, width }: { urls: string[]; width: number }) {
-  const theme = useTheme();
-  if (urls.length === 0) return null;
-  if (urls.length === 1) {
-    return (
-      <CachedImage
-        uri={urls[0]}
-        style={[styles.image, { width, height: Math.round(width * 0.66), backgroundColor: theme.colors.background.secondary }]}
-        resizeMode="cover"
-        proxyWidth={Math.round(width * 2)}
-      />
-    );
-  }
-  const gap = 4;
-  const cell = Math.floor((width - gap) / 2);
-  return (
-    <View style={[styles.imageGrid, { gap }]}>
-      {urls.slice(0, 4).map((u) => (
-        <CachedImage
-          key={u}
-          uri={u}
-          style={[styles.image, { width: cell, height: cell, backgroundColor: theme.colors.background.secondary }]}
-          resizeMode="cover"
-          proxyWidth={cell * 2}
-        />
-      ))}
-    </View>
-  );
-});
-
-const PostCard = memo(function PostCard({ post, isOwn, width }: { post: ProfilePost; isOwn: boolean; width: number }) {
-  const theme = useTheme();
-  const t = useT();
-  const ago = useShortAgo();
-  const images = useMemo(() => parseImageUrls(post.image_url), [post.image_url]);
-  const onLongPress = isOwn
-    ? () => {
-        triggerHaptic('medium');
-        Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [
-          { text: t('common.cancel'), style: 'cancel' },
-          {
-            text: t('common.delete'),
-            style: 'destructive',
-            onPress: async () => {
-              const { error } = await deletePost(post.id, post.author_id);
-              if (error) { showToast(error, 'alert-circle'); return; }
-              invalidateProfilePosts(post.author_id);
-              showToast(t('toast.post_deleted'), 'check');
-            },
-          },
-        ]);
-      }
-    : undefined;
-  return (
-    <Pressable
-      onPress={() => openPost(post.id)}
-      onLongPress={onLongPress}
-      delayLongPress={350}
-      style={({ pressed }) => [
-        styles.card,
-        { backgroundColor: theme.colors.background.elevated },
-        pressed ? { opacity: 0.92 } : null,
-      ]}
-    >
-      {post.content ? (
-        <FormattedText style={{ fontSize: 15, lineHeight: 21, color: theme.colors.text.primary }} numberOfLines={10}>
-          {post.content}
-        </FormattedText>
-      ) : null}
-      {images.length > 0 ? <View style={{ marginTop: post.content ? 10 : 0 }}><PostImages urls={images} width={width - 28} /></View> : null}
-      <View style={styles.cardFooter}>
-        <Text variant="caption" color={theme.colors.text.tertiary}>{ago(post.created_at)}</Text>
-        <View style={{ flex: 1 }} />
-        <View style={styles.counter}>
-          <Feather name="heart" size={14} color={theme.colors.text.tertiary} />
-          <Text variant="caption" color={theme.colors.text.tertiary}>{post.likes_count || 0}</Text>
-        </View>
-        <View style={styles.counter}>
-          <Feather name="message-circle" size={14} color={theme.colors.text.tertiary} />
-          <Text variant="caption" color={theme.colors.text.tertiary}>{post.comments_count || 0}</Text>
-        </View>
-      </View>
-    </Pressable>
   );
 });
 
@@ -167,7 +122,11 @@ const ReplyRow = memo(function ReplyRow({ reply }: { reply: ProfileReply }) {
   return (
     <Pressable
       onPress={() => openPost(reply.post_id)}
-      style={({ pressed }) => [styles.card, { backgroundColor: theme.colors.background.elevated }, pressed ? { opacity: 0.92 } : null]}
+      style={({ pressed }) => [
+        styles.replyCard,
+        { borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' },
+        pressed ? { opacity: 0.85 } : null,
+      ]}
     >
       {reply.posts ? (
         <View style={[styles.quote, { borderLeftColor: theme.colors.accent.primary, backgroundColor: theme.colors.accent.primary + '12' }]}>
@@ -179,8 +138,8 @@ const ReplyRow = memo(function ReplyRow({ reply }: { reply: ProfileReply }) {
           ) : null}
         </View>
       ) : null}
-      <Text variant="body" numberOfLines={6} style={{ marginTop: reply.posts ? 8 : 0, lineHeight: 21 }}>{body}</Text>
-      <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>{ago(reply.created_at)}</Text>
+      <Text variant="body" numberOfLines={6} style={{ marginTop: reply.posts ? 8 : 0, fontSize: 14, lineHeight: 20 }}>{body}</Text>
+      <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 6, fontSize: 11 }}>{ago(reply.created_at)}</Text>
     </Pressable>
   );
 });
@@ -195,15 +154,19 @@ function Empty({ icon, text }: { icon: React.ComponentProps<typeof Feather>['nam
   );
 }
 
-export function ProfileContentTabs({ profileId, isOwn }: { profileId: string; isOwn: boolean }) {
+export function ProfileContentTabs({ profileId, isOwn, author }: { profileId: string; isOwn: boolean; author: ProfileAuthor }) {
   const theme = useTheme();
   const t = useT();
   const { width } = useWindowDimensions();
   const [tab, setTab] = useState<TabKey>('posts');
   const blocked = useIsBlocked(isOwn ? '' : profileId);
+  const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
   const { posts, loading } = useProfilePosts(blocked ? undefined : profileId);
   const { replies, loading: repliesLoading } = useProfileReplies(tab === 'replies' && !blocked ? profileId : undefined);
   const contentWidth = width - 32;
+
+  const shownPosts = useProgressiveCount(posts.length);
+  const shownReplies = useProgressiveCount(replies.length);
 
   const media = useMemo(() => {
     const out: { url: string; postId: string }[] = [];
@@ -214,11 +177,30 @@ export function ProfileContentTabs({ profileId, isOwn }: { profileId: string; is
     }
     return out;
   }, [posts]);
+  const shownMedia = useProgressiveCount(media.length, 12, 12);
 
   const compose = useCallback(() => {
     triggerHaptic('light');
     router.push('/post/new' as any);
   }, []);
+
+  const onPressPost = useCallback((p: ProfilePost) => openPost(p.id), []);
+  const onLongPressPost = useCallback((p: ProfilePost) => {
+    triggerHaptic('medium');
+    Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('common.delete'),
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await deletePost(p.id, p.author_id);
+          if (error) { showToast(error, 'alert-circle'); return; }
+          invalidateProfilePosts(p.author_id);
+          showToast(t('toast.post_deleted'), 'check');
+        },
+      },
+    ]);
+  }, [t]);
 
   if (blocked) {
     return (
@@ -229,6 +211,7 @@ export function ProfileContentTabs({ profileId, isOwn }: { profileId: string; is
   }
 
   const cell = Math.floor((contentWidth - 3 * 2) / 3);
+  const hairline = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
 
   return (
     <View style={styles.wrap}>
@@ -240,12 +223,14 @@ export function ProfileContentTabs({ profileId, isOwn }: { profileId: string; is
             <Pressable
               onPress={compose}
               accessibilityRole="button"
-              style={({ pressed }) => [styles.compose, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }, pressed ? { opacity: 0.85 } : null]}
+              style={({ pressed }) => [styles.compose, { borderColor: hairline }, pressed ? { opacity: 0.85 } : null]}
             >
               <View style={[styles.composeIcon, { backgroundColor: theme.colors.accent.primary }]}>
                 <Feather name="edit-3" size={16} color="#FFFFFF" />
               </View>
               <Text variant="body" color={theme.colors.text.secondary}>{t('post.compose_prompt')}</Text>
+              <View style={{ flex: 1 }} />
+              <Feather name="image" size={18} color={theme.colors.text.tertiary} />
             </Pressable>
           ) : null}
           {loading && posts.length === 0 ? (
@@ -253,7 +238,19 @@ export function ProfileContentTabs({ profileId, isOwn }: { profileId: string; is
           ) : posts.length === 0 ? (
             <Empty icon="file-text" text={t('profile.no_posts')} />
           ) : (
-            posts.map((p) => <PostCard key={p.id} post={p} isOwn={isOwn} width={contentWidth} />)
+            posts.slice(0, shownPosts).map((p) => (
+              <ProfilePostCard
+                key={p.id}
+                post={p}
+                authorName={author.name}
+                authorEmoji={author.emoji}
+                authorVerified={author.verified}
+                authorBadge={author.badge}
+                postEmoji={postEmoji}
+                onPress={onPressPost}
+                onLongPress={isOwn ? onLongPressPost : undefined}
+              />
+            ))
           )}
         </View>
       ) : null}
@@ -266,7 +263,7 @@ export function ProfileContentTabs({ profileId, isOwn }: { profileId: string; is
             <Empty icon="image" text={t('profile.media_posts_empty')} />
           ) : (
             <View style={styles.mediaGrid}>
-              {media.map((m) => (
+              {media.slice(0, shownMedia).map((m) => (
                 <Pressable key={m.url} onPress={() => openPost(m.postId)} style={[styles.mediaCell, { width: cell, height: cell, backgroundColor: theme.colors.background.elevated }]}>
                   <CachedImage uri={m.url} style={{ width: cell, height: cell }} resizeMode="cover" proxyWidth={cell * 2} />
                 </Pressable>
@@ -283,7 +280,7 @@ export function ProfileContentTabs({ profileId, isOwn }: { profileId: string; is
           ) : replies.length === 0 ? (
             <Empty icon="message-square" text={t('profile.replies_empty')} />
           ) : (
-            replies.map((r) => <ReplyRow key={r.id} reply={r} />)
+            replies.slice(0, shownReplies).map((r) => <ReplyRow key={r.id} reply={r} />)
           )}
         </View>
       ) : null}
@@ -293,23 +290,19 @@ export function ProfileContentTabs({ profileId, isOwn }: { profileId: string; is
 
 const styles = StyleSheet.create({
   wrap: { paddingHorizontal: 16, marginTop: 18 },
-  strip: { flexDirection: 'row', borderRadius: 18, padding: 4, gap: 4 },
-  stripItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 9, borderRadius: 14 },
+  strip: { flexDirection: 'row', borderRadius: 20, padding: 4, gap: 4, overflow: 'hidden' },
+  stripItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 9, borderRadius: 16, overflow: 'hidden' },
   compose: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    padding: 12,
-    borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: 10,
+    padding: 10,
+    borderRadius: 28,
+    borderWidth: 1,
+    marginBottom: 12,
   },
-  composeIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  card: { borderRadius: 20, padding: 14, marginBottom: 10 },
-  cardFooter: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 10 },
-  counter: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  image: { borderRadius: 14 },
-  imageGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  composeIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  replyCard: { borderRadius: 24, borderWidth: 1, padding: 12, marginBottom: 12 },
   quote: { borderLeftWidth: 3, borderRadius: 10, paddingVertical: 6, paddingHorizontal: 10 },
   empty: { alignItems: 'center', paddingVertical: 32, gap: 8 },
   mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 3 },
