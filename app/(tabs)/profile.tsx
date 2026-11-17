@@ -102,9 +102,9 @@ export default function ProfileScreen() {
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         bounces={false}
-        // Always a little taller than the window, so the header (and the avatar-to-island
-        // animation) can collapse even when there are no photos yet.
-        contentContainerStyle={{ paddingBottom: getTabBarHeight(insets.bottom) + 28, minHeight: winHeight + 180 }}
+        // No minHeight here any more: ProfileContentTabs sizes itself so the page always scrolls
+        // far enough for the header to collapse and the tabs to pin, and no further.
+        contentContainerStyle={{ paddingBottom: getTabBarHeight(insets.bottom) + 28 }}
       >
         <ProfileHeaderCard
           topInset={insets.top}
@@ -140,6 +140,7 @@ export default function ProfileScreen() {
           profileId={user.id}
           isOwn
           author={{ name: user.displayName || user.username || '', emoji: user.emoji || '😊', verified: !!user.is_verified, badge: user.badge }}
+          sticky={{ scrollY: anim.scrollY, top: insets.top + 6, bottomPad: getTabBarHeight(insets.bottom) + 28 }}
         />
       </Animated.ScrollView>
 

@@ -13,15 +13,20 @@ import {
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
+  useAnimatedProps,
   withSpring,
   withTiming,
   withDelay,
+  withRepeat,
+  cancelAnimation,
   Easing,
   runOnJS,
   SharedValue,
   interpolate,
   Extrapolation,
 } from 'react-native-reanimated';
+import Svg, { Circle } from 'react-native-svg';
+import { useUpdates } from 'expo-updates';
 import { useTheme } from '../../theme';
 import { bottomScrimColors, BOTTOM_CHROME_SCRIM_HEIGHT, SCRIM_LOCATIONS } from '../../theme/scrim';
 import { BOTTOM_CHROME_SPRING } from '../../theme/motion';
@@ -427,6 +432,7 @@ const tabIconStyles = StyleSheet.create({
     includeFontPadding: false,
     textAlignVertical: 'center',
   },
+  ringCenter: { alignItems: 'center', justifyContent: 'center' },
 });
 
 // ─── Sliding Lens (translucent pill) ─────────────────────────────────────────
@@ -831,7 +837,7 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
             circle, hue hashed from the name, so the same identity is the same colour here, in the
             chat list and in the feed. Falls back to the Ionicons glyph when the account has no emoji
             so a profile that never picked one still looks deliberate. */}
-        <ProfileCapsuleAvatar fallbackColor={color} />
+        <ProfileCapsuleAvatar fallbackColor={color} ringColor={activeColor} />
       </Pressable>
     </Animated.View>
   );
@@ -846,10 +852,59 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
  * mounted on the ROOT stack, so it stays alive under every screen and a needless re-render here is
  * a needless re-render everywhere.
  */
-const ProfileCapsuleAvatar = memo(function ProfileCapsuleAvatar({ fallbackColor }: { fallbackColor: string }) {
+const ProfileCapsuleAvatar = memo(function ProfileCapsuleAvatar({ fallbackColor, ringColor }: { fallbackColor: string; ringColor: string }) {
   const emoji = useAuthStore((s) => s.user?.emoji);
-  if (!emoji) return <Ionicons name="person" size={23} color={fallbackColor} />;
-  return (
+  const { isDownloading, downloadProgress, isUpdatePending } = useUpdates();
+  const [ringMounted, setRingMounted] = useState(isDownloading);
+  // 0 = the account's emoji, 1 = the download arrow and ring.
+  const shown = useSharedValue(isDownloading ? 1 : 0);
+  const frac = useSharedValue(0);
+  const spin = useSharedValue(0);
+  // iOS does not report progress for the download it starts by itself at launch (only for
+  // `fetchUpdateAsync`), so an unknown progress draws a fixed arc that just turns.
+  const known = typeof downloadProgress === 'number' && downloadProgress > 0.001;
+
+  useEffect(() => {
+    if (isDownloading) {
+      setRingMounted(true);
+      shown.value = withTiming(1, { duration: 240 });
+      return;
+    }
+    // Done or failed. A finished download closes the ring first, then everything fades back to the
+    // emoji. Nothing reloads: the update is applied on the next cold start (checkAutomatically ON_LOAD).
+    const unmount = () => setRingMounted(false);
+    if (isUpdatePending) frac.value = withTiming(1, { duration: 280 });
+    shown.value = withDelay(isUpdatePending ? 340 : 0, withTiming(0, { duration: 420 }, (finished) => {
+      if (finished) runOnJS(unmount)();
+    }));
+  }, [isDownloading, isUpdatePending, shown, frac]);
+
+  useEffect(() => {
+    if (!isDownloading) return;
+    frac.value = withTiming(known ? Math.max(0.06, downloadProgress as number) : 0.28, { duration: 260 });
+  }, [isDownloading, known, downloadProgress, frac]);
+
+  useEffect(() => {
+    if (!ringMounted) return;
+    spin.value = withRepeat(withTiming(spin.value + 1, { duration: 1300, easing: Easing.linear }), -1, false);
+    return () => cancelAnimation(spin);
+  }, [ringMounted, spin]);
+
+  const glyphStyle = useAnimatedStyle(() => ({
+    opacity: 1 - shown.value,
+    transform: [{ scale: 1 - 0.3 * shown.value }],
+  }));
+  const arrowStyle = useAnimatedStyle(() => ({
+    opacity: shown.value,
+    transform: [{ translateY: (1 - shown.value) * -8 }],
+  }));
+  const ringStyle = useAnimatedStyle(() => ({
+    opacity: shown.value,
+    transform: [{ rotate: `${-90 + spin.value * 360}deg` }],
+  }));
+  const arcProps = useAnimatedProps(() => ({ strokeDashoffset: RING_LEN * (1 - frac.value) }));
+
+  const glyph = emoji ? (
     <RNText
       style={tabIconStyles.profileEmoji}
       allowFontScaling={false}
@@ -861,8 +916,44 @@ const ProfileCapsuleAvatar = memo(function ProfileCapsuleAvatar({ fallbackColor 
     >
       {emoji}
     </RNText>
+  ) : (
+    <Ionicons name="person" size={23} color={fallbackColor} />
+  );
+  if (!ringMounted) return glyph;
+  return (
+    <>
+      <Animated.View style={glyphStyle}>{glyph}</Animated.View>
+      {/* Siblings of the glass, never its ancestors, so their alpha cannot switch the glass off. */}
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, tabIconStyles.ringCenter, arrowStyle]}>
+        <Feather name="arrow-down" size={22} color={ringColor} />
+      </Animated.View>
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, ringStyle]}>
+        <Svg width="100%" height="100%" viewBox={`0 0 ${RING_BOX} ${RING_BOX}`}>
+          <Circle cx={RING_BOX / 2} cy={RING_BOX / 2} r={RING_R} stroke={ringColor} strokeOpacity={0.2} strokeWidth={RING_STROKE} fill="none" />
+          <AnimatedCircle
+            cx={RING_BOX / 2}
+            cy={RING_BOX / 2}
+            r={RING_R}
+            stroke={ringColor}
+            strokeWidth={RING_STROKE}
+            strokeLinecap="round"
+            strokeDasharray={`${RING_LEN} ${RING_LEN}`}
+            fill="none"
+            animatedProps={arcProps}
+          />
+        </Svg>
+      </Animated.View>
+    </>
   );
 });
+
+// OTA download ring around the profile capsule, drawn just inside its edge so the capsule's clip
+// (when glass is off) never cuts the stroke.
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+const RING_BOX = PROFILE_CAPSULE_WIDTH;
+const RING_STROKE = 2.5;
+const RING_R = RING_BOX / 2 - RING_STROKE / 2 - 1.5;
+const RING_LEN = 2 * Math.PI * RING_R;
 
 // ─── Profile quick dial (QR + Settings) ──────────────────────────────────────
 //

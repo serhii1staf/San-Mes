@@ -62,8 +62,9 @@ import { useChatPeekStore } from '../../store/chatPeekStore';
 import { kvGetJSONSync } from '../../services/kvStore';
 import { readableTextOn, withOpacity } from '../../constants/bubbleColors';
 import { stripMarkers } from '../../utils/previewText';
-import { firstImageUrlFromStoredText } from '../../utils/chatImageMarker';
-import { triggerHaptic } from '../../utils/haptics';
+import { messageImageUrls } from '../../utils/chatImageMarker';
+import { LinkPreview } from '../ui/LinkPreview';
+import { extractFirstUrl } from '../../services/linkPreview';
 import { useT } from '../../i18n/store';
 import type { ChatMessage } from '../../types';
 
@@ -155,11 +156,16 @@ export function ChatPeekMenu<Id extends string>({
   const insets = useSafeAreaInsets();
   const { width: W, height: H } = useWindowDimensions();
   const p = useSharedValue(0);
+  // Close progress, separate from `p`: closing fades everything out in place instead of running the
+  // open in reverse. The reverse shrank the menu into its corner and slid the card back down to the
+  // row, which read as the action list "flying into the avatar", with glass artifacts on the way.
+  const c = useSharedValue(0);
+  const [fading, setFading] = useState(false);
   const closing = useRef(false);
   const after = useRef<(() => void) | null>(null);
 
+  // The haptic fires in `openChatPeek`, at the long-press itself, not here after the first render.
   useEffect(() => {
-    triggerHaptic('medium');
     p.value = withSpring(1, OPEN_SPRING);
   }, [p]);
 
@@ -175,13 +181,16 @@ export function ChatPeekMenu<Id extends string>({
       if (closing.current) return;
       closing.current = true;
       after.current = fn ?? null;
-      // `finish` runs whether or not the timing completed: nothing else drives `p` once closing
+      // The glass menu swaps to the flat surface for the fade: an alpha on a glass view switches its
+      // glass off anyway, so the swap is what keeps the fade clean instead of a flicker.
+      setFading(true);
+      // `finish` runs whether or not the timing completed: nothing else drives `c` once closing
       // has started, and a menu that never reports closed would leave an invisible layer on top.
-      p.value = withTiming(0, { duration: 190, easing: Easing.out(Easing.cubic) }, () => {
+      c.value = withTiming(1, { duration: 170, easing: Easing.out(Easing.quad) }, () => {
         runOnJS(finish)();
       });
     },
-    [p, finish],
+    [c, finish],
   );
 
   // Android back closes the menu instead of leaving the screen underneath.
@@ -220,29 +229,31 @@ export function ChatPeekMenu<Id extends string>({
   const fromDY = hasPreview ? clamp(anchor.y + anchor.height / 2 - (cardTop + cardH / 2), -280, 280) : 0;
 
   const cardStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(p.value, [0, 0.35], [0, 1], Extrapolation.CLAMP),
+    opacity: interpolate(p.value, [0, 0.35], [0, 1], Extrapolation.CLAMP) * (1 - c.value),
     transform: [
       { translateY: interpolate(p.value, [0, 1], [fromDY, 0]) },
-      { scale: interpolate(p.value, [0, 1], [0.84, 1]) },
+      { scale: interpolate(p.value, [0, 1], [0.84, 1]) * (1 - 0.04 * c.value) },
     ],
   }));
-  // On liquid glass the menu must never carry an alpha: a GlassView with opacity below 1 on itself
+  // While OPEN, the glass menu never carries an alpha: a GlassView with opacity below 1 on itself
   // or an ancestor stops rendering its glass (expo/expo#41024). It grows out of its corner instead.
+  // While closing it is flat (`fading`), so it can fade like everything else.
   const glassActive = useLiquidGlassActive();
+  const menuGlass = glassActive && !fading;
   const menuStyle = useAnimatedStyle(() => ({
-    opacity: glassActive ? 1 : interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP),
-    transform: [{ scale: interpolate(p.value, [0, 1], [glassActive ? 0.2 : 0.55, 1]) }],
+    opacity: (menuGlass ? 1 : interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP)) * (1 - c.value),
+    transform: [{ scale: interpolate(p.value, [0, 1], [glassActive ? 0.2 : 0.55, 1]) * (1 - 0.06 * c.value) }],
   }));
-  const dimStyle = useAnimatedStyle(() => ({ opacity: clamp(p.value, 0, 1) }));
+  const dimStyle = useAnimatedStyle(() => ({ opacity: clamp(p.value, 0, 1) * (1 - c.value) }));
   // The blur's INTENSITY is animated, not its opacity: a UIVisualEffectView with alpha below 1
   // renders broken until the alpha returns to 1.
-  const blurProps = useAnimatedProps(() => ({ intensity: clamp(p.value, 0, 1) * 40 }));
+  const blurProps = useAnimatedProps(() => ({ intensity: clamp(p.value, 0, 1) * (1 - c.value) * 40 }));
 
   const isIOS = Platform.OS === 'ios';
   const dimColor = isIOS ? (theme.isDark ? 'rgba(0,0,0,0.28)' : 'rgba(0,0,0,0.12)') : 'rgba(0,0,0,0.55)';
   // The app's own elevated surface, so the menu belongs to the active theme instead of being a
   // neutral grey card; transparent on glass, which draws its own surface.
-  const menuBg = glassActive ? 'transparent' : theme.colors.background.elevated;
+  const menuBg = menuGlass ? 'transparent' : theme.colors.background.elevated;
   const separator = theme.isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.09)';
 
   // Only a TAP opens the chat. A drag that the transcript cannot turn into a scroll (a short chat
@@ -313,8 +324,8 @@ export function ChatPeekMenu<Id extends string>({
           menuStyle,
         ]}
       >
-        <View style={[styles.menu, { backgroundColor: menuBg }, glassActive ? { overflow: 'visible' } : null]}>
-          {glassActive ? (
+        <View style={[styles.menu, { backgroundColor: menuBg }, menuGlass ? { overflow: 'visible' } : null]}>
+          {menuGlass ? (
             <GlassBg
               borderRadius={MENU_RADIUS}
               glassStyle="regular"
@@ -425,11 +436,6 @@ function formatTime(iso: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function looksAnimated(u: string): boolean {
-  const s = u.toLowerCase();
-  return s.includes('.gif') || s.includes('giphy.com') || s.includes('tenor.com');
-}
-
 /**
  * Server pages fetched for chats with no local copy, kept for the session.
  *
@@ -533,9 +539,11 @@ function PeekTranscript({ conversationId }: { conversationId: string }) {
       contentContainerStyle={styles.transcriptContent}
       ItemSeparatorComponent={BubbleGap}
       showsVerticalScrollIndicator={false}
-      initialNumToRender={14}
-      maxToRenderPerBatch={10}
-      windowSize={7}
+      // A screenful, not more: everything mounted here is mounted in the same frame the card starts
+      // to grow, which is the stutter reported on chats with a lot of media.
+      initialNumToRender={8}
+      maxToRenderPerBatch={6}
+      windowSize={5}
       nestedScrollEnabled
     />
   );
@@ -564,27 +572,32 @@ const PeekBubble = memo(function PeekBubble({
   radius: number;
   photoLabel: string;
 }) {
+  // Same content as the chat: the GIF itself (it used to be the word "GIF"), every photo of an album
+  // rather than only the first, and the link card under a message with a link.
   const raw = message.text || '';
-  const body = stripMarkers(raw);
-  const img =
-    (Array.isArray(message.imageUrls) ? message.imageUrls.find((u) => typeof u === 'string' && !!u) : undefined) ||
-    firstImageUrlFromStoredText(raw) ||
-    undefined;
-  const isGif = raw.startsWith('::gif::') || (!!img && looksAnimated(img));
+  const gif = raw.startsWith('::gif::') ? raw.slice('::gif::'.length).trim().split(/\s+/)[0] || null : null;
+  const images = gif ? [] : messageImageUrls(message).slice(0, 4);
+  const body = gif ? '' : stripMarkers(raw);
+  const link = !gif && images.length === 0 && body ? extractFirstUrl(body) : null;
+  const inner = Math.max(6, radius - 6);
   const time = formatTime(message.createdAt);
   return (
     <View style={[styles.bubble, { alignSelf: own ? 'flex-end' : 'flex-start', backgroundColor: bg, borderRadius: radius }]}>
-      {img && !isGif ? (
-        <CachedImage uri={img} style={[styles.photo, { borderRadius: Math.max(6, radius - 6) }]} resizeMode="cover" />
-      ) : null}
+      {gif ? <CachedImage uri={gif} style={[styles.gif, { borderRadius: inner }]} resizeMode="cover" /> : null}
+      {images.length > 0 ? <PeekAlbum urls={images} radius={inner} /> : null}
       {body ? (
         <Text variant="body" color={fg} numberOfLines={8} style={styles.bubbleText}>
           {body}
         </Text>
-      ) : !img || isGif ? (
+      ) : !gif && images.length === 0 && raw ? (
         <Text variant="body" color={fg} style={styles.bubbleText}>
-          {isGif ? 'GIF' : photoLabel}
+          {photoLabel}
         </Text>
+      ) : null}
+      {link ? (
+        <View style={styles.link} pointerEvents="none">
+          <LinkPreview url={link} static />
+        </View>
       ) : null}
       {time ? (
         <Text variant="caption" color={fg} style={styles.time}>
@@ -594,6 +607,23 @@ const PeekBubble = memo(function PeekBubble({
     </View>
   );
 });
+
+/** One photo large; two side by side; three or four as a 2×2 grid, like the chat's albums. */
+function PeekAlbum({ urls, radius }: { urls: string[]; radius: number }) {
+  if (urls.length === 1) {
+    return <CachedImage uri={urls[0]} style={[styles.photo, { borderRadius: radius }]} resizeMode="cover" />;
+  }
+  const cellH = urls.length === 2 ? ALBUM_W * 0.68 : (ALBUM_W - 2) / 2;
+  return (
+    <View style={styles.album}>
+      {urls.map((u) => (
+        <CachedImage key={u} uri={u} style={{ width: (ALBUM_W - 2) / 2, height: cellH, borderRadius: radius }} resizeMode="cover" />
+      ))}
+    </View>
+  );
+}
+
+const ALBUM_W = 196;
 
 const styles = StyleSheet.create({
   // Above the navigator and the mini bars (zIndex 200-900 at the root), below the toast.
@@ -633,7 +663,10 @@ const styles = StyleSheet.create({
     paddingBottom: 5,
   },
   bubbleText: { fontSize: 15, lineHeight: 20 },
-  photo: { width: 150, height: 150, marginTop: 2, marginBottom: 4 },
+  photo: { width: ALBUM_W, height: ALBUM_W, marginTop: 2, marginBottom: 4 },
+  gif: { width: ALBUM_W, height: Math.round(ALBUM_W * 0.75), marginTop: 2, marginBottom: 4 },
+  album: { width: ALBUM_W, flexDirection: 'row', flexWrap: 'wrap', gap: 2, marginTop: 2, marginBottom: 4 },
+  link: { width: 230, marginTop: 6 },
   time: { fontSize: 10.5, opacity: 0.6, alignSelf: 'flex-end', marginTop: 1 },
   // Shadow on the outer view, clipping on the inner one: iOS drops a layer's shadow when the same
   // layer clips its bounds.

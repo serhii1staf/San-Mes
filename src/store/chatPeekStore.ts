@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ChatPeekAction, ChatPeekAnchor, ChatPeekConversation } from '../components/chat/ChatPeekMenu';
+import { triggerHaptic } from '../utils/haptics';
 
 /**
  * The one open chat-list peek menu, if any.
@@ -49,5 +50,8 @@ export function openChatPeek<Id extends string>(req: {
   onSelect: (id: Id) => void;
   onOpen?: () => void;
 }): void {
+  // At the long-press itself: in the menu's mount effect it waited for the whole first render, which
+  // on a busy JS thread (right after launch) made the menu feel late even before it appeared.
+  triggerHaptic('medium');
   useChatPeekStore.getState().open(req as unknown as Omit<ChatPeekRequest, 'key'>);
 }
