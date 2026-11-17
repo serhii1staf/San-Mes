@@ -30,6 +30,7 @@
 import { kvGetJSONSync } from './kvStore';
 import { prefetchImages } from '../components/ui/CachedImage';
 import { extractFirstUrl, getCachedPreviewSync } from './linkPreview';
+import { messageImageUrls } from '../utils/chatImageMarker';
 import type { ChatMessage } from '../types';
 import { Dimensions } from 'react-native';
 
@@ -99,9 +100,14 @@ export async function prefetchRecentChatMedia(opts: PrefetchOpts): Promise<void>
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
 
+    // The ~60-message tail the chat keeps for its own first paint, not the full history blob (up to
+    // 1000 rows). Only the last three messages are used, and parsing eight full blobs to get them
+    // was the bulk of this warm-up's JS time on the chats tab. The blob is the fallback for chats
+    // whose tail has not been written yet.
     let messages: ChatMessage[];
     try {
-      messages = kvGetJSONSync<ChatMessage[]>(`chat_messages:${id}`, []);
+      messages = kvGetJSONSync<ChatMessage[]>(`chat_tail:${id}`, []);
+      if (!messages || messages.length === 0) messages = kvGetJSONSync<ChatMessage[]>(`chat_messages:${id}`, []);
     } catch {
       continue;
     }
@@ -111,9 +117,11 @@ export async function prefetchRecentChatMedia(opts: PrefetchOpts): Promise<void>
     // FlatList opens at the bottom of the chat.
     const slice = messages.slice(-MESSAGES_PER_CHAT);
     for (const m of slice) {
-      // Direct image attachments.
-      if (m.imageUrls && m.imageUrls.length > 0) {
-        for (const u of m.imageUrls) {
+      // Direct image attachments — decoded, or still inside the stored marker for rows that came
+      // from the history fetch (see `messageImageUrls`).
+      const imageUrls = messageImageUrls(m);
+      if (imageUrls.length > 0) {
+        for (const u of imageUrls) {
           if (!u || seen.has(u)) continue;
           seen.add(u);
           collected.push(u);

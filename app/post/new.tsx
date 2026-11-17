@@ -11,12 +11,11 @@ import {
   View,
   TextInput,
   Pressable,
-  ScrollView,
   StyleSheet,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,6 +34,8 @@ import { useT } from '../../src/i18n/store';
 
 const MAX_PHOTOS = 4;
 const MAX_CHARS = 4000;
+/** Toolbar row height without its bottom safe-area padding (paddingTop 10 + 38 pt button). */
+const TOOLBAR_HEIGHT = 48;
 
 export default function NewPostScreen() {
   const theme = useTheme();
@@ -99,11 +100,16 @@ export default function NewPostScreen() {
     }
   }, [canPublish, userId, text, photos, t]);
 
+  // ── THE PHOTO BUTTON WAS UNDER THE KEYBOARD ─────────────────────────────────
+  // Reported on iPhone: the field autofocuses, the keyboard comes up, and the toolbar with «Фото»
+  // stays behind it. RN's KeyboardAvoidingView measures against the window, but this screen is a
+  // page sheet that starts lower than the window top, so its padding came out short. The toolbar is
+  // now a KeyboardStickyView (react-native-keyboard-controller, already driving every composer in
+  // the app): it rides exactly on the keyboard's top edge, and the text scrolls above it.
+  const bottomPad = Math.max(insets.bottom, 12);
+
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: theme.colors.background.primary }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       <View style={[styles.header, { paddingTop: Platform.OS === 'ios' ? 14 : insets.top + 10, borderBottomColor: theme.colors.border.light }]}>
         <Pressable onPress={() => router.back()} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('common.cancel')} style={styles.close}>
           <Feather name="x" size={24} color={theme.colors.text.secondary} />
@@ -127,7 +133,12 @@ export default function NewPostScreen() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 90 }} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: TOOLBAR_HEIGHT + bottomPad + 24 }}
+        bottomOffset={TOOLBAR_HEIGHT + 16}
+        keyboardShouldPersistTaps="handled"
+      >
         <TextInput
           value={text}
           onChangeText={setText}
@@ -156,9 +167,12 @@ export default function NewPostScreen() {
             ))}
           </View>
         ) : null}
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
-      <View style={[styles.toolbar, { paddingBottom: Math.max(insets.bottom, 12), borderTopColor: theme.colors.border.light, backgroundColor: theme.colors.background.primary }]}>
+      {/* `opened` pulls the bar down by its own safe-area padding while the keyboard is up (the
+          keyboard already covers the home indicator), leaving an 8 pt gap above the keys. */}
+      <KeyboardStickyView offset={{ closed: 0, opened: bottomPad - 8 }} style={styles.toolbarDock}>
+      <View style={[styles.toolbar, { paddingBottom: bottomPad, borderTopColor: theme.colors.border.light, backgroundColor: theme.colors.background.primary }]}>
         <Pressable
           onPress={pickPhotos}
           disabled={photos.length >= MAX_PHOTOS || busy}
@@ -174,7 +188,8 @@ export default function NewPostScreen() {
         <View style={{ flex: 1 }} />
         <Text variant="caption" color={theme.colors.text.tertiary}>{text.length}/{MAX_CHARS}</Text>
       </View>
-    </KeyboardAvoidingView>
+      </KeyboardStickyView>
+    </View>
   );
 }
 
@@ -188,8 +203,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   close: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  title: { flex: 1, textAlign: 'center', marginHorizontal: 8, fontSize: 16 },
-  publish: { paddingHorizontal: 14, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', minWidth: 88 },
+  title: { flex: 1, textAlign: 'center', marginHorizontal: 6, fontSize: 15 },
+  publish: { paddingHorizontal: 12, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', minWidth: 80 },
   input: { fontSize: 17, lineHeight: 24, minHeight: 140, textAlignVertical: 'top' },
   photos: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   photoWrap: { width: 96, height: 96, borderRadius: 14, overflow: 'hidden' },
@@ -205,6 +220,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  toolbarDock: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',

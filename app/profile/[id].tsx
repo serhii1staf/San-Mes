@@ -192,7 +192,11 @@ export default function UserProfileScreen() {
             )
           }
         />
-        <ProfileContentTabs profileId={profileId} isOwn={isOwnProfile} />
+        <ProfileContentTabs
+          profileId={profileId}
+          isOwn={isOwnProfile}
+          author={{ name: profile.display_name || profile.username || '', emoji: profile.emoji || '😊', verified: !!profile.is_verified, badge: profile.badge }}
+        />
       </Animated.ScrollView>
 
       {!isOwnProfile ? <ProfileMenuModal visible={showMenu} profile={menuTarget} onClose={closeMenu} /> : null}

@@ -48,7 +48,7 @@ import { ReplyJumpGlow } from '../../src/components/chat/ReplyJumpGlow';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
-import { firstImageUrlFromStoredText } from '../../src/utils/chatImageMarker';
+import { firstImageUrlFromStoredText, messageImageUrls } from '../../src/utils/chatImageMarker';
 import { reportImageDims } from '../../src/services/imageDimsReporter';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
@@ -308,6 +308,17 @@ function schedulePersist(conversationId: string, write: () => void): void {
 // divergence on one crash. During normal use it never fires: leaving the chat or switching apps
 // happens first, and both flush.
 const FULL_PERSIST_DEBOUNCE_MS = 120000;
+/**
+ * The history poll's server watermark per conversation, for this app session.
+ *
+ * The cursor used to be a local of the poll effect, so every open of a chat started from nothing
+ * and its first tick re-read a full 200-row page: a network round trip plus a parse, map, prune and
+ * merge measured at 167-193 ms on the JS thread, about a second after the chat appeared, on every
+ * open. The first open of a session still reads the full page (it is the only one that can notice
+ * messages deleted on another device); reopening the chat later in the session resumes from here
+ * and an idle reopen transfers an empty array.
+ */
+const historyCursorByConv = new Map<string, string>();
 let fullPersistTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingFullWrite: (() => void) | null = null;
 let pendingFullConv: string | null = null;
@@ -3243,11 +3254,14 @@ export default function ChatScreen() {
       // a full page has been reconciled the newest timestamp IS a trustworthy watermark, and
       // from then on an idle poll transfers an empty array instead of re-sending the tail
       // every six seconds.
-      let sinceCursor: string | null = null;
+      // A reopen in the same app session resumes from the watermark the previous visit reached; see
+      // `historyCursorByConv`.
+      const resumedCursor = historyCursorByConv.get(conversationId) ?? null;
+      let sinceCursor: string | null = resumedCursor;
       // Only the FIRST fetch of a session can be used to detect deletions — it is the only one that
       // asks from the beginning of the conversation rather than from a cursor. See the prune block
       // below for why that distinction is the whole safety argument.
-      let isFirstPage = true;
+      let isFirstPage = !resumedCursor;
       const runFetch = async () => {
         try {
           const { getMessages } = await import('../../src/lib/supabase');
@@ -3269,6 +3283,7 @@ export default function ChatScreen() {
             const newestLocal = local[local.length - 1]?.createdAt;
             if (typeof newestLocal === 'string') sinceCursor = newestLocal;
           }
+          if (sinceCursor) historyCursorByConv.set(conversationId, sinceCursor);
           if (!Array.isArray(messages) || messages.length === 0) return;
 
           const remote: ChatMessage[] = (messages as any[])
@@ -3493,7 +3508,8 @@ export default function ChatScreen() {
       const recent = current.slice(-WARM_RECENT);
       const uris: string[] = [];
       for (const m of recent) {
-        if ((m as any).imageUrls) for (const u of (m as any).imageUrls) {
+        // Server-sourced rows still hold their photos in the stored marker; see `messageImageUrls`.
+        for (const u of messageImageUrls(m)) {
           if (isAnimatedImageUrl(u)) continue; // skip GIFs — decode on render
           uris.push(u);
         }
@@ -6413,8 +6429,12 @@ export default function ChatScreen() {
   // scrolling reshapes a recycled text bubble into an image bubble (and back),
   // which forces a full re-layout of that cell on the scroll frame — a real
   // contributor to scroll jank in image/GIF-mixed histories.
+  // `messageImageUrls`, not `item.imageUrls`: rows from the history fetch keep their photos inside
+  // the stored `::img::` marker until render, so reading the field alone typed every server-sourced
+  // photo as 'text' and FlashList recycled text cells into photo cells (and back) while scrolling —
+  // mounting and unmounting image views on scroll frames in exactly the chats with the most photos.
   const chatGetItemType = useCallback((item: ChatMessage) => {
-    const n = item.imageUrls?.length || 0;
+    const n = messageImageUrls(item).length;
     if (n === 0) return 'text';
     return n === 1 ? 'media1' : 'mediaN';
   }, []);

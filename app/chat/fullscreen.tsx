@@ -67,6 +67,8 @@ import { formatDaySeparator } from '../../src/utils/chatDaySeparators';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
+import { messageImageUrls, stripImageMarker } from '../../src/utils/chatImageMarker';
+import { decodeReplyMarker } from '../../src/utils/chatReplyMarker';
 import { showToast } from '../../src/store/toastStore';
 import type { ChatMessage } from '../../src/types';
 
@@ -188,7 +190,8 @@ export default function ChatFullscreenScreen() {
   // declared and accurate, so this ships over-the-air with no new permission.
   // Everything is lazily imported so the module is not pulled in on screens that
   // never save anything.
-  const currentImages = current?.imageUrls ?? [];
+  // Decoded or still in the stored marker (rows from the history fetch); see `messageImageUrls`.
+  const currentImages = messageImageUrls(current);
   const canSave = currentImages.length > 0;
   const [saving, setSaving] = useState(false);
 
@@ -473,7 +476,21 @@ const FullscreenPage = React.memo(function FullscreenPage({
   youLabel: string;
   peerLabel: string;
 }) {
-  const images = message.imageUrls ?? [];
+  // ── ROWS FROM THE SERVER STILL CARRY THEIR MARKERS ─────────────────────────
+  // This screen reads the chat store directly, and rows that arrived through the history fetch keep
+  // the reply wrapper and the `::img::…::` photo list inside `text` (the chat decodes them at render
+  // time in `parseMessage`). Reading `imageUrls` alone left those photos off the page and printed the
+  // raw markers as the message text. Same decode, in the same order: reply wrapper, then images.
+  const storedText = useMemo(() => {
+    if (message.imageUrls) return message.text || '';
+    const decoded = decodeReplyMarker(message.text, undefined);
+    return decoded ? decoded.rest : (message.text || '');
+  }, [message.imageUrls, message.text]);
+  const images = useMemo(
+    () => messageImageUrls({ imageUrls: message.imageUrls, text: storedText }),
+    [message.imageUrls, storedText],
+  );
+  const plainText = message.imageUrls ? storedText : stripImageMarker(storedText);
   // ── THE SAME TWO GUARDS THE CHAT BUBBLE APPLIES ────────────────────────────
   //
   // Reported as: in fullscreen an emoji/GIF message "looks like a link with a micro-preview", and
@@ -497,8 +514,8 @@ const FullscreenPage = React.memo(function FullscreenPage({
   // `previewLink`, and that they drifted once because the decision was duplicated. So it gets the same
   // change: scan for OUR shapes before falling back to "the first url in the text". See
   // `extractInAppCardUrl` for why the positional first match was the wrong question.
-  const linkUrl = !images.length && message.text && !hasCodeBlock(message.text)
-    ? extractInAppCardUrl(message.text) ?? extractFirstUrl(message.text)
+  const linkUrl = !images.length && plainText && !hasCodeBlock(plainText)
+    ? extractInAppCardUrl(plainText) ?? extractFirstUrl(plainText)
     : null;
 
   // ── AND THE BODY LOSES THE URL, WHICH IT DID NOT BEFORE ───────────────────
@@ -509,7 +526,7 @@ const FullscreenPage = React.memo(function FullscreenPage({
   // the exact duplication the transcript fixed, still present one tap away.
   //
   // Same helper, same rule: only OUR links go, a third-party URL keeps its text.
-  const bodyText = isInAppCardUrl(linkUrl) ? stripInAppCardUrl(message.text, linkUrl) : (message.text || '');
+  const bodyText = isInAppCardUrl(linkUrl) ? stripInAppCardUrl(plainText, linkUrl) : plainText;
 
   const textColor = isOwn ? ownTextColor : theme.colors.text.primary;
   const bubbleBg = isOwn ? ownBg : theme.colors.background.elevated;
@@ -616,6 +633,11 @@ const ViewerPhoto = React.memo(function ViewerPhoto({ uri }: { uri: string }) {
         // distortion, and the image fills its rounded frame exactly.
         resizeMode="cover"
         proxyWidth={VIEWER_IMG_MAX_W}
+        // This page asks for a larger derivative than the bubble (w=780 against w=514 on a 390 pt
+        // screen), so its own key is a guaranteed miss on first view. `progressive` paints the
+        // bubble's already-decoded copy on the first frame and swaps in the sharper one when it
+        // lands, instead of an empty box for the length of a download.
+        progressive
         onLoad={onLoad}
       />
     </View>

@@ -42,3 +42,36 @@ export function firstImageUrlFromStoredText(text: string | undefined | null): st
   const first = text.slice(from, end).split('|')[0];
   return first || null;
 }
+
+/** Every image url inside a stored message body, found the same way as above. */
+export function imageUrlsFromStoredText(text: string | undefined | null): string[] {
+  if (!text) return [];
+  const at = text.indexOf('::img::');
+  if (at < 0) return [];
+  const from = at + 7;
+  const end = text.indexOf('::', from);
+  if (end < 0) return [];
+  return text.slice(from, end).split('|').filter(Boolean);
+}
+
+/**
+ * A message's images, whether already decoded or still inside the stored marker.
+ *
+ * Rows that arrive from the history fetch keep their images in `text` (`::img::…::`) until
+ * `parseMessage` runs at render time, while local sends and realtime rows carry `imageUrls`. Code
+ * that looks only at `imageUrls` (the list's cell-type split, the image warm-ups, the fullscreen
+ * route) therefore treated every photo fetched from the server as a text message.
+ */
+export function messageImageUrls(m: { imageUrls?: string[] | null; text?: string | null } | null | undefined): string[] {
+  if (!m) return [];
+  if (m.imageUrls && m.imageUrls.length > 0) return m.imageUrls;
+  return imageUrlsFromStoredText(m.text);
+}
+
+/** The caption that follows the `::img::…::` marker, or the text unchanged when there is none. */
+export function stripImageMarker(text: string | undefined | null): string {
+  if (!text) return '';
+  if (!text.startsWith('::img::')) return text;
+  const end = text.indexOf('::', 7);
+  return end < 0 ? text : text.slice(end + 2);
+}
