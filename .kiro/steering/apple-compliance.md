@@ -151,11 +151,13 @@ and new follows). Compliance notes for the push path:
 
 ### User-generated content (App Review Guideline 1.2)
 
-Profile bios, names, banners and chat messages are all user content (posts and comments were removed in
-Nov 2026). We MUST provide:
+Profile bios, names, banners, chat messages, and the posts and comments published from profiles are all
+user content (the public feed was removed in Nov 2026; posting moved onto profiles). We MUST provide:
 - A way to **report** objectionable content. Profiles: `src/components/profile/ProfileMenuModal.tsx`
-  (the "More" tile on every profile: report + block). Chat messages: the message long-press menu must
-  offer Report as well — it was the post menus' job before publishing was removed, so check it exists.
+  (the "More" tile on every profile: report + block). The long-press menus, all built on
+  `src/components/ui/ActionMenu.tsx`, carry Report on everything that is not the viewer's own:
+  chat messages (`MessageContextMenu.tsx`), comments (`CommentContextMenu.tsx`) and profile posts
+  (`src/components/profile/ProfilePostMenu.tsx`, which also offers Block). Keep it on all three.
 - A way to **block** other users.
 - Moderation/removal of content reported as abusive within 24 hours.
 - Terms of service forbidding objectionable content.
