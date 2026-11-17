@@ -12,13 +12,14 @@ The user has accepted the **Apple Developer Program License Agreement** (full te
 - **Privacy policy.** App Store listing and an in-app accessible privacy policy URL are required. Update both whenever data flows change.
 - **Breach notification.** If user data is ever exposed, the user MUST be notified per applicable law.
 - **Scope creep.** Don't expand how previously collected data is used without obtaining fresh consent. If we add a feature that re-purposes existing data (e.g., using profile data for recommendations), prompt the user.
+- **San AI sends data to a third party (NVIDIA).** `app/chat/ai.tsx` sends the recent chat text plus display name, @username, emoji and current theme to NVIDIA's API. A per-account consent prompt runs before the first request (`hasAiConsent` / `grantAiConsent` in `src/services/aiService.ts`), and `sendMessage` throws without consent as a backstop (App Review 5.1.2(i) requires disclosure and permission before sharing personal data with third-party AI). Keep both. If the set of fields sent changes, update the prompt text (`ai_chat.consent.body`) and `docs/privacy.html` §4 (served at legal.san-m-app.com) in the same change. The NVIDIA key ships in the bundle; it should move behind the Worker and be rotated.
 
 ### Permissions / `Info.plist` usage descriptions (§3.3.3.F.iv)
 
 Every iOS permission we request needs an honest `NS*UsageDescription` string in `app.json` → `ios.infoPlist`. Apple rejects builds with missing or misleading strings.
 
 Currently declared:
-- `NSPhotoLibraryUsageDescription` — gallery picker (photos in chats, profile banner, chat background)
+- `NSPhotoLibraryUsageDescription` — gallery picker (photos in posts and chats, profile banner, chat background). Posts came back in Nov 2026 as profile-only publishing (`app/post/new.tsx`, gallery only, no camera); the string mentions them.
 - `NSPhotoLibraryAddUsageDescription` — "Save" on a photo in the full-screen chat viewer (`app/chat/fullscreen.tsx`, add-only access)
 - `UIBackgroundModes: ["audio"]` — required because the music player keeps playing in the background
 
