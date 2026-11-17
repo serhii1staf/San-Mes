@@ -12,9 +12,13 @@
  * thumbnails) in the same commit as the push animation, which is the lag seen on opening a profile.
  */
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Animated, InteractionManager, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator, type LayoutChangeEvent } from 'react-native';
+import { Animated, InteractionManager, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator, type LayoutChangeEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused } from '@react-navigation/native';
+import Reanimated, { Easing, cancelAnimation, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming, type SharedValue } from 'react-native-reanimated';
+import type { ActionMenuAnchor } from '../ui/ActionMenu';
+import { ProfilePostMenu } from './ProfilePostMenu';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
@@ -23,14 +27,12 @@ import { GlassBg, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { triggerHaptic } from '../../utils/haptics';
 import { useT } from '../../i18n/store';
 import { useShortAgo } from '../../utils/shortAgo';
-import { deletePost, parseImageUrls } from '../../lib/supabase';
-import { showToast } from '../../store/toastStore';
+import { parseImageUrls } from '../../lib/supabase';
 import { useIsBlocked } from '../../store/blockedUsersStore';
 import { useProfileAppearanceStore } from '../../store/profileAppearanceStore';
 import { stripMarkers } from '../../utils/previewText';
 import { ProfilePostCard } from './ProfilePostCard';
 import {
-  invalidateProfilePosts,
   useProfilePosts,
   useProfileReplies,
   type ProfilePost,
@@ -114,12 +116,11 @@ const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; on
             accessibilityState={{ selected: active }}
             style={[
               styles.stripItem,
-              active && !glassActive ? { backgroundColor: theme.colors.accent.primary + '26' } : null,
+              // A tinted fill, not a second glass view: this strip moves with every scroll frame,
+              // and each glass view re-samples what is behind it on every one of them.
+              active ? { backgroundColor: theme.colors.accent.primary + (glassActive ? '33' : '26') } : null,
             ]}
           >
-            {active && glassActive ? (
-              <GlassBg borderRadius={16} glassStyle="regular" colorScheme={scheme} tintColor={theme.colors.accent.primary + '59'} interactive={false} />
-            ) : null}
             <Text variant="caption" weight={active ? 'bold' : 'medium'} color={active ? theme.colors.accent.primary : theme.colors.text.secondary} style={{ fontSize: 14 }}>
               {tab.label}
             </Text>
@@ -161,6 +162,52 @@ const ReplyRow = memo(function ReplyRow({ reply }: { reply: ProfileReply }) {
     </Pressable>
   );
 });
+
+// ── «Что нового?» emoji ticker ──────────────────────────────────────────────
+// Replaces the photo icon on the compose row: one emoji at a time, cross-fading into the next while
+// drifting up a little. One shared value drives every glyph on the UI thread, so React never
+// re-renders for it; it stops when the profile is not on screen or Reduce Motion is on.
+const TICKER = ['🖼️', '✨', '📸', '🎧', '💭', '🌿', '😊'];
+const TICKER_STEP_MS = 2600;
+const FADE = 0.25;
+
+const TickerGlyph = memo(function TickerGlyph({ glyph, index, t }: { glyph: string; index: number; t: SharedValue<number> }) {
+  const style = useAnimatedStyle(() => {
+    const n = TICKER.length;
+    // Where this glyph is in the cycle: [0, 1) is its turn; the FADE before it overlaps the
+    // previous glyph's fade-out, which makes it a cross-fade rather than a blink.
+    let u = (((t.value - index) % n) + n) % n;
+    if (u > n - FADE) u -= n;
+    let opacity = 0;
+    if (u < 0) opacity = (u + FADE) / FADE;
+    else if (u < 1 - FADE) opacity = 1;
+    else if (u < 1) opacity = (1 - u) / FADE;
+    const y = u < 0 ? -u * 24 : u > 1 - FADE ? -(u - (1 - FADE)) * 24 : 0;
+    const scale = 0.9 + 0.1 * opacity;
+    return { opacity, transform: [{ translateY: y }, { scale }] };
+  });
+  return <Reanimated.Text allowFontScaling={false} style={[styles.tickerGlyph, style]}>{glyph}</Reanimated.Text>;
+});
+
+function EmojiTicker() {
+  const focused = useIsFocused();
+  const reduceMotion = useReducedMotion();
+  const t = useSharedValue(0);
+  const running = focused && !reduceMotion;
+  useEffect(() => {
+    if (!running) {
+      cancelAnimation(t);
+      return;
+    }
+    t.value = withRepeat(withTiming(t.value + TICKER.length, { duration: TICKER_STEP_MS * TICKER.length, easing: Easing.linear }), -1, false);
+    return () => cancelAnimation(t);
+  }, [running, t]);
+  return (
+    <View style={styles.ticker} pointerEvents="none" importantForAccessibility="no-hide-descendants">
+      {TICKER.map((g, i) => <TickerGlyph key={g} glyph={g} index={i} t={t} />)}
+    </View>
+  );
+}
 
 function Empty({ icon, text }: { icon: React.ComponentProps<typeof Feather>['name']; text: string }) {
   const theme = useTheme();
@@ -235,22 +282,14 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
   }, []);
 
   const onPressPost = useCallback((p: ProfilePost) => openPost(p.id), []);
-  const onLongPressPost = useCallback((p: ProfilePost) => {
+  // Every post gets the long-press menu: own posts for copy / share / delete, everyone else's for
+  // copy / share / report / block (report and block are required on UGC by App Review 1.2).
+  const [menuFor, setMenuFor] = useState<{ post: ProfilePost; anchor: ActionMenuAnchor | null } | null>(null);
+  const onLongPressPost = useCallback((p: ProfilePost, anchor: ActionMenuAnchor | null) => {
     triggerHaptic('medium');
-    Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('common.delete'),
-        style: 'destructive',
-        onPress: async () => {
-          const { error } = await deletePost(p.id, p.author_id);
-          if (error) { showToast(error, 'alert-circle'); return; }
-          invalidateProfilePosts(p.author_id);
-          showToast(t('toast.post_deleted'), 'check');
-        },
-      },
-    ]);
-  }, [t]);
+    setMenuFor({ post: p, anchor });
+  }, []);
+  const closeMenu = useCallback(() => setMenuFor(null), []);
 
   if (blocked) {
     return (
@@ -292,7 +331,7 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
               </View>
               <Text variant="body" color={theme.colors.text.secondary}>{t('post.compose_prompt')}</Text>
               <View style={{ flex: 1 }} />
-              <Feather name="image" size={18} color={theme.colors.text.tertiary} />
+              <EmojiTicker />
             </Pressable>
           ) : null}
           {loading && posts.length === 0 ? (
@@ -310,7 +349,7 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
                 authorBadge={author.badge}
                 postEmoji={postEmoji}
                 onPress={onPressPost}
-                onLongPress={isOwn ? onLongPressPost : undefined}
+                onLongPress={onLongPressPost}
               />
             ))
           )}
@@ -346,6 +385,16 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
           )}
         </View>
       ) : null}
+
+      {menuFor ? (
+        <ProfilePostMenu
+          post={menuFor.post}
+          anchor={menuFor.anchor}
+          isOwn={isOwn}
+          authorName={author.name}
+          onClose={closeMenu}
+        />
+      ) : null}
     </View>
   );
 }
@@ -367,6 +416,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   composeIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  // A little in from the edge, where the photo icon used to sit flush.
+  ticker: { width: 28, height: 28, marginRight: 10, alignItems: 'center', justifyContent: 'center' },
+  tickerGlyph: { position: 'absolute', fontSize: 20, lineHeight: 26, textAlign: 'center', includeFontPadding: false },
   replyCard: { borderRadius: 24, borderWidth: 1, padding: 12, marginBottom: 12 },
   quote: { borderLeftWidth: 3, borderRadius: 10, paddingVertical: 6, paddingHorizontal: 10 },
   empty: { alignItems: 'center', paddingVertical: 32, gap: 8 },

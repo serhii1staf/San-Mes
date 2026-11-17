@@ -505,6 +505,11 @@ const ru: Record<string, string> = {
   'chat.menu.edit': 'Редактировать',
   'chat.menu.delete': 'Удалить',
   'chat.menu.report': 'Пожаловаться',
+  'chat.menu.pin': 'Закрепить',
+  'chat.menu.unpin': 'Открепить',
+  'chat.menu.forward': 'Переслать',
+  'chat.menu.edit_short': 'Изменить',
+  'chat.menu.report_short': 'Жалоба',
   'chat.menu.translate': 'Перевести',
   // Day-separator chips in the transcript. Absolute dates are formatted by
   // `Intl.DateTimeFormat` from the active locale, so only these two relative

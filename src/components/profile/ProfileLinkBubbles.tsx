@@ -1,35 +1,43 @@
 /**
  * Profile links as floating liquid drops, in the space beside the avatar (the idea of Telegram's
- * glowing profile gifts).
+ * profile gifts).
  *
- * Each drop is a blob of coloured gel in the link's brand colour: its outline keeps changing shape,
- * something lighter swirls inside it, it glows softly, it drifts on its own rhythm, and it can be
- * grabbed and pulled in any direction. Let go and it springs home, wobbling more while it is pulled.
+ * Each drop is a blob of coloured gel in the link's brand colour. It slowly turns and squashes, so
+ * its outline never looks the same twice; something lighter swirls inside it; it drifts on its own
+ * rhythm; it can be grabbed and pulled anywhere and springs home with a wobble. Push one drop into
+ * another and the other one bursts into droplets that fall, then pops back together with a hop.
  * A tap opens the link.
  *
- * Cost, since the profile is where lag was reported:
- *   - every frame is computed on the UI thread (Reanimated); React does not re-render while it moves;
- *   - per drop and per frame: two SVG path strings (outline, inner swirl) and two transforms. No
- *     clipping, no blur, no shadows, no native glass (glass cannot change shape anyway);
- *   - the loop starts after the open transition and stops while the screen is not focused (the
- *     own-profile tab stays mounted behind the other tabs) or when Reduce Motion is on.
+ * ── TRANSFORMS ONLY ─────────────────────────────────────────────────────────
+ *
+ * The previous version rebuilt each drop's SVG path every frame. That is the most expensive kind of
+ * animation there is here: each frame went through a shadow-tree commit and react-native-svg then
+ * re-parsed and redrew the path on the main thread. It was visible as the drops "twitching" and was
+ * part of the profile's lag. Now every SVG is drawn ONCE, and only rotation, scale, translation and
+ * opacity change, which the compositor applies without redrawing anything.
+ *
+ * The loop starts after the open transition and stops while the screen is not focused (the own
+ * profile tab stays mounted behind the other tabs) or when Reduce Motion is on.
  */
 import React, { memo, useCallback, useEffect, useMemo } from 'react';
 import { InteractionManager, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { FontAwesome5, Feather } from '@expo/vector-icons';
-import Svg, { Circle, Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
+import Svg, { Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
   Easing,
   cancelAnimation,
   runOnJS,
-  useAnimatedProps,
+  useAnimatedReaction,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
+  withDelay,
   withRepeat,
+  withSequence,
   withSpring,
   withTiming,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { triggerHaptic } from '../../utils/haptics';
 import { openUrl } from '../../utils/openUrl';
@@ -56,7 +64,7 @@ export function detectLinkKind(url: string): LinkKind {
 
 /**
  * Icon and gel colour per link kind. Brands whose own colour is black or white (GitHub, TikTok) get
- * a colour from the same palette instead, so every drop glows.
+ * a colour from the same palette instead, so every drop has colour.
  */
 const BRAND: Record<LinkKind, { icon: string; gel: string; label: string; brand: boolean }> = {
   github: { icon: 'github', gel: '#8A63FF', label: 'GitHub', brand: true },
@@ -98,19 +106,13 @@ const POINTS = 6;
 // the 1.732·R chord between a point's neighbours.
 const SMOOTH = 0.357 / 1.732;
 
-/**
- * A closed, smooth blob around (cx, cy). Each of the six points breathes on its own sine; every
- * frequency is a whole number of turns per loop, so `t` wrapping from 1 back to 0 is seamless.
- */
-function blobPath(cx: number, cy: number, R: number, t: number, phase: number, amp: number): string {
-  'worklet';
-  const th = t * TAU;
+/** A closed, smooth, slightly irregular blob around (cx, cy). Drawn once per drop. */
+function blobPath(cx: number, cy: number, R: number, seed: number, amp: number): string {
   const xs: number[] = [];
   const ys: number[] = [];
   for (let i = 0; i < POINTS; i++) {
     const a = (i / POINTS) * TAU;
-    const k = (i % 2) + 1;
-    const r = R * (1 + amp * Math.sin(k * th + phase + i * 1.9) + amp * 0.45 * Math.sin((3 - k) * th + phase * 0.7 + i * 0.8));
+    const r = R * (1 + amp * Math.sin(seed + i * 1.9) + amp * 0.45 * Math.sin(seed * 0.7 + i * 0.8));
     xs.push(cx + r * Math.cos(a));
     ys.push(cy + r * Math.sin(a));
   }
@@ -128,7 +130,34 @@ function blobPath(cx: number, cy: number, R: number, t: number, phase: number, a
   return `${d}Z`;
 }
 
-const AnimatedPath = Reanimated.createAnimatedComponent(Path);
+const DROPLETS = 7;
+
+/** One of the droplets a popped drop bursts into: flies out, falls, fades. Idle = invisible. */
+const Droplet = memo(function Droplet({ burst, index, size, color }: { burst: SharedValue<number>; index: number; size: number; color: string }) {
+  const angle = (index / DROPLETS) * TAU + ((index * 53) % 10) / 20;
+  const dist = size * (0.55 + (((index * 37) % 10) / 10) * 0.4);
+  const d = Math.round(size * (0.16 + ((index * 29) % 10) / 90));
+  const style = useAnimatedStyle(() => {
+    const b = burst.value;
+    const visible = b > 0.001 && b < 0.999;
+    return {
+      // Fully visible while they fly out, fading only as they fall.
+      opacity: visible ? 1 - b * b : 0,
+      transform: [
+        { translateX: Math.cos(angle) * dist * b },
+        // Out along its angle, then gravity takes over.
+        { translateY: Math.sin(angle) * dist * b * 0.8 + size * 1.3 * b * b },
+        { scale: 1 - 0.5 * b },
+      ],
+    };
+  });
+  return (
+    <Reanimated.View
+      pointerEvents="none"
+      style={[{ position: 'absolute', left: size / 2 - d / 2, top: size / 2 - d / 2, width: d, height: d, borderRadius: d / 2, backgroundColor: color }, style]}
+    />
+  );
+});
 
 interface BubbleProps {
   url: string;
@@ -138,26 +167,38 @@ interface BubbleProps {
   index: number;
   running: boolean;
   websiteLabel: string;
+  /** Every drop's resting centre and radius, in the field's coordinates, for collisions. */
+  centers: number[][];
+  pops: SharedValue<number[]>;
+  lastPop: SharedValue<number[]>;
 }
 
-const Bubble = memo(function Bubble({ url, size, left, top, index, running, websiteLabel }: BubbleProps) {
+const Bubble = memo(function Bubble({ url, size, left, top, index, running, websiteLabel, centers, pops, lastPop }: BubbleProps) {
   const kind = detectLinkKind(url);
   const brand = BRAND[kind];
   const dx = useSharedValue(0);
   const dy = useSharedValue(0);
   const scale = useSharedValue(1);
   const t = useSharedValue(index * 0.17);
+  const pop = useSharedValue(1);
+  const hop = useSharedValue(0);
+  const burst = useSharedValue(0);
 
-  // Each drop has its own period and phase so the cluster never moves in step.
-  const period = 5600 + index * 820;
+  // Each drop has its own period and phase so the cluster never moves in step. One full turn of
+  // the blob per period; every other motion is a whole number of cycles per period, so the loop
+  // wrapping from 1 back to 0 is seamless.
+  const period = 9000 + index * 1300;
   const phase = index * 1.37;
+  const dir = index % 2 === 0 ? 1 : -1;
+  const R = size / 2;
+  const cx = left + R;
+  const cy = top + R;
 
   useEffect(() => {
     if (!running) {
       cancelAnimation(t);
       return;
     }
-    // Repeating from where it stopped: every term in `blobPath` and the drift has period 1 in `t`.
     t.value = withRepeat(withTiming(t.value + 1, { duration: period, easing: Easing.linear }), -1, false);
     return () => cancelAnimation(t);
   }, [running, t, period]);
@@ -166,7 +207,38 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
     triggerHaptic('light');
     openUrl(url);
   }, [url]);
-  const grabbed = useCallback(() => triggerHaptic('selection'), []);
+  // The held drop rides above its neighbours (siblings paint in order otherwise). Set once per
+  // grab and once per release, never per frame.
+  const [lifted, setLifted] = React.useState(false);
+  const grabbed = useCallback(() => {
+    triggerHaptic('selection');
+    setLifted(true);
+  }, []);
+  const released = useCallback(() => setLifted(false), []);
+  const popped = useCallback(() => triggerHaptic('light'), []);
+
+  // Burst, then pop back together with a hop. Runs when another drop is pushed into this one.
+  useAnimatedReaction(
+    () => pops.value[index],
+    (cur, prev) => {
+      if (prev === null || prev === undefined || cur === prev) return;
+      burst.value = 0;
+      burst.value = withTiming(1, { duration: 760, easing: Easing.out(Easing.quad) });
+      pop.value = withSequence(
+        withTiming(1.25, { duration: 70, easing: Easing.out(Easing.quad) }),
+        withTiming(0, { duration: 90, easing: Easing.in(Easing.quad) }),
+        withDelay(560, withSpring(1, { damping: 6.5, stiffness: 190, mass: 0.7 })),
+      );
+      hop.value = withSequence(
+        withTiming(0, { duration: 160 }),
+        withDelay(560, withSequence(
+          withTiming(-16, { duration: 170, easing: Easing.out(Easing.quad) }),
+          withSpring(0, { damping: 9, stiffness: 220 }),
+        )),
+      );
+      runOnJS(popped)();
+    },
+  );
 
   const gesture = useMemo(() => {
     // Both gestures BEGIN on touch-down; the pan only STARTS once the finger has moved. So the
@@ -184,6 +256,28 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
       .onChange((e) => {
         dx.value += e.changeX;
         dy.value += e.changeY;
+        // Pushed into another drop: that one bursts (at most once per 1.3 s each).
+        const mx = cx + dx.value;
+        const my = cy + dy.value;
+        for (let j = 0; j < centers.length; j++) {
+          if (j === index) continue;
+          const o = centers[j];
+          const ddx = mx - o[0];
+          const ddy = my - o[1];
+          const reach = (R + o[2]) * 0.78;
+          if (ddx * ddx + ddy * ddy < reach * reach) {
+            const now = Date.now();
+            const lp = lastPop.value;
+            if (now - (lp[j] || 0) > 1300) {
+              const nl = lp.slice();
+              nl[j] = now;
+              lastPop.value = nl;
+              const np = pops.value.slice();
+              np[j] = (np[j] || 0) + 1;
+              pops.value = np;
+            }
+          }
+        }
       })
       .onEnd((e) => {
         if (Math.abs(e.translationX) < 6 && Math.abs(e.translationY) < 6) runOnJS(open)();
@@ -193,6 +287,7 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
         dx.value = withSpring(0, { velocity: e.velocityX, damping: 7, stiffness: 120, mass: 0.9 });
         dy.value = withSpring(0, { velocity: e.velocityY, damping: 7, stiffness: 120, mass: 0.9 });
         scale.value = withSpring(1, { damping: 6, stiffness: 180 });
+        runOnJS(released)();
       });
     const tap = Gesture.Tap()
       .maxDuration(400)
@@ -203,114 +298,122 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
         if (success) runOnJS(open)();
       });
     return Gesture.Race(pan, tap);
-  }, [dx, dy, scale, open, grabbed]);
+  }, [dx, dy, scale, open, grabbed, released, centers, index, cx, cy, R, pops, lastPop]);
 
-  const R = size / 2;
-  // The outline swings up to ~22% past R, so the canvas leaves room for it on every side.
-  const canvas = Math.round(size * 1.4);
-  const c = canvas / 2;
-  const glow = Math.round(size * 1.95);
-
-  const bodyStyle = useAnimatedStyle(() => {
+  const containerStyle = useAnimatedStyle(() => {
     const th = t.value * TAU;
-    const fx = Math.sin(th + phase) * 3;
-    const fy = Math.cos(th * 2 + phase) * 3.5;
+    const fx = Math.sin(th * 2 + phase) * 3;
+    const fy = Math.cos(th * 3 + phase) * 3.5;
     // Stretch along the pull while it is held away from home.
     const pull = Math.min(1, Math.sqrt(dx.value * dx.value + dy.value * dy.value) / 140);
+    const s = scale.value * pop.value;
     return {
       transform: [
         { translateX: dx.value + fx },
-        { translateY: dy.value + fy },
-        { scaleX: scale.value * (1 + pull * 0.08) },
-        { scaleY: scale.value * (1 - pull * 0.08) },
+        { translateY: dy.value + fy + hop.value },
+        { scaleX: s * (1 + pull * 0.08) },
+        { scaleY: s * (1 - pull * 0.08) },
       ],
     };
   });
-  const glowStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 + 0.07 * Math.sin(t.value * TAU * 2 + phase) }],
-  }));
-  const outlineProps = useAnimatedProps(() => {
-    const pull = Math.min(1, Math.sqrt(dx.value * dx.value + dy.value * dy.value) / 120);
-    return { d: blobPath(c, c, R, t.value, phase, 0.07 + pull * 0.07) };
+  // The outline: an irregular blob, turned and squashed. Squash is in the blob's own (rotating)
+  // frame, so the silhouette keeps changing instead of just spinning.
+  const bodyStyle = useAnimatedStyle(() => {
+    const th = t.value * TAU;
+    return {
+      transform: [
+        { rotate: `${dir * t.value * 360}deg` },
+        { scaleX: 1 + 0.05 * Math.sin(th * 4 + phase) },
+        { scaleY: 1 + 0.05 * Math.sin(th * 4 + phase + 2.1) },
+      ],
+    };
   });
-  const swirlProps = useAnimatedProps(() => ({
-    d: blobPath(c + R * 0.1, c + R * 0.14, R * 0.56, t.value, phase + 2.4, 0.17),
-  }));
+  // The lighter liquid inside orbits the other way, off-centre.
+  const swirlStyle = useAnimatedStyle(() => {
+    const th = t.value * TAU;
+    return {
+      transform: [
+        { rotate: `${-dir * t.value * 720}deg` },
+        { translateX: R * 0.14 },
+        { scale: 1 + 0.08 * Math.sin(th * 3 + phase) },
+      ],
+    };
+  });
 
   const gel = brand.gel;
   const light = mix(gel, '#FFFFFF', 0.5);
   const deep = mix(gel, '#000000', 0.32);
-  const hx = c - R * 0.27;
-  const hy = c - R * 0.35;
+  const canvas = Math.round(size * 1.2);
+  const c = canvas / 2;
   const iconSize = Math.round(size * 0.38);
   const id = `${kind}${index}`;
+  // Drawn once. Only the views holding them move.
+  const outline = useMemo(() => blobPath(c, c, R, 1.3 + index * 2.1, 0.07), [c, R, index]);
+  const inner = useMemo(() => blobPath(c, c, R * 0.5, 4.2 + index * 1.7, 0.16), [c, R, index]);
+  const canvasBox = { position: 'absolute' as const, left: (size - canvas) / 2, top: (size - canvas) / 2, width: canvas, height: canvas };
 
   return (
-    <GestureDetector gesture={gesture}>
-      <Reanimated.View
-        accessible
-        accessibilityRole="link"
-        accessibilityLabel={brand.label || websiteLabel}
-        style={[{ position: 'absolute', left, top, width: size, height: size }, bodyStyle]}
-      >
-        {/* Soft glow: a radial fade drawn once; only its scale breathes. */}
+    <>
+      <GestureDetector gesture={gesture}>
         <Reanimated.View
-          pointerEvents="none"
-          style={[{ position: 'absolute', left: (size - glow) / 2, top: (size - glow) / 2, width: glow, height: glow }, glowStyle]}
+          accessible
+          accessibilityRole="link"
+          accessibilityLabel={brand.label || websiteLabel}
+          style={[{ position: 'absolute', left, top, width: size, height: size, zIndex: lifted ? 10 : 0 }, containerStyle]}
         >
-          <Svg width={glow} height={glow}>
-            <Defs>
-              <RadialGradient id={`g${id}`} cx="50%" cy="50%" r="50%">
-                <Stop offset="0.3" stopColor={gel} stopOpacity={0.5} />
-                <Stop offset="1" stopColor={gel} stopOpacity={0} />
-              </RadialGradient>
-            </Defs>
-            <Circle cx={glow / 2} cy={glow / 2} r={glow / 2} fill={`url(#g${id})`} />
-          </Svg>
+          <Reanimated.View pointerEvents="none" style={[canvasBox, bodyStyle]}>
+            <Svg width={canvas} height={canvas}>
+              <Defs>
+                {/* Gel shading: lit from the top left, deeper colour toward the far edge. */}
+                <RadialGradient id={`b${id}`} cx="36%" cy="30%" r="78%">
+                  <Stop offset="0" stopColor={light} />
+                  <Stop offset="0.55" stopColor={gel} />
+                  <Stop offset="1" stopColor={deep} />
+                </RadialGradient>
+              </Defs>
+              <Path d={outline} fill={`url(#b${id})`} fillOpacity={0.95} stroke="#FFFFFF" strokeOpacity={0.35} strokeWidth={1} />
+            </Svg>
+          </Reanimated.View>
+          <Reanimated.View pointerEvents="none" style={[canvasBox, swirlStyle]}>
+            <Svg width={canvas} height={canvas}>
+              <Path d={inner} fill="#FFFFFF" fillOpacity={0.16} />
+            </Svg>
+          </Reanimated.View>
+          {/* Specular highlight: does NOT turn with the blob, so the light stays put. */}
+          <View pointerEvents="none" style={canvasBox}>
+            <Svg width={canvas} height={canvas}>
+              <Defs>
+                <RadialGradient id={`h${id}`} cx="50%" cy="50%" r="50%">
+                  <Stop offset="0" stopColor="#FFFFFF" stopOpacity={0.9} />
+                  <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
+                </RadialGradient>
+              </Defs>
+              <Ellipse
+                cx={c - R * 0.27}
+                cy={c - R * 0.35}
+                rx={R * 0.3}
+                ry={R * 0.17}
+                fill={`url(#h${id})`}
+                transform={`rotate(-28 ${c - R * 0.27} ${c - R * 0.35})`}
+              />
+            </Svg>
+          </View>
+          <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center]}>
+            {brand.brand ? (
+              <FontAwesome5 name={brand.icon} size={iconSize} color="#FFFFFF" brand style={styles.iconShadow} />
+            ) : (
+              <Feather name={brand.icon as any} size={iconSize} color="#FFFFFF" style={styles.iconShadow} />
+            )}
+          </View>
         </Reanimated.View>
-        <View pointerEvents="none" style={{ position: 'absolute', left: (size - canvas) / 2, top: (size - canvas) / 2, width: canvas, height: canvas }}>
-          <Svg width={canvas} height={canvas}>
-            <Defs>
-              {/* Gel shading: lit from the top left, deeper colour toward the far edge. */}
-              <RadialGradient id={`b${id}`} cx="36%" cy="30%" r="78%">
-                <Stop offset="0" stopColor={light} />
-                <Stop offset="0.55" stopColor={gel} />
-                <Stop offset="1" stopColor={deep} />
-              </RadialGradient>
-              <RadialGradient id={`h${id}`} cx="50%" cy="50%" r="50%">
-                <Stop offset="0" stopColor="#FFFFFF" stopOpacity={0.9} />
-                <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
-              </RadialGradient>
-            </Defs>
-            <AnimatedPath
-              animatedProps={outlineProps}
-              fill={`url(#b${id})`}
-              fillOpacity={0.95}
-              stroke="#FFFFFF"
-              strokeOpacity={0.35}
-              strokeWidth={1}
-            />
-            {/* Lighter liquid moving inside, on its own phase: the drop looks filled, not painted. */}
-            <AnimatedPath animatedProps={swirlProps} fill="#FFFFFF" fillOpacity={0.14} />
-            <Ellipse
-              cx={hx}
-              cy={hy}
-              rx={R * 0.3}
-              ry={R * 0.17}
-              fill={`url(#h${id})`}
-              transform={`rotate(-28 ${hx} ${hy})`}
-            />
-          </Svg>
-        </View>
-        <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center]}>
-          {brand.brand ? (
-            <FontAwesome5 name={brand.icon} size={iconSize} color="#FFFFFF" brand style={styles.iconShadow} />
-          ) : (
-            <Feather name={brand.icon as any} size={iconSize} color="#FFFFFF" style={styles.iconShadow} />
-          )}
-        </View>
-      </Reanimated.View>
-    </GestureDetector>
+      </GestureDetector>
+      {/* Droplets live outside the drop, so they keep flying while the drop itself is gone. */}
+      <View pointerEvents="none" style={{ position: 'absolute', left, top, width: size, height: size }}>
+        {Array.from({ length: DROPLETS }, (_, i) => (
+          <Droplet key={i} burst={burst} index={i} size={size} color={i % 3 === 0 ? light : gel} />
+        ))}
+      </View>
+    </>
   );
 });
 
@@ -335,6 +438,8 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
   const { width } = useWindowDimensions();
   const reduceMotion = useReducedMotion();
   const [settled, setSettled] = React.useState(false);
+  const pops = useSharedValue<number[]>([0, 0, 0, 0, 0]);
+  const lastPop = useSharedValue<number[]>([0, 0, 0, 0, 0]);
   useEffect(() => {
     const handle = InteractionManager.runAfterInteractions(() => setSettled(true));
     return () => handle.cancel();
@@ -343,26 +448,40 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
   const list = links.slice(0, 5);
   const areaW = Math.max(0, width - left - 12);
   const layout = LAYOUTS[list.length - 1];
+  const placed = useMemo(() => {
+    if (!layout) return [];
+    return list.map((_, i) => {
+      const size = SIZES[i];
+      const [fx, fy] = layout[i];
+      const cx = Math.min(areaW - size / 2, Math.max(size / 2, fx * areaW));
+      const cy = Math.min(height - size / 2, Math.max(size / 2, fy * height));
+      return { size, cx, cy };
+    });
+    // `list` is derived from `links`; its length and the area are what the layout depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout, list.length, areaW, height]);
+  const centers = useMemo(() => placed.map((p) => [p.cx, p.cy, p.size / 2]), [placed]);
+
   if (!layout || areaW < 80) return null;
   const running = active && settled && !reduceMotion;
 
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', top, left, width: areaW, height }}>
       {list.map((l, i) => {
-        const size = SIZES[i];
-        const [fx, fy] = layout[i];
-        const cx = Math.min(areaW - size / 2, Math.max(size / 2, fx * areaW));
-        const cy = Math.min(height - size / 2, Math.max(size / 2, fy * height));
+        const p = placed[i];
         return (
           <Bubble
             key={`${l.url}-${i}`}
             url={l.url}
-            size={size}
-            left={cx - size / 2}
-            top={cy - size / 2}
+            size={p.size}
+            left={p.cx - p.size / 2}
+            top={p.cy - p.size / 2}
             index={i}
             running={running}
             websiteLabel={t('edit_profile.link_website')}
+            centers={centers}
+            pops={pops}
+            lastPop={lastPop}
           />
         );
       })}

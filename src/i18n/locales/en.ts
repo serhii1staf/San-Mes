@@ -505,6 +505,11 @@ const en: Record<string, string> = {
   'chat.menu.edit': 'Edit',
   'chat.menu.delete': 'Delete',
   'chat.menu.report': 'Report',
+  'chat.menu.pin': 'Pin',
+  'chat.menu.unpin': 'Unpin',
+  'chat.menu.forward': 'Forward',
+  'chat.menu.edit_short': 'Edit',
+  'chat.menu.report_short': 'Report',
 
   // ─── AI chat ───────────────────────────────────────────────────────────
   'ai_chat.title': 'San AI',
