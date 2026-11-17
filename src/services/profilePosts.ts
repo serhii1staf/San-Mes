@@ -62,6 +62,26 @@ function isRepostContent(content: unknown): boolean {
   return typeof content === 'string' && content.startsWith('::repost::');
 }
 
+// Posts handed to the editor by the long-press menu. The profile page may be showing its disk copy
+// before the in-memory page exists, so the menu passes the post it was opened on explicitly.
+const editHandoff = new Map<string, ProfilePost>();
+
+export function rememberPostForEdit(post: ProfilePost): void {
+  editHandoff.clear();
+  editHandoff.set(post.id, post);
+}
+
+/** The post to edit: the one the menu handed over, else the in-memory profile pages. */
+export function findCachedPost(postId: string): ProfilePost | null {
+  const handed = editHandoff.get(postId);
+  if (handed) return handed;
+  for (const entry of postsMem.values()) {
+    const hit = entry.items.find((p) => p.id === postId);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /** Drop cached pages so the next read refetches. `undefined` clears every profile. */
 export function invalidateProfilePosts(profileId?: string | null): void {
   if (profileId) {

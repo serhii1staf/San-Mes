@@ -59,6 +59,7 @@ const en: Record<string, string> = {
   'profile.blocked_content': 'You blocked this user',
   'post.compose_prompt': "What's new?",
   'post.new_title': 'New post',
+  'post.edit_title': 'Edit post',
   'post.publish': 'Publish',
   'post.published': 'Published',
   'post.publish_failed': 'Could not publish',

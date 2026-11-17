@@ -62,6 +62,7 @@ const ru: Record<string, string> = {
   'profile.blocked_content': 'Вы заблокировали этого пользователя',
   'post.compose_prompt': 'Что нового?',
   'post.new_title': 'Новая публикация',
+  'post.edit_title': 'Редактирование',
   'post.publish': 'Опубликовать',
   'post.published': 'Опубликовано',
   'post.publish_failed': 'Не удалось опубликовать',

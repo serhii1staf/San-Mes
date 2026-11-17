@@ -6,7 +6,7 @@
  * camera: the camera permission was removed from the binary on purpose (see the compliance notes),
  * and a capture button would need it back.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   TextInput,
@@ -17,17 +17,17 @@ import {
 } from 'react-native';
 import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore } from '../../src/store';
-import { createPost, joinImageUrls, uploadPostImage } from '../../src/lib/supabase';
+import { createPost, joinImageUrls, parseImageUrls, updatePost, uploadPostImage } from '../../src/lib/supabase';
 // `moderation/index` explicitly: `services/moderation` resolves to the sibling moderation.ts (reports).
 import { validatePost } from '../../src/services/moderation/index';
-import { invalidateProfilePosts } from '../../src/services/profilePosts';
+import { findCachedPost, invalidateProfilePosts } from '../../src/services/profilePosts';
 import { showToast } from '../../src/store/toastStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
@@ -42,11 +42,24 @@ export default function NewPostScreen() {
   const insets = useSafeAreaInsets();
   const t = useT();
   const userId = useAuthStore((s) => s.user?.id);
-  const [text, setText] = useState('');
-  const [photos, setPhotos] = useState<string[]>([]);
+  // `?editId=` opens the same screen as an editor for one of your posts (long-press a post card →
+  // Изменить). The post is read from the profile's in-memory page, which is where the menu was.
+  const { editId } = useLocalSearchParams<{ editId?: string }>();
+  const editing = useState(() => (editId ? findCachedPost(String(editId)) : null))[0];
+  const [text, setText] = useState(() => editing?.content || '');
+  const [photos, setPhotos] = useState<string[]>(() => (editing ? parseImageUrls(editing.image_url) : []));
   const [busy, setBusy] = useState(false);
 
-  const canPublish = !busy && (text.trim().length > 0 || photos.length > 0);
+  // Asked to edit a post this screen cannot find: close rather than turn into a new-post screen,
+  // where pressing the button would publish a duplicate.
+  const lostEdit = !!editId && !editing;
+  useEffect(() => {
+    if (!lostEdit) return;
+    showToast(t('post.publish_failed'), 'alert-circle');
+    router.back();
+  }, [lostEdit, t]);
+
+  const canPublish = !busy && !lostEdit && (text.trim().length > 0 || photos.length > 0);
 
   const pickPhotos = useCallback(async () => {
     if (photos.length >= MAX_PHOTOS) return;
@@ -77,6 +90,11 @@ export default function NewPostScreen() {
     try {
       const urls: string[] = [];
       for (const uri of photos) {
+        // Photos already on the server (an edited post's own) are kept as they are.
+        if (/^https?:\/\//i.test(uri)) {
+          urls.push(uri);
+          continue;
+        }
         const { url, error } = await uploadPostImage(uri);
         if (!url) {
           showToast(error ? `${t('post.upload_failed')}: ${error}` : t('post.upload_failed'), 'alert-circle');
@@ -84,6 +102,18 @@ export default function NewPostScreen() {
           return;
         }
         urls.push(url);
+      }
+      if (editing) {
+        const { error } = await updatePost(editing.id, body, urls.length > 0 ? joinImageUrls(urls) : null);
+        if (error) {
+          showToast(error, 'alert-circle');
+          setBusy(false);
+          return;
+        }
+        invalidateProfilePosts(userId);
+        showToast(t('toast.saved'), 'check');
+        router.back();
+        return;
       }
       const { post, error } = await createPost(userId, body, urls.length > 0 ? joinImageUrls(urls) : undefined);
       if (error || !post) {
@@ -98,7 +128,7 @@ export default function NewPostScreen() {
       showToast(e?.message || t('post.publish_failed'), 'alert-circle');
       setBusy(false);
     }
-  }, [canPublish, userId, text, photos, t]);
+  }, [canPublish, userId, text, photos, t, editing]);
 
   // ── THE PHOTO BUTTON WAS UNDER THE KEYBOARD ─────────────────────────────────
   // Reported on iPhone: the field autofocuses, the keyboard comes up, and the toolbar with «Фото»
@@ -114,7 +144,7 @@ export default function NewPostScreen() {
         <Pressable onPress={() => router.back()} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('common.cancel')} style={styles.close}>
           <Feather name="x" size={24} color={theme.colors.text.secondary} />
         </Pressable>
-        <Text variant="body" weight="bold" numberOfLines={1} style={styles.title}>{t('post.new_title')}</Text>
+        <Text variant="body" weight="bold" numberOfLines={1} style={styles.title}>{editing ? t('post.edit_title') : t('post.new_title')}</Text>
         <View>
           <Pressable
             onPress={publish}
@@ -126,7 +156,7 @@ export default function NewPostScreen() {
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
               <Text variant="caption" weight="bold" color={canPublish ? '#FFFFFF' : theme.colors.text.tertiary} style={{ fontSize: 14 }}>
-                {t('post.publish')}
+                {editing ? t('common.save') : t('post.publish')}
               </Text>
             )}
           </Pressable>

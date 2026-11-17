@@ -2,8 +2,8 @@
  * Long-press menu for a post card on a profile, in the same layout as the chat and comment menus.
  *
  * It replaces the bare "Delete?" alert the cards had after the feed was removed, and brings back
- * what the old post menu offered:
- *   own post:    Copy · Share · Delete, then Copy link
+ * what the old post menu offered, plus editing:
+ *   own post:    Copy · Edit · Delete, then Share and Copy link
  *   someone's:   Copy · Share · Report, then Copy link and Block
  *
  * Report and Block must stay reachable on every post that is not ours (App Review 1.2). Report opens
@@ -14,6 +14,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Alert, Modal } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { router } from 'expo-router';
 import { ModalStatusBar } from '../ui/ModalStatusBar';
 import { ActionMenu, type ActionMenuAnchor, type ActionMenuHandle, type ActionMenuItem } from '../ui/ActionMenu';
 import { useT } from '../../i18n/store';
@@ -25,9 +26,9 @@ import { buildPostShareUrl } from '../../utils/appLinks';
 import { stripMarkers } from '../../utils/previewText';
 import { deletePost } from '../../lib/supabase';
 import { submitReport } from '../../services/moderation';
-import { invalidateProfilePosts, type ProfilePost } from '../../services/profilePosts';
+import { invalidateProfilePosts, rememberPostForEdit, type ProfilePost } from '../../services/profilePosts';
 
-type PostAction = 'copy' | 'share' | 'delete' | 'report' | 'link' | 'block';
+type PostAction = 'copy' | 'edit' | 'share' | 'delete' | 'report' | 'link' | 'block';
 
 const REPORT_CATS = ['spam', 'harassment', 'violence', 'misinformation', 'fraud', 'copyright', 'other'] as const;
 type ReportCat = (typeof REPORT_CATS)[number];
@@ -59,9 +60,14 @@ export function ProfilePostMenu({
     const top: ActionMenuItem<PostAction>[] = [];
     const items: ActionMenuItem<PostAction>[] = [];
     if (text) top.push({ id: 'copy', icon: { set: 'feather', name: 'copy' }, label: t('common.copy') });
-    top.push({ id: 'share', icon: { set: 'feather', name: 'send' }, label: t('common.share') });
-    if (isOwn) top.push({ id: 'delete', icon: { set: 'feather', name: 'trash-2' }, label: t('common.delete'), destructive: true });
-    else top.push({ id: 'report', icon: { set: 'feather', name: 'flag' }, label: t('chat.menu.report_short'), destructive: true });
+    if (isOwn) {
+      top.push({ id: 'edit', icon: { set: 'feather', name: 'edit-2' }, label: t('chat.menu.edit_short') });
+      top.push({ id: 'delete', icon: { set: 'feather', name: 'trash-2' }, label: t('common.delete'), destructive: true });
+      items.push({ id: 'share', icon: { set: 'feather', name: 'send' }, label: t('common.share') });
+    } else {
+      top.push({ id: 'share', icon: { set: 'feather', name: 'send' }, label: t('common.share') });
+      top.push({ id: 'report', icon: { set: 'feather', name: 'flag' }, label: t('chat.menu.report_short'), destructive: true });
+    }
     items.push({ id: 'link', icon: { set: 'feather', name: 'link' }, label: t('post_menu.copy_link') });
     if (!isOwn) items.push({ id: 'block', icon: { set: 'feather', name: 'slash' }, label: t('block.action'), destructive: true });
     return { top, items };
@@ -84,6 +90,11 @@ export function ProfilePostMenu({
         break;
       case 'share':
         setTimeout(() => openPostShareSheet(post.id, text), AFTER_MODAL_MS);
+        break;
+      case 'edit':
+        // The editor is the new-post screen with `editId`; it saves through PATCH /v1/posts/:id.
+        rememberPostForEdit(post);
+        setTimeout(() => router.push({ pathname: '/post/new', params: { editId: post.id } } as any), AFTER_MODAL_MS);
         break;
       case 'delete':
         Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [
