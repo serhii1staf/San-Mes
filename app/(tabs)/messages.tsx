@@ -1346,6 +1346,10 @@ const ConversationItem = React.memo(ConversationItemBase, (prev, next) =>
   prev.item.participantBadge === next.item.participantBadge
 );
 
+// What the store selectors return while a chat is open over this tab (see `chatStoreConversations`).
+const UNFOCUSED_LIST: never[] = [];
+const UNFOCUSED_MAP: Record<string, never> = Object.freeze({}) as Record<string, never>;
+
 export default function MessagesScreen() {
   useScreenMountMark('(tabs)/messages');
   const theme = useTheme();
@@ -1358,20 +1362,27 @@ export default function MessagesScreen() {
   // Date.now() + the function hop on every tab focus.
   // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
   // Measured from here it under-reported: every hook above it fell outside the window.
+  // True while THIS tab is the focused screen. False the moment a chat (or any
+  // screen) is pushed over the tab navigator — which is exactly the window in
+  // which the list derivations below are wasted work nobody can see.
+  const isFocused = useIsFocused();
   // Individual selector — subscribing to the whole store via destructuring
   // would re-render this screen on every unrelated chat-store change (e.g.,
   // typing into a chat input updates messages elsewhere in the store).
-  const chatStoreConversations = useChatStore((s) => s.conversations);
-  const entityConversations = useEntityStore((s) => s.conversations);
+  //
+  // ── AND NOTHING AT ALL WHILE A CHAT IS OPEN ON TOP ───────────────────────
+  // react-native-screens does not freeze the tab right under a pushed chat, so these selectors
+  // re-rendered this whole screen on every message sent or received inside the chat, in the same
+  // JS task as the chat's own update. The derived lists below were already frozen while unfocused,
+  // but the screen still re-ran every hook to find that out. Selecting a constant while unfocused
+  // means the store changes no longer reach this screen at all; on refocus it reads live values.
+  const chatStoreConversations = useChatStore((s) => (isFocused ? s.conversations : UNFOCUSED_LIST));
+  const entityConversations = useEntityStore((s) => (isFocused ? s.conversations : UNFOCUSED_LIST));
   const user = useAuthStore((s) => s.user);
   const [searchQuery, setSearchQuery] = useState('');
   // Native iOS-26 liquid glass for the category tab chips. iOS-only + opt-in.
   const glassActive = useLiquidGlassActive();
   const [activeTab, setActiveTab] = useState<ChatTab>('chats');
-  // True while THIS tab is the focused screen. False the moment a chat (or any
-  // screen) is pushed over the tab navigator — which is exactly the window in
-  // which the list derivations below are wasted work nobody can see.
-  const isFocused = useIsFocused();
 
   // ─── Selection ("Изм.") mode ──────────────────────────────────────────────
   //
@@ -1945,11 +1956,13 @@ export default function MessagesScreen() {
   //
   // Both sources are merged and the NEWER one wins, so the live transcript still
   // takes precedence the instant a message lands.
-  const persistedPreviews = useConversationPreviewStore(selectPreviews);
+  // Constant while unfocused, for the reason given at `chatStoreConversations`.
+  const persistedPreviews = useConversationPreviewStore((s) => (isFocused ? selectPreviews(s) : UNFOCUSED_MAP));
 
   // Keyed on the messages map + the persisted map, so it recomputes only when one of
   // them actually changes — not on every render of this screen.
-  const messagesByConv = useChatStore((s) => s.messages);
+  // Constant while unfocused: this map changes on every message in the open chat.
+  const messagesByConv = useChatStore((s) => (isFocused ? s.messages : UNFOCUSED_MAP));
   // Per-conversation unread counts. This is the data the row badge never had: the badge markup has
   // always been there, but rows were built with unreadCount: 0 hardcoded and the Worker has no
   // read-state concept at all, so item.unreadCount > 0 was tested against a constant zero.

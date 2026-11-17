@@ -9,10 +9,10 @@
  * posts), repost embeds (reposts are not shown on profiles) and FlashList's mapping helper (the
  * profile renders plain views).
  */
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useRef } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
-import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
+import type { ActionMenuAnchor } from '../ui/ActionMenu';
 import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
 import { CachedImage } from '../ui/CachedImage';
@@ -38,7 +38,8 @@ export interface ProfilePostCardProps {
   /** The viewer's post decoration token (`useProfileAppearanceStore.postEmoji`). */
   postEmoji?: string;
   onPress: (post: ProfilePost) => void;
-  onLongPress?: (post: ProfilePost) => void;
+  /** `anchor` is the card's window rect, for the menu to open next to it. */
+  onLongPress?: (post: ProfilePost, anchor: ActionMenuAnchor | null) => void;
 }
 
 const styles = StyleSheet.create({
@@ -60,9 +61,6 @@ const styles = StyleSheet.create({
   timeText: { fontSize: 10, flexShrink: 0 },
   bodyText: { fontSize: 12, marginBottom: 6 },
   linkWrap: { marginBottom: 6 },
-  metaRow: { flexDirection: 'row', gap: 12 },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  metaText: { fontSize: 11 },
 });
 
 // The four tiles of the 2x2 grid differ only by their gutters, a pure function of the index.
@@ -99,10 +97,36 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   );
   const tertiary = theme.colors.text.tertiary;
 
+  // The menu opens next to the card, so the long-press measures it first (one frame at most; if the
+  // measurement does not come back promptly the menu opens centred).
+  const cardRef = useRef<View>(null);
+  const longPress = onLongPress
+    ? () => {
+        const node = cardRef.current;
+        if (!node) {
+          onLongPress(post, null);
+          return;
+        }
+        let done = false;
+        const fallback = setTimeout(() => {
+          if (done) return;
+          done = true;
+          onLongPress(post, null);
+        }, 120);
+        node.measureInWindow((x, y, width, height) => {
+          if (done) return;
+          done = true;
+          clearTimeout(fallback);
+          onLongPress(post, { x, y, width, height });
+        });
+      }
+    : undefined;
+
   return (
     <Pressable
+      ref={cardRef}
       onPress={() => onPress(post)}
-      onLongPress={onLongPress ? () => onLongPress(post) : undefined}
+      onLongPress={longPress}
       delayLongPress={400}
       style={({ pressed }) => [styles.container, themedContainer, pressed ? { opacity: 0.85 } : null]}
     >
@@ -163,12 +187,7 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
             <LinkPreview url={link} static />
           </View>
         ) : null}
-        <View style={styles.metaRow}>
-          <View style={styles.metaItem}>
-            <Feather name="heart" size={12} color={tertiary} />
-            <Text variant="caption" color={tertiary} style={styles.metaText}>{post.likes_count || 0}</Text>
-          </View>
-        </View>
+        {/* No like / comment counters: asked to be removed. Comments are one tap away (open the post). */}
       </View>
     </Pressable>
   );
@@ -178,7 +197,6 @@ export const ProfilePostCard = memo(ProfilePostCardBase, (prev, next) =>
   prev.post.id === next.post.id &&
   prev.post.content === next.post.content &&
   prev.post.image_url === next.post.image_url &&
-  prev.post.likes_count === next.post.likes_count &&
   prev.post.created_at === next.post.created_at &&
   prev.postEmoji === next.postEmoji &&
   prev.authorName === next.authorName &&

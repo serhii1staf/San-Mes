@@ -53,8 +53,17 @@
 // cache or to apply the cap must never take the app down, and must never break
 // image loading. Disk cache, downloads, and the proxy are all untouched.
 
-import { AppState, type AppStateStatus, type NativeEventSubscription } from 'react-native';
+import { AppState, Platform, type AppStateStatus, type NativeEventSubscription } from 'react-native';
 import { Image } from 'expo-image';
+
+// ── THE TIMED TRIM IS ANDROID-ONLY ──────────────────────────────────────────
+//
+// expo-image 3.x has no cache-limit API, so the fallback below wiped the whole decoded-bitmap
+// cache every 2 minutes. On iOS that was a periodic stutter on every screen: avatars, banners,
+// photos and GIF frames all decoded and uploaded again at once, and recycled cells flashed. iOS's
+// image cache (SDWebImage) already evicts under memory pressure, and the memoryWarning and
+// background handlers here still run there, so the timer bought iOS nothing.
+const TIMED_TRIM = Platform.OS === 'android';
 
 // Coalesce bursts: the OS can fire `memoryWarning` several times in quick
 // succession (one per trim level). Clearing more than once per window is
@@ -212,7 +221,7 @@ export function installImageMemoryManager(): () => void {
           // the cache so the user's current screen doesn't re-decode.
           clearBackgroundTimer();
           // Resume the sustained-session trim for the active foreground session.
-          if (!capApplied && next === 'active') startSustainedTrimTimer();
+          if (!capApplied && TIMED_TRIM && next === 'active') startSustainedTrimTimer();
         }
       }),
     );
@@ -224,7 +233,7 @@ export function installImageMemoryManager(): () => void {
   //    shed the bitmap cache during a sustained foreground session so a marathon
   //    scroll can't grow native memory without bound. Long interval => the
   //    working set stays warm; a trim only costs a fast re-decode from disk.
-  if (!capApplied) startSustainedTrimTimer();
+  if (!capApplied && TIMED_TRIM) startSustainedTrimTimer();
 
   return () => {
     clearBackgroundTimer();

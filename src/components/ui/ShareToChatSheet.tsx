@@ -125,7 +125,10 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
       }
       // Caption first, link last: the unfurled card renders under the text, which is the order every
       // messenger uses and the order the chat's own link preview expects.
-      const body = caption?.trim() ? `${caption.trim()}\n${shareUrl}` : shareUrl;
+      // No URL means a forwarded message: the text alone, without a trailing newline.
+      const text = caption?.trim() || '';
+      const body = text && shareUrl ? `${text}\n${shareUrl}` : text || shareUrl;
+      if (!body) return;
       const { error } = await apiPost(`/v1/conversations/${encodeURIComponent(convId)}/messages`, {
         text: body,
       });
@@ -193,15 +196,18 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
             itself, and reaching it used to mean closing this and finding the menu item that opens
             this. One tap, and the sheet closes — copying then hunting for a second action is not a
             flow anyone runs. */}
-        <Pressable
-          onPress={copyLink}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel={t('post_menu.copy_link')}
-          style={[styles.copyBtn, { borderColor: theme.colors.border.light }]}
-        >
-          <Feather name="link" size={15} color={theme.colors.text.secondary} />
-        </Pressable>
+        {/* Nothing to copy when forwarding a message (no link). */}
+        {shareUrl ? (
+          <Pressable
+            onPress={copyLink}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={t('post_menu.copy_link')}
+            style={[styles.copyBtn, { borderColor: theme.colors.border.light }]}
+          >
+            <Feather name="link" size={15} color={theme.colors.text.secondary} />
+          </Pressable>
+        ) : null}
       </View>
 
       {people.length === 0 ? (

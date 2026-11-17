@@ -203,11 +203,17 @@ export function useMessageGestures<T extends { id: string }>({
           const touch = e.allTouches[0];
           if (!touch) return;
           const y = touch.absoluteY;
+          const x = touch.absoluteX;
           dragFingerY.value = y;
           const zones = actionZones.value;
           let found = '';
           for (let i = 0; i < zones.length; i++) {
-            if (y >= zones[i].top && y <= zones[i].bottom) { found = zones[i].id; break; }
+            const z = zones[i];
+            // The menu's top actions sit side by side, so their zones also carry left/right.
+            if (y >= z.top && y <= z.bottom && (z.left === undefined || z.right === undefined || (x >= z.left && x <= z.right))) {
+              found = z.id;
+              break;
+            }
           }
           if (found !== hoveredAction.value) {
             hoveredAction.value = found;

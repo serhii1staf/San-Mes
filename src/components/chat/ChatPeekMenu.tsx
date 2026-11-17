@@ -186,7 +186,9 @@ export function ChatPeekMenu<Id extends string>({
       setFading(true);
       // `finish` runs whether or not the timing completed: nothing else drives `c` once closing
       // has started, and a menu that never reports closed would leave an invisible layer on top.
-      c.value = withTiming(1, { duration: 170, easing: Easing.out(Easing.quad) }, () => {
+      // Long enough to read as the card going back where it came from (170 ms was reported as too
+      // abrupt), on the standard ease so it starts and stops softly.
+      c.value = withTiming(1, { duration: 280, easing: Easing.bezier(0.4, 0, 0.2, 1) }, () => {
         runOnJS(finish)();
       });
     },
@@ -228,21 +230,26 @@ export function ChatPeekMenu<Id extends string>({
   // The card grows out of the held row: it starts over the row and travels to its place.
   const fromDY = hasPreview ? clamp(anchor.y + anchor.height / 2 - (cardTop + cardH / 2), -280, 280) : 0;
 
-  const cardStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(p.value, [0, 0.35], [0, 1], Extrapolation.CLAMP) * (1 - c.value),
-    transform: [
-      { translateY: interpolate(p.value, [0, 1], [fromDY, 0]) },
-      { scale: interpolate(p.value, [0, 1], [0.84, 1]) * (1 - 0.04 * c.value) },
-    ],
-  }));
+  const cardStyle = useAnimatedStyle(() => {
+    const shut = c.value;
+    return {
+      // The fade trails the motion a little, so the card is seen heading back to the row.
+      opacity: interpolate(p.value, [0, 0.35], [0, 1], Extrapolation.CLAMP) * Math.pow(1 - shut, 1.4),
+      transform: [
+        { translateY: interpolate(p.value, [0, 1], [fromDY, 0]) + fromDY * 0.35 * shut },
+        { scale: interpolate(p.value, [0, 1], [0.84, 1]) * (1 - 0.1 * shut) },
+      ],
+    };
+  });
   // While OPEN, the glass menu never carries an alpha: a GlassView with opacity below 1 on itself
   // or an ancestor stops rendering its glass (expo/expo#41024). It grows out of its corner instead.
   // While closing it is flat (`fading`), so it can fade like everything else.
   const glassActive = useLiquidGlassActive();
   const menuGlass = glassActive && !fading;
   const menuStyle = useAnimatedStyle(() => ({
-    opacity: (menuGlass ? 1 : interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP)) * (1 - c.value),
-    transform: [{ scale: interpolate(p.value, [0, 1], [glassActive ? 0.2 : 0.55, 1]) * (1 - 0.06 * c.value) }],
+    // Glass: no alpha until `fading` has re-rendered the menu flat (see `close`).
+    opacity: menuGlass ? 1 : interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP) * (1 - c.value),
+    transform: [{ scale: interpolate(p.value, [0, 1], [glassActive ? 0.2 : 0.55, 1]) * (1 - 0.14 * c.value) }],
   }));
   const dimStyle = useAnimatedStyle(() => ({ opacity: clamp(p.value, 0, 1) * (1 - c.value) }));
   // The blur's INTENSITY is animated, not its opacity: a UIVisualEffectView with alpha below 1

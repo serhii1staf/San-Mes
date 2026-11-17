@@ -37,6 +37,7 @@ import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
 import { usePinnedMessagesStore, selectPinnedIds, resolvePinned } from '../../src/store/pinnedMessagesStore';
+import { openShareSheet } from '../../src/store/shareSheetStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useMessageGestures } from '../../src/hooks/useMessageGestures';
@@ -584,11 +585,15 @@ function OlderMessagesLoader({ visible, color }: { visible: boolean; color: stri
   const glyphs = useRef(OLDER_LOADER_SETS[olderLoaderSetCursor++ % OLDER_LOADER_SETS.length]).current;
   useEffect(() => {
     if (!visible) return;
+    // A few cycles, not forever. `visible` is true in almost every long chat (there is older
+    // history), and an endless loop kept the display link and the UI thread running at full rate
+    // for the whole life of the chat, for a row that is usually off screen.
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
         Animated.timing(pulse, { toValue: 0.25, duration: 600, useNativeDriver: true }),
       ]),
+      { iterations: 4 },
     );
     loop.start();
     return () => loop.stop();
@@ -3449,11 +3454,17 @@ export default function ChatScreen() {
       };
 
       void runFetch();
+      // While the realtime socket is connected every message already arrives live, so the poll
+      // only runs as a backstop: every fourth tick (2 min) instead of every 30 s. Each tick parses
+      // up to 200 rows and merges them over the whole transcript on the JS thread.
+      let tick = 0;
       timer = setInterval(() => {
         if (cancelled) return;
         // Foreground only — see the cost note above.
         if (AppState.currentState !== 'active') return;
         if (!useConnectivityStore.getState().isOnline) return;
+        tick += 1;
+        if (getRealtime()?.connection?.state === 'connected' && tick % 4 !== 0) return;
         void runFetch();
       }, HISTORY_POLL_MS);
     });
@@ -4854,6 +4865,18 @@ export default function ChatScreen() {
   const [translateText, setTranslateText] = useState<string>('');
 
   const handleMenuAction = useCallback((action: MessageAction, message: ChatMessage) => {
+    if (action === 'pin') {
+      // Read off the store rather than the hook below: `togglePinnedMessage` is declared after this
+      // callback, so listing it as a dependency here would read it before initialisation.
+      usePinnedMessagesStore.getState().toggle(conversationId, message.id);
+      triggerHaptic('light');
+      return;
+    }
+    if (action === 'forward') {
+      // The share-to-chat sheet sends the text as a message to the chosen person.
+      if (message.text) openShareSheet('', message.text);
+      return;
+    }
     if (action === 'copy') {
       Clipboard.setStringAsync(message.text);
       showToast(t('toast.copied'), 'check');
@@ -6433,11 +6456,16 @@ export default function ChatScreen() {
   // the stored `::img::` marker until render, so reading the field alone typed every server-sourced
   // photo as 'text' and FlashList recycled text cells into photo cells (and back) while scrolling —
   // mounting and unmounting image views on scroll frames in exactly the chats with the most photos.
+  // The type also says WHOSE bubble it is and whether a day chip sits above it. Own and peer bubbles
+  // differ in alignment and fill (a gradient for own ones), and a cell with a chip is taller; reusing
+  // one shape's cell for the other remounted those parts and re-measured the cell on the scroll frame.
   const chatGetItemType = useCallback((item: ChatMessage) => {
     const n = messageImageUrls(item).length;
-    if (n === 0) return 'text';
-    return n === 1 ? 'media1' : 'mediaN';
-  }, []);
+    const media = n === 0 ? 'text' : n === 1 ? 'media1' : 'mediaN';
+    const who = item.senderId === currentUserId ? 'o' : 'p';
+    const day = dayLabelsRef.current.has(item.id) ? 'd' : '';
+    return `${media}-${who}${day}`;
+  }, [currentUserId]);
   // NOTE: the old `onScrollToIndexFailed` retry ladder lived here. FlashList v2
   // has no such prop — it resolves unmeasured targets internally — so the
   // callback was dead code being handed to a list that never calls it. Kept the
@@ -7408,6 +7436,13 @@ export default function ChatScreen() {
             visible={!!actionMessage}
             message={actionMessage}
             isOwn={menuIsOwn}
+            // The bubble's own window rect, stashed by its long-press gesture just before it opened
+            // the menu, so the card opens right next to the message the finger is on.
+            anchor={(() => {
+              const r = actionMessage ? deleteRectsRef.current.get(actionMessage.id) : undefined;
+              return r ? { x: r.x, y: r.y, width: r.w, height: r.h } : null;
+            })()}
+            isPinned={actionMessage ? pinnedIds.includes(actionMessage.id) : false}
             bubbleColor={menuIsOwn ? withOpacity(bubbleColors[0], bubbleOpacity) : theme.colors.background.tertiary}
             bubbleTextColor={menuIsOwn ? bubbleTextColor : theme.colors.text.primary}
             bubbleRadius={chatSettings.bubbleRadius}
@@ -7483,28 +7518,24 @@ const DaySeparatorChip = React.memo(function DaySeparatorChip({
   glassActive: boolean;
   theme: any;
 }) {
+  // ── A FLAT CHIP, EVEN WITH GLASS ON ─────────────────────────────────────────
+  // This chip is rendered inside the list's cells, so a glass view here scrolled with the content:
+  // the costliest case for liquid glass (it re-samples its backdrop on every scroll frame, and a
+  // recycled cell allocates a fresh effect view on the frame it scrolls in). A translucent fill
+  // reads the same at chip size.
+  void glassActive;
   return (
     <View style={styles.dayChipRow} pointerEvents="none">
       <View
         style={[
           styles.dayChip,
-          glassActive
-            ? null
-            : {
-                backgroundColor: theme.isDark
-                  ? 'rgba(0,0,0,0.38)'
-                  : 'rgba(255,255,255,0.72)',
-              },
+          {
+            backgroundColor: theme.isDark
+              ? 'rgba(0,0,0,0.38)'
+              : 'rgba(255,255,255,0.72)',
+          },
         ]}
       >
-        {glassActive ? (
-          <GlassBg
-            borderRadius={12}
-            glassStyle="regular"
-            interactive={false}
-            colorScheme={theme.isDark ? 'dark' : 'light'}
-          />
-        ) : null}
         <Text
           variant="caption"
           weight="semibold"

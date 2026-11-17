@@ -26,7 +26,7 @@ import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/
 import { useShortAgo } from '../../src/utils/shortAgo';
 import Skeleton from '../../src/components/ui/Skeleton';
 import { useStaggeredReveal, useStaggeredGifReveal, setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
-import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
+import { CommentContextMenu, CommentAction, rememberCommentAnchor } from '../../src/components/ui/CommentContextMenu';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { AnimatedEmojiIcon } from '../../src/components/chat/AnimatedEmojiIcon';
@@ -285,6 +285,29 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
     gifTracker.setHasGif(item.id, !!gif);
     return () => gifTracker.setHasGif(item.id, false);
   }, [item.id, gif, gifTracker]);
+  // The menu opens next to the held comment, so measure the row first. One frame at most; if the
+  // measurement does not come back promptly the menu opens anyway, centred.
+  const rowRef = useRef<View>(null);
+  const openMenuHere = useCallback(() => {
+    const node = rowRef.current;
+    if (!node) {
+      onLongPress(item);
+      return;
+    }
+    let done = false;
+    const fallback = setTimeout(() => {
+      if (done) return;
+      done = true;
+      onLongPress(item);
+    }, 120);
+    node.measureInWindow((x, y, width, height) => {
+      if (done) return;
+      done = true;
+      clearTimeout(fallback);
+      rememberCommentAnchor(String(item.id), { x, y, width, height });
+      onLongPress(item);
+    });
+  }, [item, onLongPress]);
   if (isAuthorBlocked && authorId) {
     return (
       <BlockedContentPlaceholder
@@ -323,7 +346,7 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
     // Only the row's content translates. The reply icon sits behind it as an absolute sibling, so
     // it adds no layout and cannot change row height mid-gesture.
     <GestureDetector gesture={swipeGesture}>
-      <View style={{ marginBottom: 16 }} collapsable={false}>
+      <View ref={rowRef} style={{ marginBottom: 16 }} collapsable={false}>
         <Reanimated.View style={[commentSwipeStyles.replyIcon, replyIconAnimStyle]} pointerEvents="none">
           {/* A flat tinted circle, deliberately not a glass view — the same decision the chat's
               swipe icon documents: a UIVisualEffectView per row is one of the most expensive
@@ -333,8 +356,8 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
           </View>
         </Reanimated.View>
         <Reanimated.View style={rowAnimStyle}>
-    <Pressable onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ flexDirection: 'row' }}>
-      <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })} onLongPress={() => onLongPress(item)} delayLongPress={300}>
+    <Pressable onLongPress={openMenuHere} delayLongPress={300} style={{ flexDirection: 'row' }}>
+      <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })} onLongPress={openMenuHere} delayLongPress={300}>
         <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
       </Pressable>
       <View style={{ marginLeft: 10, flex: 1 }}>
@@ -364,7 +387,7 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
         ) : null}
         {gif ? null : <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>}
         {gif ? (
-          <Pressable onPress={() => onImagePress(gif, item)} onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
+          <Pressable onPress={() => onImagePress(gif, item)} onLongPress={openMenuHere} delayLongPress={300} style={{ marginTop: 6 }}>
             {gifReveal ? (
               <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" autoplay={gifActive} />
             ) : (
@@ -372,11 +395,11 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
             )}
           </Pressable>
         ) : link ? (
-          <Pressable onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
-            <LinkPreview url={link} onLongPress={() => onLongPress(item)} delayLongPress={300} />
+          <Pressable onLongPress={openMenuHere} delayLongPress={300} style={{ marginTop: 6 }}>
+            <LinkPreview url={link} onLongPress={openMenuHere} delayLongPress={300} />
           </Pressable>
         ) : null}
-        <Pressable onPress={() => onReply(item)} onLongPress={() => onLongPress(item)} delayLongPress={300} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
+        <Pressable onPress={() => onReply(item)} onLongPress={openMenuHere} delayLongPress={300} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('comments.reply')}</Text>
         </Pressable>
       </View>
