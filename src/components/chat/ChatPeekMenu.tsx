@@ -1,6 +1,6 @@
 /**
- * Telegram-style long-press menu for a chat-list row: the chat itself as a preview card, a compact
- * action list under it, and the list behind blurred.
+ * Telegram-style long-press menu for a chat-list row: the chat itself as a scrollable preview card,
+ * a compact action list under it, and the list behind blurred.
  *
  * ── WHY NOT THE NATIVE CONTEXT MENU ─────────────────────────────────────────
  *
@@ -10,15 +10,31 @@
  * The preview would be mounted INTO the row instead of into the menu. Fixing that is a native change,
  * so it could not ship over the air; this overlay can, and it looks the same on iOS and Android.
  *
+ * ── WHY NOT A `Modal` EITHER ─────────────────────────────────────────────────
+ *
+ * The first version was a `Modal` inside the held row, and on some chats the long-press then did
+ * nothing. See `chatPeekStore` for the mechanism. It is now a plain full-screen overlay drawn by
+ * `ChatPeekHost`, which is mounted once at the app root above the navigator.
+ *
  * ── COST ────────────────────────────────────────────────────────────────────
  *
- * Mounted only while open — the row renders it on long-press and unmounts it after the close
- * animation — so the list pays nothing for it. The transcript is read once on open from the store or
- * the 60-message `chat_tail:<id>` cache the chat screen already keeps for its own first paint.
- * Every animation runs on the UI thread.
+ * Mounted only while open. The transcript comes from the store or the `chat_tail:<id>` cache the chat
+ * screen keeps for its own first paint; a chat this device has never opened has neither, so it is
+ * fetched once (one page) from the server. Every animation runs on the UI thread.
  */
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Modal, Platform, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  BackHandler,
+  FlatList,
+  type GestureResponderEvent,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+  type ListRenderItem,
+} from 'react-native';
 import { BlurView as ExpoBlurView } from 'expo-blur';
 import Reanimated, {
   Easing,
@@ -41,9 +57,11 @@ import { CachedImage } from '../ui/CachedImage';
 import { useAuthStore, useChatStore } from '../../store';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useChatSettingsStore } from '../../store/chatSettingsStore';
+import { useChatPeekStore } from '../../store/chatPeekStore';
 import { kvGetJSONSync } from '../../services/kvStore';
 import { readableTextOn, withOpacity } from '../../constants/bubbleColors';
 import { stripMarkers } from '../../utils/previewText';
+import { firstImageUrlFromStoredText } from '../../utils/chatImageMarker';
 import { triggerHaptic } from '../../utils/haptics';
 import { useT } from '../../i18n/store';
 import type { ChatMessage } from '../../types';
@@ -91,7 +109,10 @@ const GAP = 10;
 const SIDE = 12;
 const CARD_RADIUS = 16;
 const MENU_RADIUS = 14;
-const MAX_PREVIEW_MESSAGES = 12;
+/** The chat keeps a 60-message tail for its own first paint; the preview can scroll all of it. */
+const MAX_PREVIEW_MESSAGES = 60;
+/** One page from the server for a chat with no local copy. */
+const REMOTE_PAGE = 40;
 const OPEN_SPRING = { damping: 22, stiffness: 260, mass: 0.9 };
 const IOS_RED = '#FF3B30';
 
@@ -99,6 +120,25 @@ const IOS_RED = '#FF3B30';
 function clamp(v: number, lo: number, hi: number): number {
   'worklet';
   return Math.max(lo, Math.min(hi, v));
+}
+
+/** Mounted once at the app root. Draws the open peek menu, if any. */
+export function ChatPeekHost() {
+  const request = useChatPeekStore((s) => s.request);
+  const clear = useChatPeekStore((s) => s.clear);
+  if (!request) return null;
+  const key = request.key;
+  return (
+    <ChatPeekMenu
+      key={key}
+      anchor={request.anchor}
+      conversation={request.conversation}
+      actions={request.actions}
+      onSelect={request.onSelect}
+      onOpen={request.onOpen}
+      onClosed={() => clear(key)}
+    />
+  );
 }
 
 export function ChatPeekMenu<Id extends string>({
@@ -135,13 +175,22 @@ export function ChatPeekMenu<Id extends string>({
       closing.current = true;
       after.current = fn ?? null;
       // `finish` runs whether or not the timing completed: nothing else drives `p` once closing
-      // has started, and a menu that never reports closed would leave an invisible modal on top.
+      // has started, and a menu that never reports closed would leave an invisible layer on top.
       p.value = withTiming(0, { duration: 190, easing: Easing.out(Easing.cubic) }, () => {
         runOnJS(finish)();
       });
     },
     [p, finish],
   );
+
+  // Android back closes the menu instead of leaving the screen underneath.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      close();
+      return true;
+    });
+    return () => sub.remove();
+  }, [close]);
 
   // ── Geometry ──────────────────────────────────────────────────────────────
   // Preview card on top, menu under it, the pair centred in the safe area. Without a preview the
@@ -154,7 +203,7 @@ export function ChatPeekMenu<Id extends string>({
   const bottom = H - Math.max(insets.bottom, 10) - 8;
   const avail = bottom - top;
   const cardW = Math.min(W - SIDE * 2, 520);
-  const cardH = hasPreview ? Math.max(160, Math.min(avail - menuH - GAP, Math.round(H * 0.58))) : 0;
+  const cardH = hasPreview ? Math.max(160, Math.min(avail - menuH - GAP, Math.round(H * 0.6))) : 0;
   const cardLeft = (W - cardW) / 2;
   let cardTop = 0;
   let menuTop: number;
@@ -190,7 +239,15 @@ export function ChatPeekMenu<Id extends string>({
   const menuBg = theme.isDark ? '#2B2B2F' : '#FFFFFF';
   const separator = theme.isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.09)';
 
-  const openFromPreview = () => {
+  // Only a TAP opens the chat. A drag that the transcript cannot turn into a scroll (a short chat
+  // has nothing to scroll) still ends inside the card, and Pressable would call that a press.
+  const pressStart = useRef<{ x: number; y: number } | null>(null);
+  const onCardPressIn = (e: GestureResponderEvent) => {
+    pressStart.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+  };
+  const openFromPreview = (e: GestureResponderEvent) => {
+    const s = pressStart.current;
+    if (s && Math.hypot(e.nativeEvent.pageX - s.x, e.nativeEvent.pageY - s.y) > 12) return;
     if (closing.current) return;
     closing.current = true;
     // Unmount first, then navigate: the chat slides in with nothing over it.
@@ -199,62 +256,63 @@ export function ChatPeekMenu<Id extends string>({
   };
 
   return (
-    <Modal visible transparent animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={() => close()}>
-      <View style={StyleSheet.absoluteFill}>
-        {isIOS ? (
-          <AnimatedBlur
-            animatedProps={blurProps}
-            intensity={0}
-            tint={theme.isDark ? 'dark' : 'light'}
-            style={StyleSheet.absoluteFill}
-          />
-        ) : null}
-        <Reanimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: dimColor }, dimStyle]} />
-        <Pressable
+    <View style={styles.overlay} accessibilityViewIsModal>
+      {isIOS ? (
+        <AnimatedBlur
+          animatedProps={blurProps}
+          intensity={0}
+          tint={theme.isDark ? 'dark' : 'light'}
           style={StyleSheet.absoluteFill}
-          onPress={() => close()}
-          accessibilityRole="button"
-          accessibilityLabel={t('common.close')}
         />
+      ) : null}
+      <Reanimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: dimColor }, dimStyle]} />
+      <Pressable
+        style={StyleSheet.absoluteFill}
+        onPress={() => close()}
+        accessibilityRole="button"
+        accessibilityLabel={t('common.close')}
+      />
 
-        {conversation ? (
-          <Reanimated.View
-            // Opaque fill on the shadow view lets iOS build the shadow from the rounded rect instead of
-            // rendering the card offscreen to find its outline.
-            style={[
-              styles.cardShadow,
-              { top: cardTop, left: cardLeft, width: cardW, height: cardH, backgroundColor: theme.colors.background.primary },
-              cardStyle,
-            ]}
-          >
-            <Pressable
-              onPress={openFromPreview}
-              style={[styles.card, { backgroundColor: theme.colors.background.primary }]}
-              accessibilityRole="button"
-              accessibilityLabel={conversation.name}
-            >
-              <PeekHeader conversation={conversation} />
-              <PeekTranscript conversationId={conversation.id} />
-            </Pressable>
-          </Reanimated.View>
-        ) : null}
-
+      {conversation ? (
         <Reanimated.View
-          style={[styles.menuShadow, { top: menuTop, left: menuLeft, width: menuW, backgroundColor: menuBg }, menuStyle]}
+          // Opaque fill on the shadow view lets iOS build the shadow from the rounded rect instead of
+          // rendering the card offscreen to find its outline.
+          style={[
+            styles.cardShadow,
+            { top: cardTop, left: cardLeft, width: cardW, height: cardH, backgroundColor: theme.colors.background.primary },
+            cardStyle,
+          ]}
         >
-          <View style={[styles.menu, { backgroundColor: menuBg }]}>
-            {actions.map((a, i) => (
-              <PeekMenuRow
-                key={a.id}
-                action={a}
-                separator={i > 0 ? separator : null}
-                onPress={() => close(() => onSelect(a.id))}
-              />
-            ))}
-          </View>
+          {/* A tap anywhere on the card opens the chat; a drag scrolls the transcript, because the
+              list takes the touch over as soon as it moves. */}
+          <Pressable
+            onPressIn={onCardPressIn}
+            onPress={openFromPreview}
+            style={[styles.card, { backgroundColor: theme.colors.background.primary }]}
+            accessibilityRole="button"
+            accessibilityLabel={conversation.name}
+          >
+            <PeekHeader conversation={conversation} />
+            <PeekTranscript conversationId={conversation.id} />
+          </Pressable>
         </Reanimated.View>
-      </View>
-    </Modal>
+      ) : null}
+
+      <Reanimated.View
+        style={[styles.menuShadow, { top: menuTop, left: menuLeft, width: menuW, backgroundColor: menuBg }, menuStyle]}
+      >
+        <View style={[styles.menu, { backgroundColor: menuBg }]}>
+          {actions.map((a, i) => (
+            <PeekMenuRow
+              key={a.id}
+              action={a}
+              separator={i > 0 ? separator : null}
+              onPress={() => close(() => onSelect(a.id))}
+            />
+          ))}
+        </View>
+      </Reanimated.View>
+    </View>
   );
 }
 
@@ -318,17 +376,33 @@ function PeekHeader({ conversation }: { conversation: ChatPeekConversation }) {
   );
 }
 
-function readTail(conversationId: string): ChatMessage[] {
+/** Oldest → newest, as the store and the tail cache keep them. Empty when this device has neither. */
+function readLocal(conversationId: string): ChatMessage[] {
   try {
     const mem = useChatStore.getState().messages[conversationId];
     const src = mem && mem.length > 0 ? mem : kvGetJSONSync<ChatMessage[]>(`chat_tail:${conversationId}`, []) || [];
-    return Array.isArray(src) ? src.slice(-MAX_PREVIEW_MESSAGES) : [];
+    return Array.isArray(src) ? src.filter(Boolean).slice(-MAX_PREVIEW_MESSAGES) : [];
   } catch {
     return [];
   }
 }
 
+/** Same row → message mapping as the chat screen's history fetch. */
+function fromServerRow(row: any, conversationId: string): ChatMessage | null {
+  if (!row || String(row.id ?? '').length === 0) return null;
+  return {
+    id: String(row.id),
+    conversationId,
+    senderId: String(row.sender_id ?? ''),
+    text: typeof row.text === 'string' ? row.text : '',
+    createdAt: typeof row.created_at === 'string' ? row.created_at : '',
+    isRead: true,
+    serverId: String(row.id),
+  };
+}
+
 function formatTime(iso: string): string {
+  if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -344,7 +418,36 @@ function PeekTranscript({ conversationId }: { conversationId: string }) {
   const t = useT();
   const myId = useAuthStore((s) => s.user?.id);
   const chatBubble = useSettingsStore((s) => s.chatBubble);
-  const messages = useMemo(() => readTail(conversationId), [conversationId]);
+  const local = useMemo(() => readLocal(conversationId), [conversationId]);
+  // `null` = not fetched (yet). Only fetched when there is nothing local to show.
+  const [remote, setRemote] = useState<ChatMessage[] | null>(null);
+  const needsFetch = local.length === 0;
+
+  useEffect(() => {
+    if (!needsFetch) return;
+    let alive = true;
+    (async () => {
+      try {
+        const { getMessages } = await import('../../lib/supabase');
+        const { messages } = await getMessages(conversationId, { limit: REMOTE_PAGE });
+        if (!alive) return;
+        const rows = (Array.isArray(messages) ? messages : [])
+          .map((r) => fromServerRow(r, conversationId))
+          .filter((m): m is ChatMessage => m !== null);
+        setRemote(rows);
+      } catch {
+        if (alive) setRemote([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [conversationId, needsFetch]);
+
+  const messages = needsFetch ? remote ?? [] : local;
+  // Newest first: the list is inverted, so it opens at the latest message and scrolls up into history.
+  const data = useMemo(() => messages.slice().reverse(), [messages]);
+
   const radius = useMemo(
     () => clamp(useChatSettingsStore.getState().getSettings(conversationId).bubbleRadius || 18, 8, 24),
     [conversationId],
@@ -352,8 +455,35 @@ function PeekTranscript({ conversationId }: { conversationId: string }) {
   const ownColors = chatBubble && chatBubble.colors.length > 0 ? chatBubble.colors : [theme.colors.accent.primary];
   const ownBg = withOpacity(ownColors[0], chatBubble?.opacity ?? 1);
   const ownText = chatBubble && chatBubble.colors.length > 0 ? readableTextOn(chatBubble.colors) : '#FFFFFF';
+  const peerBg = theme.colors.background.elevated;
+  const peerText = theme.colors.text.primary;
+  const photoLabel = t('chat.photo');
 
-  if (messages.length === 0) {
+  const renderItem = useCallback<ListRenderItem<ChatMessage>>(
+    ({ item }) => {
+      const own = !!myId && item.senderId === myId;
+      return (
+        <PeekBubble
+          message={item}
+          own={own}
+          bg={own ? ownBg : peerBg}
+          fg={own ? ownText : peerText}
+          radius={radius}
+          photoLabel={photoLabel}
+        />
+      );
+    },
+    [myId, ownBg, ownText, peerBg, peerText, radius, photoLabel],
+  );
+
+  if (needsFetch && remote === null) {
+    return (
+      <View style={styles.empty}>
+        <ActivityIndicator color={theme.colors.text.tertiary} />
+      </View>
+    );
+  }
+  if (data.length === 0) {
     return (
       <View style={styles.empty}>
         <Text variant="caption" color={theme.colors.text.tertiary}>
@@ -362,54 +492,81 @@ function PeekTranscript({ conversationId }: { conversationId: string }) {
       </View>
     );
   }
-
   return (
-    <View style={styles.transcript}>
-      {messages.map((m) => {
-        const own = !!myId && m.senderId === myId;
-        const raw = m.text || '';
-        const body = stripMarkers(raw);
-        const img = Array.isArray(m.imageUrls) ? m.imageUrls.find((u) => typeof u === 'string' && !!u) : undefined;
-        const isGif = raw.startsWith('::gif::') || (!!img && looksAnimated(img));
-        const fg = own ? ownText : theme.colors.text.primary;
-        const time = formatTime(m.createdAt);
-        return (
-          <View
-            key={m.id}
-            style={[
-              styles.bubble,
-              {
-                alignSelf: own ? 'flex-end' : 'flex-start',
-                backgroundColor: own ? ownBg : theme.colors.background.elevated,
-                borderRadius: radius,
-              },
-            ]}
-          >
-            {img && !isGif ? (
-              <CachedImage uri={img} style={[styles.photo, { borderRadius: Math.max(6, radius - 6) }]} resizeMode="cover" />
-            ) : null}
-            {body ? (
-              <Text variant="body" color={fg} numberOfLines={6} style={styles.bubbleText}>
-                {body}
-              </Text>
-            ) : !img || isGif ? (
-              <Text variant="body" color={fg} style={styles.bubbleText}>
-                {isGif ? 'GIF' : t('chat.photo')}
-              </Text>
-            ) : null}
-            {time ? (
-              <Text variant="caption" color={fg} style={styles.time}>
-                {time}
-              </Text>
-            ) : null}
-          </View>
-        );
-      })}
-    </View>
+    <FlatList
+      data={data}
+      inverted
+      keyExtractor={keyOf}
+      renderItem={renderItem}
+      style={styles.transcript}
+      contentContainerStyle={styles.transcriptContent}
+      ItemSeparatorComponent={BubbleGap}
+      showsVerticalScrollIndicator={false}
+      initialNumToRender={14}
+      maxToRenderPerBatch={10}
+      windowSize={7}
+      nestedScrollEnabled
+    />
   );
 }
 
+function keyOf(m: ChatMessage): string {
+  return m.id;
+}
+
+function BubbleGap() {
+  return <View style={{ height: 4 }} />;
+}
+
+const PeekBubble = memo(function PeekBubble({
+  message,
+  own,
+  bg,
+  fg,
+  radius,
+  photoLabel,
+}: {
+  message: ChatMessage;
+  own: boolean;
+  bg: string;
+  fg: string;
+  radius: number;
+  photoLabel: string;
+}) {
+  const raw = message.text || '';
+  const body = stripMarkers(raw);
+  const img =
+    (Array.isArray(message.imageUrls) ? message.imageUrls.find((u) => typeof u === 'string' && !!u) : undefined) ||
+    firstImageUrlFromStoredText(raw) ||
+    undefined;
+  const isGif = raw.startsWith('::gif::') || (!!img && looksAnimated(img));
+  const time = formatTime(message.createdAt);
+  return (
+    <View style={[styles.bubble, { alignSelf: own ? 'flex-end' : 'flex-start', backgroundColor: bg, borderRadius: radius }]}>
+      {img && !isGif ? (
+        <CachedImage uri={img} style={[styles.photo, { borderRadius: Math.max(6, radius - 6) }]} resizeMode="cover" />
+      ) : null}
+      {body ? (
+        <Text variant="body" color={fg} numberOfLines={8} style={styles.bubbleText}>
+          {body}
+        </Text>
+      ) : !img || isGif ? (
+        <Text variant="body" color={fg} style={styles.bubbleText}>
+          {isGif ? 'GIF' : photoLabel}
+        </Text>
+      ) : null}
+      {time ? (
+        <Text variant="caption" color={fg} style={styles.time}>
+          {time}
+        </Text>
+      ) : null}
+    </View>
+  );
+});
+
 const styles = StyleSheet.create({
+  // Above the navigator and the mini bars (zIndex 200-900 at the root), below the toast.
+  overlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000, elevation: 1000 },
   cardShadow: {
     position: 'absolute',
     borderRadius: CARD_RADIUS,
@@ -434,14 +591,9 @@ const styles = StyleSheet.create({
   headerSide: { width: 44 },
   headerTitle: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   headerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '100%' },
-  transcript: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
-    paddingHorizontal: 10,
-    paddingBottom: 10,
-    gap: 4,
-  },
+  transcript: { flex: 1 },
+  // Inverted list: the visual bottom is the content's start.
+  transcriptContent: { paddingHorizontal: 10, paddingTop: 10, paddingBottom: 10 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   bubble: {
     maxWidth: '78%',

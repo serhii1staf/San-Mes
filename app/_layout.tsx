@@ -41,6 +41,7 @@ import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
 import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
 import { installNotificationsBadgeForegroundRefresh } from '../src/store/notificationsBadgeStore';
 import { InAppAlertHost } from '../src/components/ui/InAppAlertHost';
+import { ChatPeekHost } from '../src/components/chat/ChatPeekMenu';
 import { RealtimeAccountBridge } from '../src/components/realtime/RealtimeAccountBridge';
 import { NavigationBarController } from '../src/components/system/NavigationBarController';
 
@@ -731,6 +732,9 @@ function RootLayout() {
             then reopening resumes the same page (no reload). Renders only when
             a mini-app is open/minimized; nothing otherwise. */}
         <MiniAppHost />
+        {/* The chat list's long-press peek menu. Drawn here, above the navigator, instead of as a
+            Modal inside the held row — see src/store/chatPeekStore.ts. Renders null while closed. */}
+        <ChatPeekHost />
         {/* App-wide realtime bridge — opens ONE Ably connection for the
             logged-in user, subscribes to the personal notifications
             channel so new conversations / messages show up the instant
