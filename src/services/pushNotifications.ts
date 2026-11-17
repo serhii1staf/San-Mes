@@ -64,9 +64,13 @@ function shouldPresent(notification: any): boolean {
       if (isChatMuted(convId)) return false;
       return !isActiveThread('chat', convId);
     }
-    // Comments, likes and follows belong to features that were removed (publishing, followers).
-    // An older Worker deploy may still send them; they are not shown while the app is open.
-    if (data.type === 'comment' || data.type === 'like' || data.type === 'follow') return false;
+    // Comments are back (posts live on profiles): suppressed only while that post's thread is open.
+    if (data.type === 'comment') {
+      return !isActiveThread('post', typeof data.post_id === 'string' ? data.post_id : null);
+    }
+    // Likes and follows belong to features that were removed. An older Worker deploy may still send
+    // them; they are not shown while the app is open.
+    if (data.type === 'like' || data.type === 'follow') return false;
     // Anything unrecognised: always present. An unknown type must fail OPEN — silently
     // swallowing a notification is a worse failure than showing one banner too many.
     return true;
@@ -203,10 +207,13 @@ export function configureNotificationHandler(): void {
             // An alert that cannot be queued simply does not appear.
           }
         }
+        // The in-app pill only knows how to present messages; a comment in the foreground keeps the
+        // OS banner, or it would arrive with nothing on screen at all.
+        const isComment = notification?.request?.content?.data?.type === 'comment';
         return {
           // Foreground: the pill is the presentation, so the OS banner is stood down. Background or
           // inactive: unchanged behaviour, the OS banner is the only thing that can be seen.
-          shouldShowBanner: present && !inForeground,
+          shouldShowBanner: present && (!inForeground || isComment),
           shouldPlaySound: present,
           // Kept true for a THREAD suppression: the banner is redundant because the user is looking
           // at the message, but the Notification Centre entry is the record that it arrived, and
@@ -397,9 +404,11 @@ export function routeForNotificationData(data: unknown): string | null {
       const id = str(d.conversation_id);
       return id ? `/chat/${encodeURIComponent(id)}` : null;
     }
-    case 'comment':
-      // Posts were removed; an old comment push just opens the app.
-      return null;
+    case 'comment': {
+      // The post's thread, where the new comment is.
+      const id = str(d.post_id);
+      return id ? `/comments/${encodeURIComponent(id)}` : null;
+    }
     case 'follow': {
       // The follower's profile is the useful destination — it is what the user wants to look
       // at, and it is where the follow-back action lives.

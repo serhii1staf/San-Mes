@@ -24,7 +24,7 @@
         "UIBackgroundModes": [
           "audio"
         ],
-        "NSPhotoLibraryUsageDescription": "San uses your photo library so you can send photos in chats and set your profile banner or a chat background.",
+        "NSPhotoLibraryUsageDescription": "San uses your photo library so you can attach photos to posts and chat messages and set your profile banner or a chat background.",
         "NSPhotoLibraryAddUsageDescription": "San saves a photo from a chat to your photo library when you tap Save."
       },
       "entitlements": {

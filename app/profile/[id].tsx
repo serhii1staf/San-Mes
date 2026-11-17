@@ -24,11 +24,10 @@ import {
   ProfileActionPill,
   ProfileFloatingButtons,
   ProfileHeaderCard,
-  ProfileMediaGrid,
   parseProfileLinks,
-  useProfileMedia,
   useProfileScrollAnim,
 } from '../../src/components/profile/ProfileLayout';
+import { ProfileContentTabs } from '../../src/components/profile/ProfileContentTabs';
 
 /**
  * Someone else's profile. Same design as before (banner card, avatar tile, name, links, bio,
@@ -112,7 +111,6 @@ export default function UserProfileScreen() {
   const linksRaw = profile?.links;
   const links = useMemo(() => parseProfileLinks(linksRaw), [linksRaw]);
   const isOwnProfile = !!currentUserId && currentUserId === profileId;
-  const media = useProfileMedia(currentUserId, isOwnProfile ? null : profileId);
 
   const back = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -127,10 +125,6 @@ export default function UserProfileScreen() {
     triggerHaptic('light');
     if (profileId) openProfileShareSheet(profileId, profile?.display_name || undefined);
   }, [profileId, profile?.display_name]);
-  const openMediaChat = useCallback((it: { conversationId: string }) => {
-    if (fromChat === '1' && router.canGoBack()) { router.back(); return; }
-    router.push({ pathname: '/chat/[id]', params: { id: it.conversationId } });
-  }, [fromChat]);
   const closeMenu = useCallback(() => setShowMenu(false), []);
   const menuTarget = useMemo(() => (profile ? {
     id: profile.id, username: profile.username, display_name: profile.display_name,
@@ -198,7 +192,7 @@ export default function UserProfileScreen() {
             )
           }
         />
-        <ProfileMediaGrid items={media} onPressItem={openMediaChat} />
+        <ProfileContentTabs profileId={profileId} isOwn={isOwnProfile} />
       </Animated.ScrollView>
 
       {!isOwnProfile ? <ProfileMenuModal visible={showMenu} profile={menuTarget} onClose={closeMenu} /> : null}

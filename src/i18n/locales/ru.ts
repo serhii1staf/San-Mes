@@ -55,6 +55,18 @@ const ru: Record<string, string> = {
 
   // ─── Profile ───────────────────────────────────────────────────────────
   'profile.posts': 'Посты',
+  'profile.publications': 'Публикации',
+  'profile.media_posts_empty': 'Здесь появятся фото из публикаций',
+  'profile.replies_empty': 'Пока нет ответов',
+  'profile.in_reply_to': 'В ответ на публикацию',
+  'profile.blocked_content': 'Вы заблокировали этого пользователя',
+  'post.compose_prompt': 'Что нового?',
+  'post.new_title': 'Новая публикация',
+  'post.publish': 'Опубликовать',
+  'post.published': 'Опубликовано',
+  'post.publish_failed': 'Не удалось опубликовать',
+  'post.upload_failed': 'Не удалось загрузить фото',
+  'post.add_photos': 'Добавить фото',
   'profile.replies': 'Ответы',
   'profile.media': 'Медиа',
   'profile.likes': 'Лайки',

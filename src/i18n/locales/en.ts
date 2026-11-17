@@ -52,6 +52,18 @@ const en: Record<string, string> = {
 
   // ─── Profile ───────────────────────────────────────────────────────────
   'profile.posts': 'Posts',
+  'profile.publications': 'Posts',
+  'profile.media_posts_empty': 'Photos from posts will appear here',
+  'profile.replies_empty': 'No replies yet',
+  'profile.in_reply_to': 'In reply to a post',
+  'profile.blocked_content': 'You blocked this user',
+  'post.compose_prompt': "What's new?",
+  'post.new_title': 'New post',
+  'post.publish': 'Publish',
+  'post.published': 'Published',
+  'post.publish_failed': 'Could not publish',
+  'post.upload_failed': 'Could not upload the photo',
+  'post.add_photos': 'Add photos',
   'profile.replies': 'Replies',
   'profile.media': 'Media',
   'profile.likes': 'Likes',

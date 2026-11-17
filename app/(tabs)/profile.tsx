@@ -22,12 +22,11 @@ import { getTabBarHeight } from '../../src/components/navigation/CustomTabBar';
 import {
   ProfileActionPill,
   ProfileHeaderCard,
-  ProfileMediaGrid,
   parseProfileLinks,
   profileUrl,
-  useProfileMedia,
   useProfileScrollAnim,
 } from '../../src/components/profile/ProfileLayout';
+import { ProfileContentTabs } from '../../src/components/profile/ProfileContentTabs';
 
 /**
  * The account's own profile. Same design as before (banner card, avatar tile, name, links, bio,
@@ -81,15 +80,10 @@ export default function ProfileScreen() {
   }, [headerSceneRaw, userId]);
   const linksRaw = (user as any)?.links;
   const links = useMemo(() => parseProfileLinks(linksRaw), [linksRaw]);
-  const media = useProfileMedia(userId, null);
-
   const share = useCallback(async () => {
     triggerHaptic('light');
     if (userId) { try { await Share.share({ message: profileUrl(userId) }); } catch {} }
   }, [userId]);
-  const openChat = useCallback((it: { conversationId: string }) => {
-    router.push({ pathname: '/chat/[id]', params: { id: it.conversationId } });
-  }, []);
 
   if (!user) {
     return (
@@ -142,7 +136,7 @@ export default function ProfileScreen() {
             </>
           }
         />
-        <ProfileMediaGrid items={media} onPressItem={openChat} />
+        <ProfileContentTabs profileId={user.id} isOwn />
       </Animated.ScrollView>
 
       <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />
