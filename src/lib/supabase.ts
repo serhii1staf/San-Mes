@@ -377,6 +377,14 @@ export async function createPost(_authorId: string, content: string, imageUrl?: 
   return { post: data, error: null };
 }
 
+/** Author-only edit of a post's text and photos (Worker `PATCH /v1/posts/:id`). */
+export async function updatePost(postId: string, content: string, imageUrl: string | null): Promise<{ error: string | null }> {
+  const { error } = await apiPatch<DBPost>(`/v1/posts/${encodeURIComponent(postId)}`, {
+    content,
+    image_url: imageUrl,
+  });
+  return { error };
+}
 export async function deletePost(postId: string, _authorId: string): Promise<{ error: string | null }> {
   const { error } = await apiDelete<{ deleted: boolean }>(`/v1/posts/${encodeURIComponent(postId)}`);
   return { error };
