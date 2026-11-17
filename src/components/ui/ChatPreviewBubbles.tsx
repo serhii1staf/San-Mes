@@ -96,8 +96,11 @@ export function ChatPreviewBubbles({
   const replyFontSize = Math.max(11, fontSize - 3);
   const timeFontSize = Math.max(9, fontSize - 5);
 
+  // The surface is the page colour, as in a real chat. It was `background.secondary`, which is pure
+  // white in the light theme, the same colour as the incoming bubble, so that bubble vanished.
+
   return (
-    <View style={[styles.previewWrap, { height, backgroundColor: theme.colors.background.secondary }]}>
+    <View style={[styles.previewWrap, { height, backgroundColor: bgPrimary }]}>
       {backgroundImage ? (
         <ChatBackgroundLayer uri={backgroundImage} proxyWidth={800} />
       ) : null}

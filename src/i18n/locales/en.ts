@@ -918,6 +918,13 @@ const en: Record<string, string> = {
 
   // ─── Appearance screen ─────────────────────────────────────────────────
   'appearance.title': 'Appearance',
+  'appearance.mode_dark': 'Dark',
+  'appearance.mode_light': 'Light',
+  'appearance.theme': 'Color theme',
+  'appearance.theme_hint': 'The theme sets the background and accent across the app. You can create your own in San AI.',
+  'appearance.chats': 'Chats',
+  'appearance.interface': 'Interface',
+  'appearance.delete_theme': 'Delete this theme?',
   'appearance.preview_message': 'Hi! How are you today? 🌟',
   'appearance.preview_user': 'Maria',
 

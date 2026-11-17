@@ -1,303 +1,377 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { View, Pressable, FlatList, Dimensions, NativeSyntheticEvent, NativeScrollEvent, Alert } from 'react-native';
+/**
+ * Settings → Внешний вид.
+ *
+ * Rebuilt around a live chat preview, the way Telegram's Appearance screen works: everything here
+ * applies the moment it is tapped and the preview at the top shows the result. There is no Save
+ * button — a carousel you had to save (and that discarded the choice on Back) was the old design.
+ *
+ * The theme thumbnails are tiny chats drawn in each theme's own colours. They are plain Views with
+ * no text and no icons, so a row of thirty costs almost nothing to mount — the old cards drew a fake
+ * feed post (with like/repost icons for features that no longer exist) and a five-tab bar with the
+ * removed Create button.
+ */
+import React, { useCallback, useMemo, useRef } from 'react';
+import { View, Pressable, ScrollView, FlatList, StyleSheet, Alert, type ListRenderItem } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
-import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
-import { useThemeStore, ACCENT_COLORS, AccentColor } from '../../src/store/themeStore';
-import { useAuthStore } from '../../src/store/authStore';
+import { ChatPreviewBubbles } from '../../src/components/ui/ChatPreviewBubbles';
+import { SettingsRow, SettingsSection } from '../../src/components/settings/SettingsList';
+import { useThemeStore, ACCENT_COLORS, type ThemeMode } from '../../src/store/themeStore';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import {
+  useChatSettingsStore,
+  GLOBAL_CHAT_SETTINGS_KEY,
+  DEFAULT_CHAT_SETTINGS,
+} from '../../src/store/chatSettingsStore';
+import { readableTextOn } from '../../src/constants/bubbleColors';
+import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
-import { emojiTextStyle } from '../../src/components/ui/emojiText';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH * 0.72;
-const CARD_GAP = 12;
+type ThemeConfig = (typeof ACCENT_COLORS)[number];
 
-function ThemePreviewCardBase({ accentConfig, isDark, isSelected, user, t, previewMessage, previewUser }: { accentConfig: typeof ACCENT_COLORS[0]; isDark: boolean; isSelected: boolean; user: any; t: (key: string, fallback?: string, vars?: Record<string, string | number>) => string; previewMessage: string; previewUser: string }) {
-  const bgPrimary = isDark ? accentConfig.darkBg : accentConfig.light;
-  const bgElevated = isDark ? accentConfig.darkElevated : '#FFFFFF';
-  const textPrimary = isDark ? '#FFFFFF' : '#1A1A1A';
-  const textSecondary = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
-  const borderColor = isDark ? accentConfig.darkBorder : accentConfig.color + '25';
-  const accent = accentConfig.color;
+const THUMB_W = 84;
+const THUMB_H = 112;
 
+/** A chat in miniature, in one theme's colours: two incoming lines and one outgoing bubble. */
+const ThemeThumb = React.memo(function ThemeThumb({
+  config,
+  isDark,
+  selected,
+  label,
+  onPress,
+  onLongPress,
+}: {
+  config: ThemeConfig;
+  isDark: boolean;
+  selected: boolean;
+  label: string;
+  onPress: (key: string) => void;
+  onLongPress?: (key: string) => void;
+}) {
+  const bg = isDark ? config.darkBg : config.light;
+  const incoming = isDark ? config.darkElevated : '#FFFFFF';
+  const ring = selected ? config.color : 'transparent';
   return (
-    <View style={{
-      width: CARD_WIDTH,
-      borderRadius: 24,
-      overflow: 'hidden',
-      backgroundColor: bgPrimary,
-      borderWidth: isSelected ? 2.5 : 1,
-      borderColor: isSelected ? accent : borderColor,
-      shadowColor: isSelected ? accent : '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: isSelected ? 0.3 : 0.1,
-      shadowRadius: 12,
-      elevation: isSelected ? 8 : 3,
-    }}>
-      {/* Mini header */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingTop: 14, paddingBottom: 6 }}>
-        <Text style={{ fontSize: 14, fontWeight: '700', color: textPrimary }}>San</Text>
-        <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: accent, alignItems: 'center', justifyContent: 'center' }}>
-          <Feather name="bell" size={8} color="#FFF" />
-        </View>
-      </View>
-
-      {/* Mini post card */}
-      <View style={{ marginHorizontal: 10, marginVertical: 6, backgroundColor: bgElevated, borderRadius: 16, padding: 10, borderWidth: 0.5, borderColor: borderColor }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: accent + '20', alignItems: 'center', justifyContent: 'center' }}>
-            {/* The app's own `Text` wrapper, which does not forward `allowFontScaling` — so the box here can
-                    still grow with an accessibility text scale. Acceptable: this avatar is not in a
-                    fixed-size grid cell, so a larger glyph has room to sit in. */}
-              <Text style={emojiTextStyle(12)}>{user?.emoji || '😊'}</Text>
-          </View>
-          <View style={{ marginLeft: 8, flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              <Text style={{ fontSize: 10, fontWeight: '600', color: textPrimary, flexShrink: 1 }} numberOfLines={1}>{user?.displayName || 'User'}</Text>
-              {user?.is_verified && <VerifiedBadge size={9} />}
+    <Pressable
+      onPress={() => onPress(config.key)}
+      onLongPress={onLongPress ? () => onLongPress(config.key) : undefined}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel={label}
+      style={styles.thumbWrap}
+    >
+      <View style={[styles.thumbRing, { borderColor: ring }]}>
+        <View style={[styles.thumb, { backgroundColor: bg }]}>
+          <View style={[styles.line, { width: 46, backgroundColor: incoming }]} />
+          <View style={[styles.line, { width: 32, backgroundColor: incoming, marginTop: 5 }]} />
+          <View style={[styles.line, styles.lineOut, { width: 40, backgroundColor: config.color }]} />
+          <View style={[styles.line, styles.lineOut, { width: 26, backgroundColor: config.color, marginTop: 5 }]} />
+          {selected ? (
+            <View style={[styles.check, { backgroundColor: config.color }]}>
+              <Feather name="check" size={11} color="#FFFFFF" />
             </View>
-            <Text style={{ fontSize: 7, color: textSecondary }}>2m ago</Text>
-          </View>
-        </View>
-        <Text style={{ fontSize: 9, color: textSecondary, marginBottom: 6 }} numberOfLines={2}>{previewMessage}</Text>
-        <View style={{ height: 55, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }} />
-        <View style={{ flexDirection: 'row', marginTop: 6, gap: 12 }}>
-          <Feather name="heart" size={10} color={accent} />
-          <Feather name="message-circle" size={10} color={textSecondary} />
-          <Feather name="repeat" size={10} color={textSecondary} />
+          ) : null}
         </View>
       </View>
+      <Text variant="caption" weight={selected ? 'semibold' : 'regular'} numberOfLines={1} align="center" style={styles.thumbLabel}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+});
 
-      {/* Mini second post preview */}
-      <View style={{ marginHorizontal: 10, marginBottom: 6, backgroundColor: bgElevated, borderRadius: 16, padding: 10, borderWidth: 0.5, borderColor: borderColor }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: accent + '20', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 12 }}>🌸</Text>
-          </View>
-          <View style={{ marginLeft: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '600', color: textPrimary }}>{previewUser}</Text>
-            <Text style={{ fontSize: 7, color: textSecondary }}>15m ago</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Mini tab bar */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: borderColor }}>
-        <Feather name="home" size={12} color={accent} />
-        <Feather name="search" size={12} color={textSecondary} />
-        <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: accent, alignItems: 'center', justifyContent: 'center' }}>
-          <Feather name="plus" size={9} color="#FFF" />
-        </View>
-        <Feather name="send" size={12} color={textSecondary} />
-        <Feather name="user" size={12} color={textSecondary} />
-      </View>
-
-      {/* Theme label */}
-      <View style={{ alignItems: 'center', paddingVertical: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
-        <Text style={{ fontSize: 11, fontWeight: '600', color: accent }}>{accentConfig.key.startsWith('ai-') ? accentConfig.label : t(`theme.color.${accentConfig.key}`, accentConfig.label)}</Text>
-      </View>
+function ModeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeMode) => void }) {
+  const theme = useTheme();
+  const t = useT();
+  const options: { key: ThemeMode; icon: React.ComponentProps<typeof Feather>['name']; label: string }[] = [
+    { key: 'dark', icon: 'moon', label: t('appearance.mode_dark') },
+    { key: 'light', icon: 'sun', label: t('appearance.mode_light') },
+  ];
+  return (
+    <View style={[styles.segment, { backgroundColor: theme.colors.background.elevated }]}>
+      {options.map((o) => {
+        const active = o.key === mode;
+        return (
+          <Pressable
+            key={o.key}
+            onPress={() => onChange(o.key)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            style={[styles.segmentItem, active ? { backgroundColor: theme.colors.accent.primary + '26' } : null]}
+          >
+            <Feather name={o.icon} size={16} color={active ? theme.colors.accent.primary : theme.colors.text.secondary} />
+            <Text variant="body" weight={active ? 'semibold' : 'regular'} color={active ? theme.colors.accent.primary : theme.colors.text.secondary}>
+              {o.label}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
 
-// Memoized so scrolling (which updates activeIndex on the parent) only re-renders
-// the two cards whose selected-state actually changed — not the whole carousel.
-const ThemePreviewCard = React.memo(ThemePreviewCardBase, (prev, next) =>
-  prev.isSelected === next.isSelected &&
-  prev.isDark === next.isDark &&
-  prev.accentConfig.key === next.accentConfig.key &&
-  prev.user === next.user &&
-  prev.previewMessage === next.previewMessage &&
-  prev.previewUser === next.previewUser
-);
-
 export default function AppearanceScreen() {
+  useScreenMountMark('settings/appearance');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const previewMessage = t('appearance.preview_message');
-  const previewUser = t('appearance.preview_user');
-  // Field-level selectors — destructuring re-rendered the whole screen on
-  // every unrelated theme-store mutation (font-size change, AI-theme
-  // additions). Each selector subscription is cheap; what's expensive is
-  // a single wide subscription firing on every store key change.
+
   const mode = useThemeStore((s) => s.mode);
   const accent = useThemeStore((s) => s.accent);
-  const setAccent = useThemeStore((s) => s.setAccent);
   const aiThemes = useThemeStore((s) => s.aiThemes);
-  const removeAiTheme = (key: string) => useThemeStore.setState((s) => ({ aiThemes: s.aiThemes.filter(t => t.key !== key) }));
-  const user = useAuthStore((s) => s.user);
+  const setMode = useThemeStore((s) => s.setMode);
+  const setAccent = useThemeStore((s) => s.setAccent);
   const isDark = mode === 'dark';
-  const allThemes = [...ACCENT_COLORS, ...aiThemes];
-  const scrollRef = useRef<FlatList<typeof allThemes[number]>>(null);
-  const [activeIndex, setActiveIndex] = useState(Math.max(0, allThemes.findIndex(c => c.key === accent)));
 
-  // ── GATE REMOVED ──────────────────────────────────────────────────────────
-  //
-  // A `cardsReady` state, flipped by `InteractionManager.runAfterInteractions`, used to hold the
-  // carousel back and show an ActivityIndicator in its place. Its note read: "Each ThemePreviewCard
-  // mounts ~10 Feather icons + several Views; for 6+ themes that's a 60-icon synchronous mount on the
-  // open-screen frame and was the dominant source of the `LONG [settings] long task @ settings ~130ms`
-  // markers... Showing a flat placeholder for the first ~300 ms feels like a regular slide-in
-  // completion; cards pop in on the next frame."
-  //
-  // Three things wrong with it. (1) It is not 60 icons on the open frame — the FlatList below carries
-  // `initialNumToRender={2}` and `getItemLayout`, so two cards get built and the rest are skipped
-  // entirely. The gate was defending against a cost the virtualization had already removed. (2) This is
-  // a pushed route on expo-router's native stack: the slide is a Core Animation transition on the
-  // render server, so JS work during it does not stutter the animation the placeholder was protecting.
-  // (3) `runAfterInteractions` does not mean "~300 ms" or "the next frame" — it resolves when the
-  // interaction-handle count reaches zero, so the placeholder's lifetime was set by whichever
-  // animations happened to be registered.
-  //
-  // Net effect of the gate: a spinner, for an unbounded interval, where two cheap cards belong. That is
-  // the "everything is loading" texture the user reports, not a defence against it. Full argument in
-  // src/components/feed/PostCard.tsx.
+  const chatBubble = useSettingsStore((s) => s.chatBubble);
+  const chatBubbleIn = useSettingsStore((s) => s.chatBubbleIn);
+  const globalChat = useChatSettingsStore((s) => s.settings[GLOBAL_CHAT_SETTINGS_KEY]);
+  const chat = useMemo(() => ({ ...DEFAULT_CHAT_SETTINGS, ...globalChat }), [globalChat]);
+  const previewFont = chat.fontFamily === 'mono' ? 'monospace' : chat.fontFamily === 'serif' ? 'serif' : undefined;
 
-  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const x = e.nativeEvent.contentOffset.x;
-    const index = Math.round(x / (CARD_WIDTH + CARD_GAP));
-    setActiveIndex(Math.max(0, Math.min(index, allThemes.length - 1)));
-  };
+  const themes = useMemo(() => [...ACCENT_COLORS, ...aiThemes], [aiThemes]);
+  const initialIndex = Math.max(0, themes.findIndex((c) => c.key === accent));
+  const listRef = useRef<FlatList<ThemeConfig>>(null);
 
-  const handleSave = () => {
-    const selected = allThemes[activeIndex];
-    if (selected) setAccent(selected.key);
-    router.back();
-  };
+  const pickTheme = useCallback(
+    (key: string) => {
+      triggerHaptic('selection');
+      setAccent(key);
+    },
+    [setAccent],
+  );
+  const deleteAiTheme = useCallback(
+    (key: string) => {
+      if (!key.startsWith('ai-')) return;
+      Alert.alert(t('appearance.delete_theme'), undefined, [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.delete'),
+          style: 'destructive',
+          onPress: () => {
+            useThemeStore.setState((s) => ({ aiThemes: s.aiThemes.filter((c) => c.key !== key) }));
+            if (useThemeStore.getState().accent === key) setAccent('sage');
+          },
+        },
+      ]);
+    },
+    [setAccent, t],
+  );
+  const changeMode = useCallback(
+    (m: ThemeMode) => {
+      if (m === mode) return;
+      triggerHaptic('selection');
+      setMode(m);
+    },
+    [mode, setMode],
+  );
 
-  // Auto-scroll to active theme on mount
-  useEffect(() => {
-    const idx = Math.max(0, allThemes.findIndex(c => c.key === accent));
-    if (idx > 0 && scrollRef.current) {
-      // Set initial position without animation, then no jarring scroll.
-      // Use scrollToIndex on FlatList — getItemLayout below makes this O(1).
-      setTimeout(() => {
-        try {
-          scrollRef.current?.scrollToIndex({ index: idx, animated: false });
-        } catch {}
-      }, 100);
-    }
-  }, []);
-
-  // Stable getItemLayout — required for scrollToIndex on a horizontal
-  // FlatList and lets the list skip layout measurement entirely (the
-  // measurement pass is what made the previous ScrollView mount all 10+
-  // theme cards synchronously, the dominant cause of the ~127 ms long task
-  // users saw the moment they tapped Appearance).
+  const renderThumb = useCallback<ListRenderItem<ThemeConfig>>(
+    ({ item }) => (
+      <ThemeThumb
+        config={item}
+        isDark={isDark}
+        selected={item.key === accent}
+        label={item.key.startsWith('ai-') ? item.label : t(`theme.color.${item.key}`, item.label)}
+        onPress={pickTheme}
+        onLongPress={item.key.startsWith('ai-') ? deleteAiTheme : undefined}
+      />
+    ),
+    // `t` changes identity every render; the labels follow the locale through the screen re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isDark, accent, pickTheme, deleteAiTheme],
+  );
   const getItemLayout = useCallback(
-    (_: any, index: number) => ({
-      length: CARD_WIDTH + CARD_GAP,
-      offset: (CARD_WIDTH + CARD_GAP) * index,
-      index,
-    }),
+    (_: unknown, index: number) => ({ length: THUMB_W + 12, offset: (THUMB_W + 12) * index, index }),
     [],
   );
 
-  const renderTheme = useCallback(
-    ({ item, index }: { item: typeof allThemes[number]; index: number }) => (
-      <View style={{ marginRight: CARD_GAP }}>
-        <ThemePreviewCard
-          accentConfig={item}
-          isDark={isDark}
-          isSelected={index === activeIndex}
-          user={user}
-          t={t}
-          previewMessage={previewMessage}
-          previewUser={previewUser}
-        />
-      </View>
-    ),
-    [activeIndex, isDark, user, t, previewMessage, previewUser],
-  );
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
+  const outText = chatBubble && chatBubble.colors.length > 0 ? readableTextOn(chatBubble.colors) : undefined;
+  const inText = chatBubbleIn && chatBubbleIn.colors.length > 0 ? readableTextOn(chatBubbleIn.colors) : undefined;
+  const openChatModal = (pathname: string) => {
+    triggerHaptic('selection');
+    router.push({ pathname, params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any);
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      {/* Header */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 12 }}>
-        <Pressable onPress={() => router.back()}>
-          <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
-        </Pressable>
-        <Text variant="body" weight="bold">{t('appearance.title')}</Text>
-        <Pressable onPress={handleSave}>
-          <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>{t('common.save')}</Text>
-        </Pressable>
+      <View style={[styles.header, { height: headerGradientHeight }]} pointerEvents="box-none">
+        <LinearGradient
+          colors={topScrimColors(theme.isDark, theme.colors.background.primary)}
+          locations={SCRIM_LOCATIONS}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+        <View style={[styles.headerRow, { paddingTop: insets.top + 8 }]}>
+          <Pressable onPress={() => router.back()} hitSlop={12} style={styles.back} accessibilityRole="button" accessibilityLabel={t('common.back')}>
+            <Feather name="chevron-left" size={26} color={theme.colors.text.primary} />
+          </Pressable>
+          <Text variant="subheading" weight="bold" numberOfLines={1}>{t('appearance.title')}</Text>
+          <View style={styles.back} />
+        </View>
       </View>
 
-      {/* Cards carousel — virtualized FlatList so only ~3 of the 10+ theme
-          cards are mounted at once. Used to be a plain horizontal
-          ScrollView that mounted every card synchronously, which was the
-          dominant cause of the 100-150 ms long task the perf monitor was
-          flagging on every "Appearance" open. */}
-      <View style={{ flex: 1, justifyContent: 'center' }}>
-        <FlatList
-          ref={scrollRef}
-          data={allThemes}
-          keyExtractor={(c) => c.key}
-          horizontal
-          pagingEnabled={false}
-          snapToInterval={CARD_WIDTH + CARD_GAP}
-          decelerationRate="fast"
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{
-            // Mirrors the previous paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2
-            // so the first/last cards still center to the viewport.
-            paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2,
-            alignItems: 'center',
-          }}
-          onScroll={handleScroll}
-          scrollEventThrottle={16}
-          renderItem={renderTheme}
-          getItemLayout={getItemLayout}
-          // Tight virtualization: 2 cards initial, 1 per batch, 3-card
-          // window. Keeps the open-screen frame light while still leaving
-          // a card or two pre-rendered ahead of the user's scroll position.
-          // This — not the deleted defer gate — is what keeps the open frame cheap.
-          initialNumToRender={2}
-          maxToRenderPerBatch={1}
-          windowSize={3}
-          removeClippedSubviews
-          // The carousel almost always opens centered on the active card
-          // (see the scrollToIndex effect below), so initialScrollIndex
-          // skips an unnecessary scroll-then-snap on first render.
-          initialScrollIndex={Math.max(0, allThemes.findIndex(c => c.key === accent))}
-        />
+      <ScrollView
+        contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: insets.bottom + 40 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Live preview — the same component the chat look modals use, so it shows exactly what
+            a chat will look like with the current theme, bubble colours, corners and wallpaper. */}
+        <View style={[styles.preview, { borderColor: theme.colors.border.light }]}>
+          <ChatPreviewBubbles
+            height={268}
+            fontSize={chat.fontSize}
+            fontFamily={previewFont}
+            bubbleRadius={chat.bubbleRadius}
+            backgroundImage={chat.backgroundImage}
+            topPadding={14}
+            bubbleColors={chatBubble?.colors}
+            bubbleOpacity={chatBubble?.opacity}
+            bubbleTextColor={outText}
+            inColors={chatBubbleIn?.colors}
+            inOpacity={chatBubbleIn?.opacity}
+            inTextColor={inText}
+          />
+        </View>
 
-        {/* Dots indicator */}
-        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 20, gap: 6 }}>
-          {allThemes.map((c, index) => (
-            <View
-              key={c.key}
-              style={{
-                width: index === activeIndex ? 20 : 6,
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: index === activeIndex ? c.color : theme.colors.border.light,
+        <View style={{ paddingHorizontal: 16 }}>
+          <ModeSwitch mode={mode} onChange={changeMode} />
+        </View>
+
+        <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={styles.groupTitle}>
+          {t('appearance.theme').toUpperCase()}
+        </Text>
+        <FlatList
+          ref={listRef}
+          data={themes}
+          horizontal
+          keyExtractor={(c) => c.key}
+          renderItem={renderThumb}
+          getItemLayout={getItemLayout}
+          initialScrollIndex={initialIndex > 2 ? initialIndex - 1 : 0}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 12 }}
+          initialNumToRender={6}
+          windowSize={5}
+        />
+        <Text variant="caption" color={theme.colors.text.tertiary} style={styles.groupFooter}>
+          {t('appearance.theme_hint')}
+        </Text>
+
+        <View style={{ paddingHorizontal: 16, marginTop: 18 }}>
+          <SettingsSection title={t('appearance.chats')}>
+            <SettingsRow
+              icon="wallpaper"
+              iconTint="teal"
+              label={t('chat_settings.background')}
+              value={chat.backgroundImage ? undefined : t('chat_settings.bg_none')}
+              valueNode={chat.backgroundImage ? <Feather name="check-circle" size={16} color={theme.colors.accent.primary} /> : undefined}
+              onPress={() => openChatModal('/settings/chat-background')}
+            />
+            <SettingsRow
+              icon="format-color-fill"
+              iconTint="pink"
+              label={t('chat_settings.message_color')}
+              valueNode={
+                <View
+                  style={[
+                    styles.swatch,
+                    { backgroundColor: (chatBubble && chatBubble.colors[0]) || theme.colors.accent.primary, borderColor: theme.colors.border.light },
+                  ]}
+                />
+              }
+              onPress={() => {
+                triggerHaptic('selection');
+                router.push('/settings/chat-bubble-color' as any);
               }}
             />
-          ))}
-        </View>
+            <SettingsRow
+              icon="rounded-corner"
+              iconTint="indigo"
+              label={t('chat_settings.bubble_radius')}
+              value={String(chat.bubbleRadius)}
+              onPress={() => openChatModal('/settings/chat-bubble-radius')}
+            />
+            <SettingsRow
+              icon="format-size"
+              iconTint="orange"
+              label={t('chat_settings.font_size')}
+              value={`${chat.fontSize} pt`}
+              onPress={() => openChatModal('/settings/chat-text-size')}
+              isLast
+            />
+          </SettingsSection>
 
-        {/* Theme name + delete for AI themes */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, marginBottom: 24, gap: 8 }}>
-          <Text variant="body" weight="bold" align="center">
-            {(() => {
-              const cur = allThemes[activeIndex];
-              if (!cur) return '';
-              return cur.key.startsWith('ai-') ? cur.label : t(`theme.color.${cur.key}`, cur.label);
-            })()}
-          </Text>
-          {allThemes[activeIndex]?.key.startsWith('ai-') && (
-            <Pressable onPress={() => { const key = allThemes[activeIndex]?.key; if (key) { removeAiTheme(key); if (accent === key) setAccent('sage'); } }} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,59,48,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="trash-2" size={12} color="#FF3B30" />
-            </Pressable>
-          )}
+          <SettingsSection title={t('appearance.interface')}>
+            <SettingsRow
+              icon="text-fields"
+              iconTint="blue"
+              label={t('settings.fonts')}
+              onPress={() => {
+                triggerHaptic('selection');
+                router.push('/settings/fonts' as any);
+              }}
+              isLast
+            />
+          </SettingsSection>
         </View>
-      </View>
+      </ScrollView>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingBottom: 8 },
+  back: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  preview: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 24,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  segment: { flexDirection: 'row', borderRadius: 18, padding: 4, gap: 4 },
+  segmentItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  groupTitle: { marginTop: 22, marginBottom: 10, paddingHorizontal: 32, letterSpacing: 0.4, fontSize: 12 },
+  groupFooter: { marginTop: 4, paddingHorizontal: 32, lineHeight: 17 },
+  thumbWrap: { width: THUMB_W + 12, alignItems: 'center' },
+  thumbRing: { borderRadius: 22, borderWidth: 2.5, padding: 2 },
+  thumb: {
+    width: THUMB_W,
+    height: THUMB_H,
+    borderRadius: 18,
+    padding: 10,
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  line: { height: 13, borderRadius: 7 },
+  lineOut: { alignSelf: 'flex-end', marginTop: 10 },
+  check: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbLabel: { marginTop: 6, fontSize: 12, maxWidth: THUMB_W + 8 },
+  swatch: { width: 22, height: 22, borderRadius: 11, borderWidth: StyleSheet.hairlineWidth },
+});
