@@ -22,7 +22,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { BOTTOM_CHROME_SPRING } from '../../src/theme/motion';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
-import { ChatPeekMenu, type ChatPeekAction, type ChatPeekAnchor } from '../../src/components/chat/ChatPeekMenu';
+import type { ChatPeekAction } from '../../src/components/chat/ChatPeekMenu';
+import { openChatPeek } from '../../src/store/chatPeekStore';
 import { markConversationRead } from '../../src/services/readState';
 import { toPreviewText } from '../../src/utils/previewText';
 import { useChatUnread } from '../../src/store/chatUnreadStore';
@@ -521,12 +522,10 @@ function ConversationItemBase({
   // Long-press opens `ChatPeekMenu`: the chat as a preview card plus a compact action list, over a
   // blurred list. It replaced the native `react-native-context-menu-view` wrapper, whose custom
   // preview cannot work under the New Architecture (see the note in ChatPeekMenu). Nothing is
-  // computed for the menu until a row is actually held — the action list is built on open, so an
-  // idle row carries no menu state at all.
+  // computed for the menu until a row is actually held — the action list is built on open, and the
+  // menu itself is drawn by `ChatPeekHost` at the app root, so a row carries no menu state at all.
   const muted = useChatSettingsStore((s) => (s.muted ?? []).includes(item.id));
   const rowRef = useRef<View>(null);
-  const [peek, setPeek] = useState<ChatPeekAnchor | null>(null);
-  const closePeek = useCallback(() => setPeek(null), []);
 
   type PeekId =
     | 'archive' | 'unarchive' | 'mark_read' | 'mark_unread' | 'pin' | 'unpin' | 'mute' | 'unmute'
@@ -631,14 +630,32 @@ function ConversationItemBase({
     void prefetchRecentChatMedia({ conversationIds: [item.id], budgetUris: 8 });
     // Selection mode owns long-press (ticking and dragging); no menu there.
     if (editMode) return;
+    let shown = false;
+    const show = (y: number, h: number) => {
+      if (shown) return;
+      shown = true;
+      openChatPeek<PeekId>({
+        anchor: { y: Number.isFinite(y) ? y : 0, height: Number.isFinite(h) ? h : 0 },
+        conversation: isSyntheticUserBlockId(item.id)
+          ? null
+          : { id: item.id, name: displayName, emoji: item.participantEmoji, verified: item.participantVerified },
+        actions: buildPeekActions(),
+        onSelect: onPeekSelect,
+        onOpen: openChat,
+      });
+    };
+    // The card grows out of the held row, so the menu wants the row's position on screen. The
+    // measurement is only for that animation: if it does not come back promptly the menu opens
+    // anyway, from the centre.
     const node = rowRef.current;
     if (!node) {
-      setPeek({ y: 0, height: 0 });
+      show(0, 0);
       return;
     }
-    // The card grows out of the held row, so the menu needs where the row is on screen.
+    const fallback = setTimeout(() => show(0, 0), 150);
     node.measureInWindow((_x, y, _w, h) => {
-      setPeek({ y: Number.isFinite(y) ? y : 0, height: Number.isFinite(h) ? h : 0 });
+      clearTimeout(fallback);
+      show(y, h);
     });
   };
 
@@ -897,21 +914,6 @@ function ConversationItemBase({
         color={theme.colors.text.tertiary}
       />
     </ConditionalContextMenuRow>
-    {/* Mounted only while held. A Modal, so where it sits in the tree does not affect layout. */}
-    {peek ? (
-      <ChatPeekMenu
-        anchor={peek}
-        conversation={
-          isSyntheticUserBlockId(item.id)
-            ? null
-            : { id: item.id, name: displayName, emoji: item.participantEmoji, verified: item.participantVerified }
-        }
-        actions={buildPeekActions()}
-        onSelect={onPeekSelect}
-        onOpen={openChat}
-        onClosed={closePeek}
-      />
-    ) : null}
     </Reanimated.View>
   );
 }
