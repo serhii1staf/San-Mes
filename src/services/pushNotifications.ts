@@ -278,8 +278,18 @@ export async function registerForPush(): Promise<void> {
     const token: string | undefined = resp?.data;
     if (!token) return;
 
-    // Avoid redundant network writes when the token is unchanged.
-    if (kvGetStringRawSync(TOKEN_SENT_KEY) === token) return;
+    // ── THE MARKER IS PER ACCOUNT ─────────────────────────────────────────────
+    //
+    // Reported: "pushes sometimes arrive, sometimes not". One deterministic cause: the marker used to
+    // hold only the token, and the Expo token belongs to the DEVICE, not the account. After switching
+    // to account B (or logging out and in) the stored token still matched, registration was skipped,
+    // and the server kept the token bound to account A — so B never got a push on this phone, while
+    // A's messages kept arriving on a phone that had signed out of A.
+    //
+    // The server already rebinds on conflict (`ON CONFLICT(token) DO UPDATE SET user_id`), so all the
+    // client has to do is ask again whenever the account differs from the one it registered for.
+    const marker = sentMarker(currentUserId(), token);
+    if (kvGetStringRawSync(TOKEN_SENT_KEY) === marker) return;
     // `installId` ties this token to the row the Devices screen lists, so revoking a device can also
     // cut its notifications — and that half of revocation is immediate, because the push fan-out reads
     // `push_tokens` directly. Without the link the revoke would have no way to know which token row
@@ -292,8 +302,30 @@ export async function registerForPush(): Promise<void> {
       // A missing install id costs the revoke-cuts-notifications link, not the registration.
     }
     const { error } = await apiPost('/v1/push/register', { token, platform: Platform.OS, installId });
-    if (!error) kvSetStringRaw(TOKEN_SENT_KEY, token);
+    if (!error) kvSetStringRaw(TOKEN_SENT_KEY, marker);
   } catch {}
+}
+
+/** `<userId>|<token>`. A value written by an older build holds only the token. */
+function sentMarker(userId: string | undefined, token: string): string {
+  return `${userId || ''}|${token}`;
+}
+
+/** The token part of the stored marker (old and new formats). */
+function tokenFromMarker(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const at = raw.lastIndexOf('|');
+  return at >= 0 ? raw.slice(at + 1) : raw;
+}
+
+function currentUserId(): string | undefined {
+  try {
+    // Lazy: the auth store imports services that import this module.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return (require('../store/authStore') as typeof import('../store/authStore')).useAuthStore.getState().user?.id;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -312,19 +344,27 @@ export async function registerForPush(): Promise<void> {
  */
 export function getRegisteredPushToken(): string {
   try {
-    return kvGetStringRawSync(TOKEN_SENT_KEY) || '';
+    return tokenFromMarker(kvGetStringRawSync(TOKEN_SENT_KEY));
   } catch {
     return '';
   }
 }
 
-/** Drop the token server-side on logout / account switch. */
-export async function unregisterPush(): Promise<void> {
+/**
+ * Drop the token server-side on logout. Must run while the session token is still valid.
+ *
+ * Bounded by `timeoutMs` so a dead network can never hold up signing out: the marker is cleared
+ * either way, which is what makes the next sign-in register again.
+ */
+export async function unregisterPush(timeoutMs = 2500): Promise<void> {
   try {
-    const token = kvGetStringRawSync(TOKEN_SENT_KEY);
-    if (!token) return;
-    await apiPost('/v1/push/unregister', { token });
+    const token = tokenFromMarker(kvGetStringRawSync(TOKEN_SENT_KEY));
     kvSetStringRaw(TOKEN_SENT_KEY, '');
+    if (!token) return;
+    await Promise.race([
+      apiPost('/v1/push/unregister', { token }),
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
   } catch {}
 }
 
@@ -377,14 +417,32 @@ export function routeForNotificationData(data: unknown): string | null {
  * `navigate` is injected rather than importing the router here so this stays a plain service
  * (testable, and with no opinion about which navigation library is in use).
  */
+/**
+ * Identifier of the last response acted on. Module-level, so it survives the handler being
+ * reinstalled (the effect that installs it re-runs on every auth transition).
+ */
+let lastHandledResponseId: string | null = null;
+
 export function installNotificationTapHandler(navigate: (path: string) => void): () => void {
   const mods = getModules();
   if (!mods) return () => {};
   const { Notifications } = mods;
   let disposed = false;
 
+  // ── ONE TAP, ONE NAVIGATION ──────────────────────────────────────────────
+  //
+  // Reported: tapping a push sometimes "reloads" the app or flashes. Two causes lived here:
+  //   • the native side keeps the last response until it is cleared, and nothing cleared it — so
+  //     every reinstall of this handler (sign-out → sign-in, an auth refresh) re-read the old tap
+  //     and pushed that chat AGAIN;
+  //   • the warm listener and the cold-start read could both deliver the same response.
+  // Both are closed by remembering the identifier and clearing the stored response once handled.
   const go = (response: any) => {
-    if (disposed) return;
+    if (disposed || !response) return;
+    const id: string | undefined = response?.notification?.request?.identifier;
+    if (id && id === lastHandledResponseId) return;
+    if (id) lastHandledResponseId = id;
+    try { Notifications.clearLastNotificationResponse?.(); } catch {}
     try {
       const path = routeForNotificationData(response?.notification?.request?.content?.data);
       if (path) navigate(path);
@@ -396,20 +454,19 @@ export function installNotificationTapHandler(navigate: (path: string) => void):
     sub = Notifications.addNotificationResponseReceivedListener(go);
   } catch {}
 
-  // COLD START. The tap that launched the app happened before any listener existed, so ask for
-  // it explicitly. Guarded against double-handling: if the warm listener also delivers this
-  // same response, `handledColdStart` means we navigate once.
-  let handledColdStart = false;
+  // COLD START. The tap that launched the app happened before any listener existed, so read it.
+  // The caller installs this only once the navigator is mounted (after the splash), so there is no
+  // arbitrary wait any more: the old 400 ms timer raced the splash and either landed before the
+  // stack existed (dropped) or after the chat list had painted (list → chat slide-in).
   try {
-    Notifications.getLastNotificationResponseAsync?.()
-      .then((response: any) => {
-        if (disposed || handledColdStart || !response) return;
-        handledColdStart = true;
-        // One tick so the router has mounted its initial route — navigating into a stack that
-        // has not committed yet is dropped silently.
-        setTimeout(() => go(response), 400);
-      })
-      .catch(() => {});
+    const sync = Notifications.getLastNotificationResponse?.();
+    if (sync) {
+      requestAnimationFrame(() => go(sync));
+    } else {
+      Notifications.getLastNotificationResponseAsync?.()
+        .then((response: any) => { if (response) go(response); })
+        .catch(() => {});
+    }
   } catch {}
 
   return () => {

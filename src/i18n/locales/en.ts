@@ -417,6 +417,8 @@ const en: Record<string, string> = {
   'search.clear': 'Clear',
   'search.mini_apps': 'Mini apps',
   'search.empty': 'No results',
+  'search.hint_title': 'Find people and mini apps',
+  'search.hint_body': 'Type a name or @username. People you open recently will show up here.',
 
   // ─── Create post ───────────────────────────────────────────────────────
   'create.title.repost': 'Repost',

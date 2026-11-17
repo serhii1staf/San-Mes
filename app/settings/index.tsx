@@ -215,24 +215,10 @@ export default function SettingsScreen() {
   // effect can actually render. Hide it everywhere else — a toggle that does
   // nothing is worse than no toggle. Computed once (capability is static).
   const glassCapable = isNativeGlassCapable();
-  const [iconModalVisible, setIconModalVisible] = useState(false);
-  // App version + AppIconModal are deferred past the navigation transition.
-  // - `expo-alternate-app-icons` (imported inside AppIconModal) is a native
-  //   module touched ONLY on this screen, so a static import resolves on the
-  //   first push to /settings — landing on the same JS frame as the open
-  //   animation and producing `SLOW long task @ settings` (~150 ms).
-  // - `expo-constants` is also settings-only here and reading
-  //   `Constants.expoConfig?.version` first-time can warm a sizeable JSON.
-  // Lazy-require both after `runAfterInteractions` and gate the modal's
-  // mount on the resolved component. The "App icon" row stays tappable —
-  // the modal becomes visible once the component is loaded (effectively
-  // one frame later on weak devices, instant on warm devices).
+  // App version is read past the navigation transition: `expo-constants` is settings-only here and
+  // reading `Constants.expoConfig?.version` the first time can warm a sizeable JSON.
   const [appVersion, setAppVersion] = useState('1.0.0');
-  // Module-scope would be nicer, but this file's imports are already ordered around the lazy requires
-  // below; a const here is evaluated once per mount and `Platform.OS` is a static string.
-  const IS_IOS = Platform.OS === 'ios';
   const IS_ANDROID = Platform.OS === 'android';
-  const [AppIconModalLazy, setAppIconModalLazy] = useState<null | React.ComponentType<{ visible: boolean; onClose: () => void }>>(null);
   useEffect(() => {
     const handle = InteractionManager.runAfterInteractions(() => {
       try {
@@ -240,21 +226,6 @@ export default function SettingsScreen() {
         const ExpoConstants = require('expo-constants').default;
         setAppVersion(ExpoConstants?.expoConfig?.version || '1.0.0');
       } catch {}
-      // Skipped entirely on Android: the row that opens this modal is iOS-only now (see the note at
-      // the rows), and `AppIconModal` pulls in `expo-alternate-app-icons`, an iOS-only native module.
-      // Requiring it on Android resolved a module that can never do anything and mounted a component
-      // nothing could reach.
-      // Read `Platform.OS` directly rather than closing over `IS_IOS`, so the effect's empty dep list
-      // stays honest instead of depending on a value recomputed every render.
-      if (Platform.OS === 'ios') {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const mod = require('../../src/components/ui/AppIconModal');
-          // Pass the component via the function-form setter so React doesn't
-          // try to call it as a state updater.
-          setAppIconModalLazy(() => mod.AppIconModal);
-        } catch {}
-      }
     });
     return () => handle.cancel();
   }, []);
@@ -284,7 +255,10 @@ export default function SettingsScreen() {
       {
         text: t('settings.logout_action'),
         style: 'destructive',
-        onPress: () => {
+        onPress: async () => {
+          // Unbind this phone's push token first, while the session is still valid: otherwise the
+          // signed-out account keeps receiving message pushes here. Bounded, so it cannot stall.
+          try { await (await import('../../src/services/pushNotifications')).unregisterPush(); } catch {}
           // Flush this account's in-memory data and re-scope cache to anon so the
           // next account never sees the previous one's feed/chats/profile.
           try { require('../../src/services/accountSwitch').switchAccount(null); } catch {}
@@ -490,6 +464,7 @@ export default function SettingsScreen() {
             iconTint="teal"
             label={t('settings.language')}
             onPress={() => router.push('/settings/language' as any)}
+            isLast={!glassCapable && !IS_ANDROID}
           />
           {/* ── ONE iOS-ONLY ROW LEFT, AND THE WIDGET ROW IS GONE ─────────────────
               App icon is `expo-alternate-app-icons`, which is iOS-only — Android has no runtime
@@ -508,15 +483,8 @@ export default function SettingsScreen() {
           {/* Removed from this list in the messenger trim: "Pixel icons" (still reachable from the
               chat, where it picks the reply icon), "Материал платформы" (a design-comparison concept
               screen, not a setting) and "Превью мини-приложений". Their routes are untouched. */}
-          {IS_IOS ? (
-            <SettingsRow
-              icon="apps"
-              iconTint="pink"
-              label={t('settings.app_icon')}
-              onPress={() => setIconModalVisible(true)}
-              isLast={!glassCapable}
-            />
-          ) : null}
+          {/* The "App icon" picker is gone: the app has one icon now (the SAN wordmark), and the
+              alternate styles it offered belonged to the old brand. */}
           {glassCapable && (
             <SettingsRow
               icon="blur-on"
@@ -746,14 +714,6 @@ export default function SettingsScreen() {
           style={StyleSheet.absoluteFill}
         />
       </View>
-
-      {/* App icon picker — lazy-loaded because it imports expo-image-manipulator
-          (a native module) at import time. Mounting it before the navigation
-          transition completes was the source of the long task on this screen.
-          The component flips in one frame after `runAfterInteractions`. */}
-      {AppIconModalLazy ? (
-        <AppIconModalLazy visible={iconModalVisible} onClose={() => setIconModalVisible(false)} />
-      ) : null}
     </View>
   );
 }

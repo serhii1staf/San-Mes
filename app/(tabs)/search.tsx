@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Pressable, ViewStyle, FlatList, ActivityIndicator, Text as RNText, InteractionManager } from 'react-native';
-import Reanimated, { useSharedValue, useAnimatedStyle, useAnimatedScrollHandler } from 'react-native-reanimated';
+import { View, Pressable, ViewStyle, FlatList, ActivityIndicator, Text as RNText, InteractionManager, StyleSheet } from 'react-native';
+import Reanimated, { useSharedValue, useAnimatedStyle, useAnimatedScrollHandler, withTiming } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { CollapsingSearchField, SEARCH_ZONE_HEIGHT } from '../../src/components/ui/CollapsingSearchField';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -381,11 +383,13 @@ export default function SearchScreen() {
     )
   ), [handleSelect, openApp]);
 
+  // No `paddingTop` here any more: the floating header below owns the inset, exactly as on the chat
+  // list, so the two tabs share one top edge, one title row and one fade.
   const containerStyle = useMemo<ViewStyle>(() => ({
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-    paddingTop: insets.top,
-  }), [theme, insets.top]);
+  }), [theme]);
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   // (The top result used to carry previews of that person's latest posts. Posts were removed with
   // the publishing feature, and so was that extra request per settled query.)
@@ -469,9 +473,30 @@ export default function SearchScreen() {
   const searchLiftStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: -SEARCH_ZONE_HEIGHT * searchCollapse.value }],
   }));
+  // Clearing the query unmounts the results list, and with it the only scroll handler that ever
+  // lowers `searchCollapse` — so a field squashed by a scroll stayed squashed (invisible, with its
+  // clear button unreachable). Re-open it whenever the list goes away.
+  const hasQuery = query.trim().length > 0;
+  useEffect(() => {
+    if (!hasQuery) searchCollapse.value = withTiming(0, { duration: 180 });
+  }, [hasQuery, searchCollapse]);
 
   return (
     <View style={containerStyle}>
+      {/* Floating title row over the same top fade as the chat list. */}
+      <View style={[styles.header, { height: headerGradientHeight }]} pointerEvents="box-none">
+        <LinearGradient
+          colors={topScrimColors(theme.isDark, theme.colors.background.primary)}
+          locations={SCRIM_LOCATIONS}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+        <View style={[styles.headerRow, { paddingTop: insets.top + 8 }]} pointerEvents="none">
+          <Text variant="subheading" weight="bold" numberOfLines={1}>{t('search.title')}</Text>
+        </View>
+      </View>
+      <View style={{ height: headerContentHeight + 4 }} />
+
       {/* ── The SAME collapsing field the chat list uses ─────────────────────────
           Literally the same component (src/components/ui/CollapsingSearchField.tsx), which is
           the only way "it should behave exactly like the one in the chat list" can be true and
@@ -534,6 +559,19 @@ export default function SearchScreen() {
         </View>
       )}
 
+      {/* Nothing typed and nothing recent: say what this screen is for instead of a blank page. */}
+      {!hasQuery && !showRecents && !isLoading ? (
+        <View style={styles.hint}>
+          <View style={[styles.hintIcon, { backgroundColor: theme.colors.accent.primary + '1F' }]}>
+            <MaterialIcons name="person-search" size={30} color={theme.colors.accent.primary} />
+          </View>
+          <Text variant="body" weight="semibold" align="center" style={{ marginTop: 14 }}>{t('search.hint_title')}</Text>
+          <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 6, lineHeight: 18 }}>
+            {t('search.hint_body')}
+          </Text>
+        </View>
+      ) : null}
+
       {/* Results */}
       {isLoading && !showRecents ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -569,3 +607,10 @@ export default function SearchScreen() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
+  headerRow: { alignItems: 'center', justifyContent: 'center', paddingBottom: 8, height: '100%' },
+  hint: { alignItems: 'center', paddingHorizontal: 40, paddingTop: 72 },
+  hintIcon: { width: 64, height: 64, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+});
