@@ -932,6 +932,13 @@ const ru: Record<string, string> = {
 
   // ─── Appearance screen ─────────────────────────────────────────────────
   'appearance.title': 'Внешний вид',
+  'appearance.mode_dark': 'Тёмная',
+  'appearance.mode_light': 'Светлая',
+  'appearance.theme': 'Цветовая тема',
+  'appearance.theme_hint': 'Тема меняет фон и акцент во всём приложении. Свою тему можно создать в San AI.',
+  'appearance.chats': 'Чаты',
+  'appearance.interface': 'Интерфейс',
+  'appearance.delete_theme': 'Удалить эту тему?',
   'appearance.preview_message': 'Привет! Как дела сегодня? 🌟',
   'appearance.preview_user': 'Мария',
 
