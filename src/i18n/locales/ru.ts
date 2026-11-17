@@ -417,6 +417,8 @@ const ru: Record<string, string> = {
   'search.clear': 'Очистить',
   'search.mini_apps': 'Мини-приложения',
   'search.empty': 'Никого не найдено',
+  'search.hint_title': 'Найдите людей и мини-приложения',
+  'search.hint_body': 'Введите имя или @username. Здесь появятся те, кого вы недавно открывали.',
 
   // ─── Create post ───────────────────────────────────────────────────────
   'create.title.repost': 'Репост',

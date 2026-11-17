@@ -54,6 +54,7 @@ import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
 import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { CachedImage } from '../ui/CachedImage';
+import { GlassBg, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { useAuthStore, useChatStore } from '../../store';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useChatSettingsStore } from '../../store/chatSettingsStore';
@@ -225,9 +226,12 @@ export function ChatPeekMenu<Id extends string>({
       { scale: interpolate(p.value, [0, 1], [0.84, 1]) },
     ],
   }));
+  // On liquid glass the menu must never carry an alpha: a GlassView with opacity below 1 on itself
+  // or an ancestor stops rendering its glass (expo/expo#41024). It grows out of its corner instead.
+  const glassActive = useLiquidGlassActive();
   const menuStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP),
-    transform: [{ scale: interpolate(p.value, [0, 1], [0.55, 1]) }],
+    opacity: glassActive ? 1 : interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP),
+    transform: [{ scale: interpolate(p.value, [0, 1], [glassActive ? 0.2 : 0.55, 1]) }],
   }));
   const dimStyle = useAnimatedStyle(() => ({ opacity: clamp(p.value, 0, 1) }));
   // The blur's INTENSITY is animated, not its opacity: a UIVisualEffectView with alpha below 1
@@ -236,7 +240,9 @@ export function ChatPeekMenu<Id extends string>({
 
   const isIOS = Platform.OS === 'ios';
   const dimColor = isIOS ? (theme.isDark ? 'rgba(0,0,0,0.28)' : 'rgba(0,0,0,0.12)') : 'rgba(0,0,0,0.55)';
-  const menuBg = theme.isDark ? '#2B2B2F' : '#FFFFFF';
+  // The app's own elevated surface, so the menu belongs to the active theme instead of being a
+  // neutral grey card; transparent on glass, which draws its own surface.
+  const menuBg = glassActive ? 'transparent' : theme.colors.background.elevated;
   const separator = theme.isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.09)';
 
   // Only a TAP opens the chat. A drag that the transcript cannot turn into a scroll (a short chat
@@ -299,9 +305,23 @@ export function ChatPeekMenu<Id extends string>({
       ) : null}
 
       <Reanimated.View
-        style={[styles.menuShadow, { top: menuTop, left: menuLeft, width: menuW, backgroundColor: menuBg }, menuStyle]}
+        style={[
+          styles.menuShadow,
+          { top: menuTop, left: menuLeft, width: menuW, backgroundColor: menuBg },
+          // The glass draws its own edge and depth; a drop shadow under it reads as a grey halo.
+          glassActive ? { shadowOpacity: 0, elevation: 0 } : null,
+          menuStyle,
+        ]}
       >
-        <View style={[styles.menu, { backgroundColor: menuBg }]}>
+        <View style={[styles.menu, { backgroundColor: menuBg }, glassActive ? { overflow: 'visible' } : null]}>
+          {glassActive ? (
+            <GlassBg
+              borderRadius={MENU_RADIUS}
+              glassStyle="regular"
+              interactive={false}
+              colorScheme={theme.isDark ? 'dark' : 'light'}
+            />
+          ) : null}
           {actions.map((a, i) => (
             <PeekMenuRow
               key={a.id}
@@ -353,8 +373,8 @@ function PeekMenuRow<Id extends string>({
 
 function PeekHeader({ conversation }: { conversation: ChatPeekConversation }) {
   const theme = useTheme();
-  const t = useT();
   const hairline = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+  // No status line: there is no presence data behind it, so "был(а) недавно" was a constant.
   return (
     <View style={[styles.header, { borderBottomColor: hairline, backgroundColor: theme.colors.background.secondary }]}>
       <View style={styles.headerSide} />
@@ -365,9 +385,6 @@ function PeekHeader({ conversation }: { conversation: ChatPeekConversation }) {
           </Text>
           {conversation.verified ? <VerifiedBadge size={13} /> : null}
         </View>
-        <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1} style={{ fontSize: 12 }}>
-          {t('block.section.last_seen')}
-        </Text>
       </View>
       <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
         <Avatar emoji={conversation.emoji} name={conversation.name} size="sm" tint />
@@ -413,6 +430,16 @@ function looksAnimated(u: string): boolean {
   return s.includes('.gif') || s.includes('giphy.com') || s.includes('tenor.com');
 }
 
+/**
+ * Server pages fetched for chats with no local copy, kept for the session.
+ *
+ * Without it every long-press on such a chat showed the spinner again and then repainted —
+ * reported as "the data reloads". A second peek now paints the cached page at once and only
+ * refetches in the background when the copy is older than `REMOTE_FRESH_MS`.
+ */
+const remoteCache = new Map<string, { at: number; rows: ChatMessage[] }>();
+const REMOTE_FRESH_MS = 60_000;
+
 function PeekTranscript({ conversationId }: { conversationId: string }) {
   const theme = useTheme();
   const t = useT();
@@ -420,23 +447,27 @@ function PeekTranscript({ conversationId }: { conversationId: string }) {
   const chatBubble = useSettingsStore((s) => s.chatBubble);
   const local = useMemo(() => readLocal(conversationId), [conversationId]);
   // `null` = not fetched (yet). Only fetched when there is nothing local to show.
-  const [remote, setRemote] = useState<ChatMessage[] | null>(null);
+  const [remote, setRemote] = useState<ChatMessage[] | null>(() => remoteCache.get(conversationId)?.rows ?? null);
   const needsFetch = local.length === 0;
 
   useEffect(() => {
     if (!needsFetch) return;
+    const cached = remoteCache.get(conversationId);
+    if (cached && Date.now() - cached.at < REMOTE_FRESH_MS) return;
     let alive = true;
     (async () => {
       try {
         const { getMessages } = await import('../../lib/supabase');
-        const { messages } = await getMessages(conversationId, { limit: REMOTE_PAGE });
+        const { messages, error } = await getMessages(conversationId, { limit: REMOTE_PAGE });
         if (!alive) return;
+        if (error && cached) return; // keep showing the copy we have rather than blanking it
         const rows = (Array.isArray(messages) ? messages : [])
           .map((r) => fromServerRow(r, conversationId))
           .filter((m): m is ChatMessage => m !== null);
+        if (!error) remoteCache.set(conversationId, { at: Date.now(), rows });
         setRemote(rows);
       } catch {
-        if (alive) setRemote([]);
+        if (alive && !cached) setRemote([]);
       }
     })();
     return () => {

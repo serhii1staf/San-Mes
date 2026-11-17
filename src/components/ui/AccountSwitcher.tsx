@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Pressable, Modal, TextInput, Alert, Animated, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Pressable, Modal, TextInput, Alert, Animated, Dimensions, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
@@ -9,8 +9,24 @@ import { useAuthStore } from '../../store/authStore';
 import { useAccountsStore, SavedAccount } from '../../store/accountsStore';
 import * as Updates from 'expo-updates';
 import { useT } from '../../i18n/store';
+import { markSkipSplashOnce, SPLASH_BACKGROUND } from '../../services/launchFlags';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+/**
+ * Reload into the account just switched to, without the white flash.
+ *
+ * `reloadAsync()` with no options shows expo-updates' default reload screen, which is WHITE. Between
+ * a dark cover and a dark splash that is the flash reported on every switch. Passing the splash
+ * colour (and no spinner, the cover already shows one) makes the whole hand-off one dark surface,
+ * and the one-shot flag lets the next launch skip the splash's minimum display time.
+ */
+function reloadIntoSwitchedAccount(): Promise<void> {
+  markSkipSplashOnce();
+  return Updates.reloadAsync({
+    reloadScreenOptions: { backgroundColor: SPLASH_BACKGROUND, fade: true, spinner: { enabled: false } },
+  });
+}
 
 interface AccountSwitcherProps {
   visible: boolean;
@@ -132,7 +148,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     // Reload on the next tick (avoids the navigation race). The cover
     // is already up so we don't need a delay to "give it time to paint".
     setTimeout(() => {
-      Updates.reloadAsync().catch(() => {
+      reloadIntoSwitchedAccount().catch(() => {
         // If reload isn't available (e.g. dev client), just close the sheet —
         // the reactive stores already point at the new account.
         setSwitching(false);
@@ -159,6 +175,10 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     }
     // Save current and switch
     saveCurrentAccount();
+
+    // Cover FIRST. It used to go up only after the switch and the login, so for a frame the
+    // backdrop showed the emptied chat list and the new account's profile underneath.
+    setSwitching(true);
 
     // Re-scope cache + flush previous account's in-memory data.
     const { switchAccount } = await import('../../services/accountSwitch');
@@ -191,14 +211,12 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
     setIsLoading(false);
 
-    // Show a full-screen cover so the native reload doesn't flash white.
-    setSwitching(true);
     setTimeout(() => {
-      Updates.reloadAsync().catch(() => {
+      reloadIntoSwitchedAccount().catch(() => {
         setSwitching(false);
         onClose();
       });
-    }, 120);
+    }, 60);
   };
 
   const otherAccounts = accounts.filter(a => a.id !== user?.id);
@@ -288,19 +306,22 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
           </Animated.View>
         </View>
 
-        {/* Full-screen cover shown right before app reload so the native restart
-            doesn't flash white. Uses the app background color. */}
+        {/* Full-screen cover shown right before the reload. Painted in the SPLASH colour, not the
+            theme's: the native reload screen and the launch splash that follow are both that colour,
+            so cover → reload → splash reads as one dark beat instead of three different surfaces. */}
         {switching && (
           <View
             pointerEvents="auto"
             style={{
               position: 'absolute',
               top: 0, left: 0, right: 0, bottom: 0,
-              backgroundColor: theme.colors.background.primary,
+              backgroundColor: SPLASH_BACKGROUND,
               alignItems: 'center',
               justifyContent: 'center',
             }}
-          />
+          >
+            <ActivityIndicator color="rgba(255,255,255,0.6)" />
+          </View>
         )}
       </View>
       </KeyboardAvoidingView>

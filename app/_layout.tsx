@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, AppState, Pressable, InteractionManager, Platform } from 'react-native';
-import { Stack, useRouter, useSegments, useNavigationContainerRef } from 'expo-router';
+import { Stack, useRouter, useSegments, useNavigationContainerRef, usePathname } from 'expo-router';
+import { consumeSkipSplashOnce } from '../src/services/launchFlags';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Sentry from '@sentry/react-native';
@@ -186,6 +187,11 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
   const segments = useSegments();
   const router = useRouter();
+  // Read by the notification tap handler, which lives in an effect and must not re-install on every
+  // navigation just to see where the user is.
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
   const [showSplash, setShowSplash] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
@@ -193,7 +199,11 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     // Minimum time the branded JS splash stays up. Trimmed 800 → 450 ms so the
     // app reaches the feed faster after the native launch screen hands off —
     // the user perceived the combined native+JS splash as too long.
-    const timer = setTimeout(() => setShowSplash(false), 450);
+    //
+    // Skipped once right after an account switch: the switch already showed a cover and the native
+    // reload screen in the same colour, and a third full-screen beat on top of those is the flash.
+    const minMs = consumeSkipSplashOnce() ? 0 : 450;
+    const timer = setTimeout(() => setShowSplash(false), minMs);
     return () => clearTimeout(timer);
   }, []);
 
@@ -272,15 +282,29 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   // that LAUNCHED the app, and that must not wait on a token round trip.
   //
   // Mounted inside the auth guard, so a tap can never navigate a signed-out user into a chat.
+  //
+  // Waits for the splash: until then the Stack is not mounted, and a push into a stack that does not
+  // exist yet is either dropped or lands after the chat list has painted (list → chat slide-in, read
+  // as a reload). Also skips a tap for the chat that is already on screen: `router.push` always adds
+  // a route, so the same conversation would slide in again over itself and remount its transcript.
   useEffect(() => {
-    if (!isAuthenticated || !hasHydrated) return;
+    if (!isAuthenticated || !hasHydrated || showSplash) return;
     let dispose: (() => void) | null = null;
     let cancelled = false;
     import('../src/services/pushNotifications')
       .then((m) => {
         if (cancelled) return;
+        // The foreground presentation policy (thread / mute / category / in-app pill) has to exist
+        // from the first push of the session, not only after a successful registration.
+        try { m.configureNotificationHandler(); } catch {}
         dispose = m.installNotificationTapHandler((path) => {
-          try { router.push(path as any); } catch {}
+          try {
+            const current = pathnameRef.current;
+            let target = path;
+            try { target = decodeURIComponent(path); } catch {}
+            if (current === target) return;
+            router.push(path as any);
+          } catch {}
         });
       })
       .catch(() => {});
@@ -288,7 +312,7 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
       cancelled = true;
       try { dispose?.(); } catch {}
     };
-  }, [isAuthenticated, hasHydrated, router]);
+  }, [isAuthenticated, hasHydrated, showSplash, router]);
 
   // A push that arrives while the app is NOT in the foreground must always be presented, even
   // for the thread that was on screen when the user switched away — that banner is how they
