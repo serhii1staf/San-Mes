@@ -191,12 +191,14 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
     <View style={{ borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
       {bannerUrl ? (
         <View style={StyleSheet.absoluteFill}>
+          {/* No shimmer: a shimmer on every cold open is exactly the "it is loading" look that was
+              reported. The banner is warmed into memory at launch (see _layout.tsx) and otherwise
+              fades in over the card's own background on its first appearance in the session. */}
           <CachedImage
             uri={bannerUrl}
             style={{ width: '100%', height: '100%', transform: [{ translateX: bannerTransform.translateX }, { translateY: bannerTransform.translateY }, { scale: bannerTransform.scale }] }}
             resizeMode="cover"
             proxyWidth={Math.round(width)}
-            skeleton
           />
           <LinearGradient colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '55']} style={StyleSheet.absoluteFill} pointerEvents="none" />
         </View>

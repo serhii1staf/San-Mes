@@ -986,7 +986,7 @@ function quotedLinePreview(
   return '';
 }
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, heldId, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; heldId?: SharedValue<string>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
   const theme = useTheme();
   const t = useT();
   // The quoted message's one-line preview. Cheap (a few string checks) and only meaningful when this
@@ -1070,7 +1070,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // Swipe-to-reply + press-drag-select gestures are wired by useMessageGestures (extracted for
   // maintainability + testing). The reply-jump glow used to be in there too and is now
   // `ReplyJumpGlow`, mounted below only while `highlighted` — see that file for why.
-  const { bubbleRef, composedGesture, bubbleAnimStyle: swipeTranslateStyle, replyIconAnimStyle, replyIconArmed } = useMessageGestures({
+  const { bubbleRef, composedGesture, bubbleAnimStyle: swipeTranslateStyle, replyIconAnimStyle, replyIconArmed, liftStyle } = useMessageGestures({
     message,
     onReply,
     onSwipeActive,
@@ -1081,7 +1081,9 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     dragFingerY,
     hoveredAction,
     actionZones,
+    heldId,
   });
+  const bubbleBoxStyle = React.useMemo(() => [bubbleStyles.bubbleBox, liftStyle], [liftStyle]);
 
   // The swipe transform composed onto the meta ROW's own style — see the long note at the JSX site
   // for why it belongs there and not on the bubble.
@@ -1454,7 +1456,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             still: the icon is what the swipe reveals, and a reveal target that travels with the
             thing revealing it would never appear to move. */}
         <Reanimated.View style={rowSwipeStyle}>
-        <Reanimated.View ref={bubbleRef} style={bubbleStyles.bubbleBox}>
+        <Reanimated.View ref={bubbleRef} style={bubbleBoxStyle}>
         {/* Long-press + drag-select is handled by `composedGesture` on the
             GestureDetector above (UI thread). This wrapper used to be a
             `Pressable onLongPress`; it's now a plain View so the gesture owns
@@ -2062,6 +2064,16 @@ export default function ChatScreen() {
   const dragFingerYSV = useSharedValue(-1);
   const hoveredActionSV = useSharedValue('');
   const actionZonesSV = useSharedValue<ActionZone[]>([]);
+  // The message whose menu is open: its bubble lifts inside the menu's lit cut-out. Follows the
+  // menu itself (not the gesture), so a long-press the menu guard rejects never leaves a bubble
+  // lifted. Cleared at the START of the close (`onClosing`) so it settles while the card collapses.
+  const heldIdSV = useSharedValue('');
+  useEffect(() => {
+    heldIdSV.value = actionMessage ? actionMessage.id : '';
+  }, [actionMessage, heldIdSV]);
+  const releaseHeld = useCallback(() => {
+    heldIdSV.value = '';
+  }, [heldIdSV]);
   // Imperative handle to replay the menu's slide-down when a drag fires an action.
   const menuRef = useRef<MessageContextMenuHandle>(null);
   // Emoji "dissolve" burst overlay + the per-message window rect captured on
@@ -6401,6 +6413,7 @@ export default function ChatScreen() {
         dragFingerY={dragFingerYSV}
         hoveredAction={hoveredActionSV}
         actionZones={actionZonesSV}
+        heldId={heldIdSV}
         onFireDragAction={fireDragAction}
         onOpenFullscreen={openFullscreen}
       />
@@ -6412,7 +6425,7 @@ export default function ChatScreen() {
     // NOTE: `scrollToMessageId` and `dayLabels` are deliberately absent too — both
     // change identity on every data/window change and are reached through refs
     // (`stableJumpToMessage`, `dayLabelsRef`) for exactly that reason.
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, glassActive, theme, openFullscreen]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, heldIdSV, fireDragAction, visTracker, imagesReady, glassActive, theme, openFullscreen]);
 
   // Stable list header / footer elements. Passing INLINE JSX to FlashList's
   // ListHeaderComponent / ListFooterComponent handed it a fresh element
@@ -7381,9 +7394,19 @@ export default function ChatScreen() {
                   The inline `overflow: 'hidden'` went with it. It was inert — the child `Avatar` is
                   24 pt inside a 36 pt box and cannot overflow — a leftover from the full-header
                   banner version. */}
-              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                <Avatar emoji={displayEmoji} name={displayName} size="xs" />
-              </Pressable>
+              {/* Liquid glass like the back pill and the search buttons beside it. It was the one
+                  header control still drawn as a flat circle when glass is on. */}
+              {glassActive ? (
+                <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={{ borderRadius: 18 }}>
+                  <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
+                    <Avatar emoji={displayEmoji} name={displayName} size="xs" />
+                  </NativeGlassView>
+                </Pressable>
+              ) : (
+                <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+                  <Avatar emoji={displayEmoji} name={displayName} size="xs" />
+                </Pressable>
+              )}
             </View>
           </View>
         )}
@@ -7455,6 +7478,7 @@ export default function ChatScreen() {
             dragActive={dragActiveSV}
             hoveredAction={hoveredActionSV}
             actionZones={actionZonesSV}
+            onClosing={releaseHeld}
             onClose={closeMenu}
             onAction={handleMenuAction}
           />

@@ -17,7 +17,6 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
-import { ShrinkingModalTitle } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
@@ -172,8 +171,13 @@ export default function EditProfileScreen() {
   //
   // So every mutating control also arms edit mode through `beginEditing()`. The pill is therefore
   // "Изменить" exactly while there is nothing to save, and "Сохранить" the moment there is.
-  const [isEditing, setIsEditing] = useState(false);
-  const beginEditing = useCallback(() => setIsEditing(true), []);
+  // ── NOW ALWAYS EDITING ─────────────────────────────────────────────────────
+  // The screen is opened by the profile's own "Редактировать" button, so a second "Изменить" step
+  // inside it was an extra tap Telegram does not have: its editor is editable the moment it opens.
+  // Everything below that was gated on `isEditing` is therefore simply shown. `beginEditing` stays
+  // as the call sites' way to say "something changed" (it is a no-op now).
+  const [isEditing] = useState(true);
+  const beginEditing = useCallback(() => {}, []);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showLinkPicker, setShowLinkPicker] = useState(false);
   const [editingLinkIndex, setEditingLinkIndex] = useState<number | null>(null);
@@ -182,9 +186,7 @@ export default function EditProfileScreen() {
   const [isSaving, setIsSaving] = useState(false);
   // Resolved once so both the glass and the BlurView branch of the header pill render the same string
   // — they are two copies of the same pill and previously each inlined the label expression.
-  const headerActionLabel = isEditing
-    ? (isSaving ? '...' : t('common.save'))
-    : t('edit_profile.enable_editing');
+  const headerActionLabel = isSaving ? '...' : t('common.done');
   // Owner-controlled screenshot lock — travels with the account. When ON,
   // anyone VIEWING this profile / chatting with this user gets capture
   // protection (Android: blocked outright; iOS: recording blocked + the
@@ -274,6 +276,20 @@ export default function EditProfileScreen() {
     // can never dead-end the save with no feedback (it fails OPEN).
     const nameChanged = name !== displayUser.displayName;
     const bioChanged = bio !== (displayUser.bio || '');
+    // "Готово" with nothing changed just goes back: no request, no "Сохранено" toast.
+    const initialLinks = JSON.stringify((user as any)?.links || []);
+    const dirty =
+      nameChanged ||
+      bioChanged ||
+      username !== displayUser.username ||
+      selectedEmoji !== (displayUser.emoji || '😊') ||
+      JSON.stringify(links) !== initialLinks ||
+      screenshotsDisabled !== !!(user as any)?.screenshots_disabled ||
+      (bannerUri ? serializeBannerTransform(bannerUri, bannerTransform) : undefined) !== (initialBanner || undefined);
+    if (!dirty) {
+      router.back();
+      return;
+    }
     try {
       if (nameChanged) {
         const nameCheck = validateName(name);
@@ -427,59 +443,32 @@ export default function EditProfileScreen() {
           style={StyleSheet.absoluteFill}
         />
       </View>
-      <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
-        <Pressable onPress={handleClose} hitSlop={10} style={[styles.headerPill, glassActive ? { overflow: 'visible' } : null]}>
+      {/* Two controls and nothing else, like Telegram: back on the left, "Готово" on the right.
+          No title pill: the screen is obviously the profile being edited. */}
+      <View style={[styles.headerRow, { top: insets.top + 8 }]} pointerEvents="box-none">
+        <Pressable
+          onPress={handleClose}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.back')}
+          style={[styles.headerPill, glassActive ? { overflow: 'visible' } : null]}
+        >
           {glassActive ? (
-            // Interactive morphing glass IS the close button; icon is its child.
+            // Interactive morphing glass IS the back button; icon is its child.
             // No overflow so the liquid stretch isn't clipped on touch.
             <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { borderRadius: 18 }]}>
-              <Feather name="x" size={18} color="#FFFFFF" />
+              <Feather name="chevron-left" size={22} color="#FFFFFF" />
             </NativeGlassView>
           ) : (
             <BlurView intensity={80} role="scrim" tint="dark" style={styles.headerPillInner}>
-              <Feather name="x" size={18} color="#FFFFFF" />
+              <Feather name="chevron-left" size={22} color="#FFFFFF" />
             </BlurView>
           )}
         </Pressable>
-        <View style={styles.headerTitleAbs} pointerEvents="box-none">
-          <ShrinkingModalTitle>
-            <View style={[styles.headerTitlePill, glassActive ? { overflow: 'visible' } : null]}>
-              {glassActive ? (
-                // Display-only title pill (not tappable) — glass with the label
-                // inside, but NOT interactive: nothing here receives touch, so an
-                // interactive morph would only waste GPU.
-                <NativeGlassView glassStyle="regular" colorScheme="dark" style={[styles.headerTitleInner, { borderRadius: 18 }]}>
-                  <RNText
-                    style={styles.headerTitleText}
-                    allowFontScaling={false}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    {t('edit_profile.title')}
-                  </RNText>
-                </NativeGlassView>
-              ) : (
-                <BlurView intensity={80} role="scrim" tint="dark" style={styles.headerTitleInner}>
-                  <RNText
-                    style={styles.headerTitleText}
-                    allowFontScaling={false}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    {t('edit_profile.title')}
-                  </RNText>
-                </BlurView>
-              )}
-            </View>
-          </ShrinkingModalTitle>
-        </View>
-        {/* ── "Изменить" UNTIL THERE IS SOMETHING TO SAVE, THEN "Сохранить" ─────
-            One pill, two jobs, so the header layout is unchanged in both states. `handleSave` is only
-            reachable in edit mode; tapping the pill in view mode arms editing instead. See the note on
-            `isEditing` for why every other mutating control also arms it. */}
         <Pressable
-          onPress={isEditing ? handleSave : beginEditing}
-          disabled={isEditing && isSaving}
+          onPress={handleSave}
+          disabled={isSaving}
+          accessibilityRole="button"
           hitSlop={10}
           style={[styles.headerPill, glassActive ? { overflow: 'visible' } : null]}
         >
@@ -649,10 +638,11 @@ export default function EditProfileScreen() {
           ) : null}
         </View>
 
-        {/* Links section — card-style, matches Fields visually */}
-        <View style={[styles.linksSection, { backgroundColor: bgElevated, borderColor }]}>
+        {/* Links — no card around them any more: a quiet section label, then each link as its own
+            row shaped like the fields above, so the whole screen is one column of rounded rows. */}
+        <View style={styles.linksSection}>
           <View style={styles.linksHeader}>
-            <Text variant="body" weight="semibold">
+            <Text variant="caption" weight="semibold" color={theme.colors.text.secondary}>
               {t('edit_profile.links')}
             </Text>
             <Text variant="caption" color={theme.colors.text.tertiary}>
@@ -662,7 +652,7 @@ export default function EditProfileScreen() {
           {links.map((link, index) => (
             <View
               key={index}
-              style={[styles.linkRow, { backgroundColor: bgSecondary }]}
+              style={[styles.linkRow, { backgroundColor: bgElevated }]}
             >
               <Feather
                 name={(LINK_TYPES.find((lt) => lt.key === link.type)?.icon || 'link') as any}
@@ -684,7 +674,7 @@ export default function EditProfileScreen() {
           ))}
           {/* "Добавить ссылку" only in edit mode — asked for explicitly. */}
           {isEditing && links.length < 3 ? (
-            <Pressable onPress={handleAddLink} style={styles.addLinkRow}>
+            <Pressable onPress={handleAddLink} style={[styles.addLinkRow, { backgroundColor: bgElevated }]}>
               <Feather name="plus-circle" size={18} color={accent} />
               <Text variant="caption" weight="medium" color={accent}>
                 {t('edit_profile.add_link')}
@@ -696,16 +686,13 @@ export default function EditProfileScreen() {
         {/* Privacy — owner-controlled screenshot lock. Per-account: the flag
             is saved on the profile row and read by anyone viewing this
             account, so no per-second polling. */}
-        <View style={[styles.linksSection, { backgroundColor: bgElevated, borderColor, marginTop: 16 }]}>
-          <View style={styles.privacyRow}>
-            <View style={styles.privacyTextWrap}>
-              <Text variant="body" weight="semibold">
-                {t('settings.screenshots_disabled', 'Disable screenshots')}
-              </Text>
-              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>
-                {t('settings.screenshots_disabled_desc', 'Stop others from screenshotting or recording your profile and chats')}
-              </Text>
-            </View>
+        {/* One row with its switch, the explanation under it as a footnote (Telegram's settings
+            pattern), instead of a second card. */}
+        <View style={[styles.linksSection, { marginTop: 20 }]}>
+          <View style={[styles.privacyRow, { backgroundColor: bgElevated }]}>
+            <Text variant="body" weight="medium" style={styles.privacyTextWrap}>
+              {t('settings.screenshots_disabled', 'Disable screenshots')}
+            </Text>
             <Switch
               value={screenshotsDisabled}
               onValueChange={setScreenshotsDisabled}
@@ -713,6 +700,9 @@ export default function EditProfileScreen() {
               thumbColor="#FFFFFF"
             />
           </View>
+          <Text variant="caption" color={theme.colors.text.tertiary} style={styles.footnote}>
+            {t('settings.screenshots_disabled_desc', 'Stop others from screenshotting or recording your profile and chats')}
+          </Text>
         </View>
       </ScrollView>
 
@@ -1298,41 +1288,48 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     marginBottom: 16,
   },
+  // No card: the section is only its outer margin, like `fieldsGroup`.
   linksSection: {
     marginHorizontal: 16,
-    padding: 16,
-    borderRadius: 18,
-    borderWidth: 0.5,
+    marginTop: 8,
   },
   linksHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    paddingHorizontal: 6,
+    marginBottom: 8,
   },
+  // Same shape as the labelled inputs above (radius 18), so links read as more fields.
   linkRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingHorizontal: 16,
+    minHeight: 52,
+    borderRadius: 18,
     marginBottom: 8,
-    gap: 10,
+    gap: 12,
   },
   linkRowText: { flex: 1 },
   addLinkRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
+    gap: 10,
+    paddingHorizontal: 16,
+    minHeight: 52,
+    borderRadius: 18,
   },
   privacyRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 14,
+    paddingHorizontal: 16,
+    minHeight: 52,
+    borderRadius: 18,
   },
   privacyTextWrap: { flex: 1 },
+  footnote: { paddingHorizontal: 6, marginTop: 8, lineHeight: 17 },
   emojiPreviewWrap: {
     alignSelf: 'center',
     width: 64,

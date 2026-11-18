@@ -56,6 +56,8 @@ export interface MessageGestureParams<T extends { id: string }> {
   dragFingerY: SharedValue<number>;
   hoveredAction: SharedValue<string>;
   actionZones: SharedValue<ActionZone[]>;
+  /** Id of the message whose menu is open (written by the screen); that bubble lifts a little. */
+  heldId?: SharedValue<string>;
 }
 
 export function useMessageGestures<T extends { id: string }>({
@@ -69,6 +71,7 @@ export function useMessageGestures<T extends { id: string }>({
   dragFingerY,
   hoveredAction,
   actionZones,
+  heldId,
 }: MessageGestureParams<T>) {
   // Animated ref so the LongPress gesture can measure this bubble's window rect
   // on the UI thread — used to spawn the emoji "dissolve" burst at the right
@@ -242,6 +245,14 @@ export function useMessageGestures<T extends { id: string }>({
   const bubbleAnimStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateXSV.value }],
   }));
+  // The held bubble lifts slightly while its menu is open, inside the menu's lit cut-out. UI thread
+  // only: the screen flips one shared value, no bubble re-renders. Every mounted bubble's mapper
+  // runs once on open and once on close, which is a handful of comparisons.
+  const messageId = message.id;
+  const liftStyle = useAnimatedStyle(() => {
+    const held = !!heldId && heldId.value === messageId;
+    return { transform: [{ scale: withSpring(held ? 1.04 : 1, { damping: 15, stiffness: 260, mass: 0.7 }) }] };
+  });
   // Reply-icon opacity ramp from -24 → -REPLY_THRESHOLD, on the UI thread.
   const replyIconAnimStyle = useAnimatedStyle(() => ({
     opacity: interpolate(
@@ -252,7 +263,7 @@ export function useMessageGestures<T extends { id: string }>({
     ),
   }));
 
-  return { bubbleRef, composedGesture, bubbleAnimStyle, replyIconAnimStyle, replyIconArmed };
+  return { bubbleRef, composedGesture, bubbleAnimStyle, replyIconAnimStyle, replyIconArmed, liftStyle };
 }
 
 /**

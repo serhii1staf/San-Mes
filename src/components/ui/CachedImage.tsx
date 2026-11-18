@@ -4,7 +4,21 @@ import { Image, ImageLoadEventData, ImageErrorEventData } from 'expo-image';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 import Skeleton from './Skeleton';
-import { noteVariantLoaded, bestLoadedVariantUrl } from '../../services/mediaVariants';
+import { noteVariantLoaded, bestLoadedVariantUrl, wasVariantLoaded } from '../../services/mediaVariants';
+
+// ── FADE THE FIRST APPEARANCE ONLY ──────────────────────────────────────────
+//
+// Reported: after the app is killed and reopened, the profile's photo "appears abruptly", as if it
+// came from the server. It came from the disk cache; what made it look like a download was the
+// cut: a blank (or shimmering) box for a moment, then the full picture in a single frame.
+//
+// The old answer was `transition={0}` everywhere, because a fade on EVERY mount made re-entering a
+// screen look like a reload (expo-image's iOS view runs the transition even for a memory-cache hit).
+// Both are right about half the cases. The session registry in `mediaVariants` already knows which
+// (image, width) pairs this session has displayed, i.e. which are in memory: those still appear at
+// once, and only an image's FIRST appearance in a session (a disk or network read, the cold-start
+// case) gets this short cross-dissolve.
+const FIRST_FADE_MS = 180;
 
 import { LottieSticker } from './LottieSticker';
 
@@ -365,6 +379,9 @@ export const CachedImage = memo(function CachedImage({
   // usually nothing better already loaded, and passing a placeholder there would add a second source
   // for no gain. The viewers are the callers that benefit.
   const placeholderUri = progressive && !noProxy ? bestLoadedVariantUrl(uri, requestedWidth) : null;
+  // See FIRST_FADE_MS. A progressive placeholder is already a decoded picture, so no fade on top of it.
+  const fadeMs = placeholderUri || wasVariantLoaded(uri, requestedWidth) ? 0 : FIRST_FADE_MS;
+  const transition = fadeMs > 0 ? { duration: fadeMs, effect: 'cross-dissolve' as const } : 0;
 
   // Honour any external onLoad while still firing our instrumentation hook.
   // Pulling it out of `props` keeps the spread below from clobbering the
@@ -400,7 +417,12 @@ export const CachedImage = memo(function CachedImage({
     // profile, both pickers and the viewer all contribute without any per-screen wiring, and a
     // surface added later gets it by default rather than by remembering to opt in.
     try { noteVariantLoaded(uri, requestedWidth); } catch {}
-    if (skeleton) setLoaded(true);
+    // The shimmer sits UNDER the image now, so it can stay until the fade has finished instead of
+    // vanishing a frame before the picture is visible.
+    if (skeleton) {
+      if (fadeMs > 0) setTimeout(() => setLoaded(true), fadeMs);
+      else setLoaded(true);
+    }
     externalOnLoad?.(e);
   };
 
@@ -428,6 +450,16 @@ export const CachedImage = memo(function CachedImage({
     const flattenedStyle = StyleSheet.flatten(style);
     return (
       <View style={[flattenedStyle, { overflow: 'hidden' }]}>
+        {/* Under the image: the picture fades in over the shimmer rather than the shimmer being
+            pulled away first. Removed once the fade is done. */}
+        {!loaded && (
+          <Skeleton
+            width={'100%'}
+            height={'100%'}
+            radius={0}
+            style={StyleSheet.absoluteFill}
+          />
+        )}
         <Image
           ref={imageRef as any}
           source={{ uri: finalUri }}
@@ -437,20 +469,12 @@ export const CachedImage = memo(function CachedImage({
           autoplay={autoplay}
           contentFit={resizeMode === 'contain' ? 'contain' : resizeMode === 'fill' ? 'fill' : 'cover'}
           cachePolicy="memory-disk"
-          transition={0}
+          transition={transition}
           recyclingKey={uri}
           onLoad={handleLoad}
           onError={handleError}
           {...restProps}
         />
-        {!loaded && (
-          <Skeleton
-            width={'100%'}
-            height={'100%'}
-            radius={0}
-            style={StyleSheet.absoluteFill}
-          />
-        )}
       </View>
     );
   }
@@ -475,12 +499,10 @@ export const CachedImage = memo(function CachedImage({
       // Keep decoded images in memory AND on disk → re-entering a chat shows
       // them instantly with no black flash or re-download.
       cachePolicy="memory-disk"
-      // No fade transition: the fade ran on every component mount, so when
-      // a screen unmounts and remounts (tab switching, list virtualisation
-      // recycling) the user perceived it as the image "re-loading" — even
-      // though the bytes were served from cache. Showing the cached frame
-      // instantly removes that flicker entirely.
-      transition={0}
+      // A short fade the FIRST time this image is shown in the session (a disk or network read),
+      // none afterwards (memory cache): re-entering a screen or recycling a row still shows the
+      // cached frame instantly. See FIRST_FADE_MS.
+      transition={transition}
       // Recycling key is tied to the ORIGINAL URI, never the proxied form.
       // Otherwise a proxy fallback (proxy → original) would re-key the
       // image and force expo-image to drop its cached bitmap, manifesting

@@ -77,7 +77,9 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, gifUr
       <ModalStatusBar />
       <ActionMenu<CommentAction>
         ref={menuRef}
-        anchor={anchor ? { ...anchor, x: anchor.x + 12, width: Math.max(0, anchor.width - 24) } : null}
+        anchor={anchor}
+        // The held comment stays lit in a cut-out of the dim.
+        spotlightRadius={16}
         align="left"
         top={top}
         items={items}
