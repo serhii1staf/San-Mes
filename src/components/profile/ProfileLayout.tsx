@@ -39,6 +39,7 @@ import { ProfileLinkBubbles } from './ProfileLinkBubbles';
 import { HeaderSceneLayer } from './HeaderSceneLayer';
 import type { HeaderScene } from '../../services/headerScene';
 import type { BannerTransform } from '../../utils/bannerTransform';
+import { compareIso } from '../../utils/compareIso';
 import { kvGetJSONSync } from '../../services/kvStore';
 import { useEntityStore } from '../../services/entityStore';
 import { triggerHaptic } from '../../utils/haptics';
@@ -284,7 +285,7 @@ export function useProfileMedia(myId: string | undefined, peerId: string | null)
       try {
         const convs = (useEntityStore.getState().conversations || []) as Array<{ id: string; participantId?: string; lastMessageAt?: string }>;
         const picked = (peerId ? convs.filter((c) => c.participantId === peerId) : [...convs])
-          .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
+          .sort((a, b) => compareIso(b.lastMessageAt || '', a.lastMessageAt || ''))
           .slice(0, peerId ? 2 : 10);
         const out: { url: string; conversationId: string; ts: string }[] = [];
         const seen = new Set<string>();
@@ -301,7 +302,7 @@ export function useProfileMedia(myId: string | undefined, peerId: string | null)
             }
           }
         }
-        out.sort((a, b) => b.ts.localeCompare(a.ts));
+        out.sort((a, b) => compareIso(b.ts, a.ts));
         setItems(out.slice(0, MEDIA_LIMIT).map(({ url, conversationId }) => ({ url, conversationId })));
       } catch {
         setItems([]);

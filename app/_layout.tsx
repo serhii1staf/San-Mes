@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, AppState, Pressable, InteractionManager, Platform, Dimensions, Keyboard } from 'react-native';
 import { Stack, useRouter, useSegments, useNavigationContainerRef, usePathname } from 'expo-router';
 import { consumeSkipSplashOnce } from '../src/services/launchFlags';
+import { compareIso } from '../src/utils/compareIso';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Sentry from '@sentry/react-native';
@@ -695,7 +696,7 @@ function RootLayout() {
         const convos = (useEntityStore.getState().conversations || []) as Array<{ id: string; lastMessageAt?: string }>;
         if (convos.length > 0) {
           const ids = [...convos]
-            .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
+            .sort((a, b) => compareIso(b.lastMessageAt || '', a.lastMessageAt || ''))
             .slice(0, 8)
             .map((c) => c.id);
           import('../src/services/messagesPrefetch')
@@ -707,7 +708,39 @@ function RootLayout() {
       }
     }, 1200);
 
-    return () => { clearTimeout(idle); clearTimeout(warm); };
+    // Phase 5 — the first chat open's one-time costs, paid while the app is idle.
+    //
+    // Reported: right after a cold start, the first chat opened "feels bad". A Hermes CPU profile of
+    // that open (production bundle) showed costs that every later open skips: running the chat
+    // screen's module graph for the first time (a route module and everything it imports execute on
+    // first require), and building the first date formatters, the very first of which also loads the
+    // locale data. They run here instead, a few seconds after launch and in separate turns, so none
+    // of them is one long task. Each is a no-op the second time.
+    const prewarmTimers: ReturnType<typeof setTimeout>[] = [];
+    prewarmTimers.push(setTimeout(() => {
+      Promise.all([
+        import('../src/i18n/store'),
+        import('../src/utils/mockData'),
+        import('../src/utils/shortAgo'),
+        import('../src/utils/chatDaySeparators'),
+      ])
+        .then(([{ useI18nStore }, { formatMessageTime }, { prewarmShortAgo }, { prewarmDaySeparators }]) => {
+          const locale = useI18nStore.getState().locale;
+          formatMessageTime(new Date().toISOString());
+          prewarmShortAgo(locale);
+          prewarmDaySeparators(locale);
+        })
+        .catch(() => {});
+    }, 2500));
+    prewarmTimers.push(setTimeout(() => {
+      import('./chat/[id]').catch(() => {});
+    }, 3200));
+
+    return () => {
+      clearTimeout(idle);
+      clearTimeout(warm);
+      for (const timer of prewarmTimers) clearTimeout(timer);
+    };
   }, [ready]);
 
   useEffect(() => {

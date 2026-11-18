@@ -24,9 +24,8 @@
 //    clock vanishing reads as a glitch.
 //  • The composer sits ON the keyboard. It was inside a `KeyboardAvoidingView`
 //    that was not the bottom-most element, so the padding it added landed in the
-//    wrong place and left a large gap. It now uses `KeyboardStickyView` from
-//    `react-native-keyboard-controller`, the same mechanism the other chat screens
-//    use, which tracks the keyboard frame on the UI thread.
+//    wrong place and left a large gap. It now rides the keyboard frame by frame
+//    on the UI thread (`useKeyboardRiseStyle`), as the other chat screens do.
 //  • Long messages are no longer clipped. Each page is a ScrollView, so a long
 //    text scrolls instead of overflowing a centred fixed box.
 //  • ALL photos are shown, not the first one with a "+2" badge.
@@ -47,8 +46,8 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+import Reanimated from 'react-native-reanimated';
+import { useKeyboardRiseStyle } from '../../src/hooks/useKeyboardFrames';
 import { LinearGradient } from 'expo-linear-gradient';
 import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { useTheme } from '../../src/theme';
@@ -242,22 +241,17 @@ export default function ChatFullscreenScreen() {
     }
   }, [currentImages, saving, t]);
 
-  // ── Composer dock padding ─────────────────────────────────────────────────
+  // ── Composer dock ─────────────────────────────────────────────────────────
   //
   // The bottom safe-area inset must NOT be added while the keyboard is up: the
   // keyboard's own frame already covers the home-indicator strip, so adding it
   // again left roughly 34 pt of dead space between the field and the keyboard —
-  // the reported "the distance between them is big". Interpolated on the UI thread
-  // from the live keyboard height, so it closes as the keyboard rises rather than
-  // snapping when it finishes.
-  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
-  const composerPadStyle = useAnimatedStyle(() => {
-    const raw = keyboardHeight.value;
-    const kb = raw < 0 ? -raw : raw;
-    // 0 → keyboard fully down, 1 → fully up.
-    const up = interpolate(kb, [0, 60], [0, 1], Extrapolation.CLAMP);
-    return { paddingBottom: interpolate(up, [0, 1], [insets.bottom + 8, 8]) };
-  });
+  // the reported "the distance between them is big". The padding stays at its
+  // resting value and the dock rises by what the keyboard covers beyond it, frame
+  // by frame (`useKeyboardFrames`): no layout change while the keyboard moves, and
+  // no jump when the one-shot iOS keyboard value used to land late.
+  const composerPadStyle = useMemo(() => ({ paddingBottom: insets.bottom + 8 }), [insets.bottom]);
+  const composerRiseStyle = useKeyboardRiseStyle(insets.bottom + 8);
 
   const headerBtnFrame = useMemo(
     () => ({
@@ -409,10 +403,9 @@ export default function ChatFullscreenScreen() {
         </View>
       </View>
 
-      {/* Composer. `KeyboardStickyView` (react-native-keyboard-controller, already a
-          dependency and what the other chat screens use) tracks the keyboard frame
-          on the UI thread, so the field sits ON the keyboard instead of the large
-          gap a mis-placed KeyboardAvoidingView produced. */}
+      {/* Composer. Rides the keyboard frame by frame on the UI thread
+          (`composerRiseStyle`), so the field sits ON the keyboard instead of the
+          large gap a mis-placed KeyboardAvoidingView produced. */}
       {/* Bottom scrim. This screen was the only one of the five composer screens with
           no bottom ramp at all — it had a top scrim and nothing underneath, which is
           why the darkening was present above and missing below the input field.
@@ -429,19 +422,16 @@ export default function ChatFullscreenScreen() {
         style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom + 8, 16) }}
       />
 
-      <KeyboardStickyView
-        offset={{ closed: 0, opened: 0 }}
-        style={styles.composerDock}
-      >
-        <Reanimated.View style={[styles.composerPad, composerPadStyle]}>
+      <Reanimated.View style={[styles.composerDock, composerRiseStyle]}>
+        <View style={[styles.composerPad, composerPadStyle]}>
           <FullscreenComposer
             conversationId={conversationId}
             theme={theme}
             glassActive={glassActive}
             placeholder={t('chat.input_placeholder')}
           />
-        </Reanimated.View>
-      </KeyboardStickyView>
+        </View>
+      </Reanimated.View>
     </View>
   );
 }

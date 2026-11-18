@@ -105,7 +105,21 @@ interface SlideUpSheetProps {
  * Reanimated + gesture-handler rather than RN `Animated`: layout props cannot go through
  * `useNativeDriver`, so this would otherwise have to animate on the JS thread.
  */
-export function SlideUpSheet({ visible, onClose, children, exitInstantRef, expandable = true }: SlideUpSheetProps) {
+export function SlideUpSheet(props: SlideUpSheetProps) {
+  // Nothing of the sheet is built until it is first opened. A closed sheet rendered nothing but
+  // still created its shared values, its pan gesture and two animated styles on every render of
+  // the screen that hosts it, and most screens host one or more sheets that are rarely opened (a
+  // CPU profile of opening a chat showed that cost). After the first open the body stays mounted,
+  // as before, so the close animation and every later open are unchanged.
+  const [armed, setArmed] = useState(props.visible);
+  // Derived from props during render, React's documented pattern for state that follows a prop, so
+  // the first open builds the sheet in the same render that asks for it.
+  if (!armed && props.visible) setArmed(true);
+  if (!armed) return null;
+  return <SlideUpSheetBody {...props} />;
+}
+
+function SlideUpSheetBody({ visible, onClose, children, exitInstantRef, expandable = true }: SlideUpSheetProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   /** Vertical offset from the resting detent. 0 = at rest, SCREEN_HEIGHT = off screen. */

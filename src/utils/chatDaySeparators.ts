@@ -221,6 +221,14 @@ export function formatDaySeparator(
 }
 
 /**
+ * Build the day-chip formatter (and the Intl probe) now rather than in the first chat opened.
+ * Called once, idle, after launch (app/_layout.tsx); see `prewarmShortAgo` for why.
+ */
+export function prewarmDaySeparators(locale: string): void {
+  formatterFor(locale, false);
+}
+
+/**
  * Test seam: drop the memoized `Intl` probe + formatter cache.
  *
  * The per-message day-key cache is deliberately NOT cleared here. It is a WeakMap keyed on message

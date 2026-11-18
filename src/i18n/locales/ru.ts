@@ -496,6 +496,7 @@ const ru: Record<string, string> = {
   'typing.many': 'Печатают: {n}',
   'typing.someone': 'Печатает…',
   'chat.photo': 'Фото',
+  'chat.deleted_account': 'Удалённый аккаунт',
   'chat.photos_count': '{n} фото',
   'chat.open_fullscreen': 'Открыть на весь экран',
   'chat.pin': 'Закрепить',

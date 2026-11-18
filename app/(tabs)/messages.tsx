@@ -26,6 +26,7 @@ import type { ChatPeekAction } from '../../src/components/chat/ChatPeekMenu';
 import { openChatPeek } from '../../src/store/chatPeekStore';
 import { markConversationRead } from '../../src/services/readState';
 import { toPreviewText } from '../../src/utils/previewText';
+import { compareIso } from '../../src/utils/compareIso';
 import { useChatUnread } from '../../src/store/chatUnreadStore';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
@@ -501,7 +502,9 @@ function ConversationItemBase({
   const locale = useI18nStore((s) => s.locale);
   const store = useChatSettingsStore;
   const localName = useChatSettingsStore((s) => s.settings[item.id]?.localName);
-  const displayName = localName || item.participantName;
+  // A peer whose account no longer exists comes back with no name and no handle, which drew a row
+  // with an avatar and nothing else next to it. Fall back to the handle, then to a label.
+  const displayName = localName || item.participantName || item.participantUsername || t('chat.deleted_account');
 
   // Preview line under the name. A message with no text but a real timestamp is a
   // photo/GIF message (the derived preview keeps the timestamp and leaves the text
@@ -1918,7 +1921,7 @@ export default function MessagesScreen() {
     // the sig only churns when something inside the prefetch window moves.
     // `lastMessageAt` is an ISO string, so lex compare = chrono.
     const top = [...entityConversations]
-      .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
+      .sort((a, b) => compareIso(b.lastMessageAt || '', a.lastMessageAt || ''))
       .slice(0, 8);
     const sig = top.map((c) => `${c.id}:${c.lastMessageAt || ''}`).join('|');
     if (sig === prefetchSigRef.current) return;
@@ -2304,7 +2307,8 @@ export default function MessagesScreen() {
       if (oa !== ob) return oa - ob;
 
       if (sortsByActivity) {
-        const cmp = (activity.get(b.id) || '').localeCompare(activity.get(a.id) || '');
+        // Plain character order, not `localeCompare`: these are ISO timestamps (see `compareIso`).
+        const cmp = compareIso(activity.get(b.id) || '', activity.get(a.id) || '');
         if (cmp !== 0) return cmp;
       }
       return (baseIndex.get(a.id) || 0) - (baseIndex.get(b.id) || 0);
