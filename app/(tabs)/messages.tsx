@@ -192,6 +192,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 1,
   },
+  // The compose sheet's rows: a standard list row, sized for a sheet the width of the screen.
+  composeList: { paddingTop: 4, paddingBottom: 2 },
+  composeRow: { flexDirection: 'row', alignItems: 'center', minHeight: 52, paddingHorizontal: 20, gap: 16 },
+  // Starts under the label, not under the icon: 20 padding + 22 icon + 16 gap.
+  composeSeparator: { height: StyleSheet.hairlineWidth, marginLeft: 58 },
 });
 
 function AIConversationItem() { return null; }
@@ -212,8 +217,6 @@ function MusicConversationItem() { return null; }
 const MESSAGES_ROW_HEIGHT = 64;
 const MESSAGES_SEPARATOR_HEIGHT = 0.5;
 const MESSAGES_ROW_PITCH = MESSAGES_ROW_HEIGHT + MESSAGES_SEPARATOR_HEIGHT;
-/** The row avatar's diameter (`Avatar size="md"`), for the peek menu's close target. */
-const AVATAR_MD = 44;
 const MESSAGES_ITEM_LAYOUT = (_data: ArrayLike<Conversation> | null | undefined, index: number) => ({
   length: MESSAGES_ROW_HEIGHT,
   offset: MESSAGES_ROW_PITCH * index,
@@ -635,19 +638,11 @@ function ConversationItemBase({
     // Selection mode owns long-press (ticking and dragging); no menu there.
     if (editMode) return;
     let shown = false;
-    const show = (x: number, y: number, h: number) => {
+    const show = (y: number, h: number) => {
       if (shown) return;
       shown = true;
-      const ok = Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(h) && h > 0;
       openChatPeek<PeekId>({
-        anchor: {
-          y: Number.isFinite(y) ? y : 0,
-          height: Number.isFinite(h) ? h : 0,
-          // The avatar's centre, which the menu closes into: the row's own padding plus half of
-          // the `md` avatar, at the row's vertical middle (the row centres its content).
-          avatarCx: ok ? x + theme.spacing.base + AVATAR_MD / 2 : undefined,
-          avatarCy: ok ? y + h / 2 : undefined,
-        },
+        anchor: { y: Number.isFinite(y) ? y : 0, height: Number.isFinite(h) ? h : 0 },
         conversation: isSyntheticUserBlockId(item.id)
           ? null
           : { id: item.id, name: displayName, emoji: item.participantEmoji, verified: item.participantVerified },
@@ -661,13 +656,13 @@ function ConversationItemBase({
     // anyway, from the centre.
     const node = rowRef.current;
     if (!node) {
-      show(0, 0, 0);
+      show(0, 0);
       return;
     }
-    const fallback = setTimeout(() => show(0, 0, 0), 150);
-    node.measureInWindow((x, y, _w, h) => {
+    const fallback = setTimeout(() => show(0, 0), 150);
+    node.measureInWindow((_x, y, _w, h) => {
       clearTimeout(fallback);
-      show(x, y, h);
+      show(y, h);
     });
   };
 
@@ -2706,7 +2701,6 @@ function ComposeMenu({
   const t = useT();
   const borderColor = theme.colors.border.light;
   const accent = theme.colors.accent.primary;
-  const secondary = theme.colors.text.secondary;
 
   const navigate = useCallback(
     (action: () => void) => {
@@ -2720,7 +2714,7 @@ function ComposeMenu({
 
   return (
     <SlideUpSheet visible={open} onClose={onClose}>
-      <View style={{ paddingBottom: 4 }}>
+      <View style={styles.composeList}>
         <FabMenuItem
           icon="grid-view"
           label={t('messages.fab.mini_apps')}
@@ -2745,7 +2739,7 @@ function ComposeMenu({
         <FabMenuItem
           icon="settings"
           label={t('messages.fab.chat_settings')}
-          tint={secondary}
+          tint={accent}
           onPress={() =>
             navigate(() =>
               router.push({
@@ -2949,15 +2943,24 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
   );
 });
 
+// Rows of the compose sheet. They were sized for the small popover this menu used to be (16 pt
+// glyph, 13 pt caption, full-width hairlines), which looked lost in a sheet the width of the screen.
 const FabMenuItem = React.memo(function FabMenuItem({ icon, label, tint, onPress }: { icon: string; label: string; tint: string; onPress: () => void }) {
+  const theme = useTheme();
+  const pressedBg = theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
   return (
-    <Pressable onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, gap: 12 }}>
-      <MaterialIcons name={icon as any} size={16} color={tint} />
-      <Text variant="caption" weight="medium" style={{ fontSize: 13 }}>{label}</Text>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.composeRow, pressed ? { backgroundColor: pressedBg } : null]}
+    >
+      <MaterialIcons name={icon as any} size={22} color={tint} />
+      <Text variant="body" style={{ fontSize: 16 }}>{label}</Text>
     </Pressable>
   );
 });
 
 const FabSeparator = React.memo(function FabSeparator({ color }: { color: string }) {
-  return <View style={{ height: 0.5, backgroundColor: color }} />;
+  return <View style={[styles.composeSeparator, { backgroundColor: color }]} />;
 });

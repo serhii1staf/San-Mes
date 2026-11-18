@@ -22,6 +22,7 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../src/utils/appLinks';
 import { acquireDecodeSlot } from '../../src/utils/decodeGate';
 import { wasVariantLoaded } from '../../src/services/mediaVariants';
+import { CHAT_IMG_MAX_W as SHARED_CHAT_IMG_MAX_W, CHAT_MULTI_IMG_SIZE } from '../../src/utils/chatMediaSize';
 import { useTransitionSettled } from '../../src/hooks/useTransitionSettled';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
@@ -714,10 +715,16 @@ function OlderMessagesLoader({ visible, color }: { visible: boolean; color: stri
 // Deriving both from one expression is what stops them drifting apart again — the previous pair
 // disagreed only because one was a percentage and the other was not, so no single edit could ever
 // have kept them consistent.
-const CHAT_IMG_MAX_W = Math.min(Math.round(SCREEN_WIDTH * 0.66), 270, BUBBLE_MAX_W - BUBBLE_H_PADDING);
+// The value itself lives in src/utils/chatMediaSize.ts, so the long-press preview requests photos at
+// exactly the same width (the width is part of the cache key). Checked against the local geometry
+// below, so the two cannot drift apart silently.
+const CHAT_IMG_MAX_W = SHARED_CHAT_IMG_MAX_W;
+if (__DEV__ && CHAT_IMG_MAX_W !== Math.min(Math.round(SCREEN_WIDTH * 0.66), 270, BUBBLE_MAX_W - BUBBLE_H_PADDING)) {
+  console.warn('[chat] CHAT_IMG_MAX_W no longer matches the bubble geometry; update src/utils/chatMediaSize.ts');
+}
 const CHAT_IMG_MAX_H = 340;
 /** A tile of a multi-photo bubble; the width `bubbleStyles.imageMulti` requests from the proxy. */
-const MULTI_IMG_SIZE = 120;
+const MULTI_IMG_SIZE = CHAT_MULTI_IMG_SIZE;
 /** The transcript's pre-render window while the chat's push animation is still running, in px. */
 const OPENING_DRAW_DISTANCE = 40;
 

@@ -143,6 +143,31 @@ export function prefetchImages(
 }
 
 /**
+ * Decode `uris` into the memory cache at `displayWidth` and record them as shown, so their first
+ * appearance in this session is instant and skips the first-appearance fade (FIRST_FADE_MS).
+ *
+ * `prefetchImages(..., 'memory-disk')` alone decoded the bitmap but told nobody, so the image still
+ * faded in when it was finally shown, which after a cold start read as "it is loading again" even
+ * though nothing was loading. Only for the few images a cold start is known to show next; everything
+ * else should stay on `prefetchImages(..., 'disk')`, which never decodes.
+ */
+export function warmIntoMemory(uris: (string | null | undefined)[], displayWidth: number): void {
+  const raw = uris.filter((u): u is string => !!u && u.startsWith('http')).slice(0, 12);
+  if (raw.length === 0) return;
+  const list = raw.map((u) => proxiedImageUrl(u, displayWidth));
+  try {
+    Image.prefetch(list, { cachePolicy: 'memory-disk' })
+      .then((ok) => {
+        if (!ok) return;
+        for (const u of raw) {
+          try { noteVariantLoaded(u, displayWidth); } catch {}
+        }
+      })
+      .catch(() => {});
+  } catch {}
+}
+
+/**
  * CachedImage — uses expo-image for native disk caching (like Telegram), and
  * automatically routes remote URLs through the weserv image proxy so every
  * client request after the first hits Cloudflare's CDN instead of Supabase.
