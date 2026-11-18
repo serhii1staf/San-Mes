@@ -7,7 +7,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
@@ -61,7 +61,9 @@ import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
 import { typingChatChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
 import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
 import { useChatUnread } from '../../src/store/chatUnreadStore';
-import { markConversationRead } from '../../src/services/readState';
+import { markConversationRead, markConversationReadIfNewer } from '../../src/services/readState';
+import { toSceneText } from '../../src/services/syncService';
+import { wasAwayLongEnough } from '../../src/services/appAway';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
@@ -85,6 +87,8 @@ import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
+/** How far the pinned-message bar reaches below the header content (bar height, plus its -2 offset). */
+const PINNED_BAR_BAND = 46;
 
 // Stable FlashList prop objects. The chat screen re-renders frequently
 // (reply/edit banner, keyboard frames, scroll-to-bottom toggle, store
@@ -320,6 +324,43 @@ const FULL_PERSIST_DEBOUNCE_MS = 120000;
  * and an idle reopen transfers an empty array.
  */
 const historyCursorByConv = new Map<string, string>();
+/**
+ * When the history poll last got an answer for each conversation, this session. Closing a chat and
+ * opening it again a few seconds later used to cost a fetch on every open; with realtime connected
+ * everything since then has already arrived live, so a recent answer is skipped. See the poll effect.
+ */
+const historyFetchedAtByConv = new Map<string, number>();
+/** A reopen within this long of the last poll answer skips the immediate fetch (realtime connected only). */
+const HISTORY_REOPEN_FRESH_MS = 60_000;
+
+/**
+ * The newest message in `convId` written by someone other than the signed-in user, as an opaque key.
+ * Read marks triggered by the user's own activity only need a request when this moved; see
+ * `markConversationReadIfNewer`.
+ */
+function newestPeerMessageKey(convId: string): string | null {
+  if (!convId) return null;
+  const me = useAuthStore.getState().user?.id;
+  const list = (useChatStore.getState().messages[convId] || []) as ChatMessage[];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (m && m.senderId && m.senderId !== me) return String(m.id);
+  }
+  return null;
+}
+
+/**
+ * The conversation id a send can post to directly, or null when it still has to go through the
+ * create-or-get (`POST /v1/conversations`). Canonical means settled AND not the peer's user id: a
+ * profile-entry open whose resolve failed is still holding the peer's id, and only the POST can turn
+ * that into a conversation. Conversations are never deleted server-side short of account deletion,
+ * so a canonical id cannot go stale under an open chat.
+ */
+function canonicalConvIdForSend(conversationId: string, participantId: string | undefined, settled: boolean): string | null {
+  if (!settled || !conversationId) return null;
+  if (participantId && conversationId === participantId) return null;
+  return conversationId;
+}
 let fullPersistTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingFullWrite: (() => void) | null = null;
 let pendingFullConv: string | null = null;
@@ -1855,6 +1896,16 @@ export default function ChatScreen() {
   // OTHER user's id) stays separate for display + notification routing.
   const [conversationId, setConversationId] = useState<string>(() => id || '');
 
+  // Whether this chat is the screen on top, as a ref so focus changes never re-render the screen.
+  // Read by the history poll: a profile or a photo pushed from the chat keeps it mounted underneath.
+  const navigation = useNavigation();
+  const chatFocusedRef = useRef(true);
+  useEffect(() => {
+    const offFocus = navigation.addListener('focus', () => { chatFocusedRef.current = true; });
+    const offBlur = navigation.addListener('blur', () => { chatFocusedRef.current = false; });
+    return () => { offFocus(); offBlur(); };
+  }, [navigation]);
+
   // ── DO NOT DO EVERYTHING TWICE ON A PROFILE-INITIATED OPEN ────────────────
   //
   // Reported as the chat "loading something incomprehensible, or reloading". It was doing exactly
@@ -1985,15 +2036,22 @@ export default function ChatScreen() {
     //
     // Throttled and coalesced inside the service, so the three call sites in this effect plus the
     // one in the send handler cannot turn into four round-trips.
-    markConversationRead(conversationId);
+    //
+    // Not before the id is SETTLED. On a profile-entry open `conversationId` is still the peer's user
+    // id at this point, which is exactly the guaranteed 403 described above; the effect runs again
+    // the moment it settles (it is in the deps), and marks then.
+    const markable = convIdSettled;
+    if (markable) markConversationRead(conversationId, newestPeerMessageKey(conversationId));
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'active') {
         setActiveThread('chat', ids);
         try {
           for (const cid of ids) if (cid) useChatUnread.getState().clear(cid);
         } catch {}
-        // Re-foregrounding into an open chat reads whatever arrived while away.
-        markConversationRead(conversationId);
+        // Re-foregrounding into an open chat reads whatever arrived while away. Only after a real
+        // absence: an iOS `inactive` blip never left the screen, and a short app switch kept the
+        // socket, so whatever arrived is in the transcript and the leave mark below covers it.
+        if (markable && wasAwayLongEnough()) markConversationRead(conversationId, newestPeerMessageKey(conversationId));
       }
     });
     return () => {
@@ -2022,9 +2080,12 @@ export default function ChatScreen() {
       // moment this screen opened, so every message received while the chat was open is unread as far
       // as it knows. This call is what closes that gap. Drop it and reading a busy chat would leave
       // the pill showing exactly the messages the user just read.
-      markConversationRead(conversationId);
+      //
+      // `IfNewer`: when nothing from the peer arrived since the last mark there is no gap to close,
+      // and the request would change nothing on the server.
+      if (markable) markConversationReadIfNewer(conversationId, newestPeerMessageKey(conversationId));
     };
-  }, [conversationId, id]);
+  }, [conversationId, id, convIdSettled]);
   // Mount-time marker — captures how long the chat screen took to commit
   // its first render so the perf-monitor panel can attribute open-the-chat freezes.
   //
@@ -2846,6 +2907,14 @@ export default function ChatScreen() {
   // keyboard regardless of this constant.
   const INPUT_BAR_HEIGHT = 60;
   const LIST_FOOTER_HEIGHT = INPUT_BAR_HEIGHT + inputBarBottomPad + 12;
+  // Resting top edge of the composer stack (typing strip + reply banner + input bar), in screen
+  // coordinates. Layout only, so the keyboard's translate does not move it; read when the message
+  // menu opens, which dismisses the keyboard first. A ref, so a growing input never re-renders the
+  // screen for it.
+  const composerTopRef = useRef<number | null>(null);
+  const onComposerLayout = useCallback((e: { nativeEvent: { layout: { y: number } } }) => {
+    composerTopRef.current = e.nativeEvent.layout.y;
+  }, []);
 
   // ── Emoji panel control ───────────────────────────────────────────────
   // Visible gap (px) between the input bar and the top of the emoji panel.
@@ -3068,7 +3137,32 @@ export default function ChatScreen() {
       // Phase 5: profile fetch goes through the Worker.
       import('../../src/services/apiClient').then(({ apiGet }) =>
         apiGet<any>(`/v1/profiles/${encodeURIComponent(participantId)}`).then(({ data }) => {
-          if (data) setProfileData(data);
+          if (!data) return;
+          setProfileData(data);
+          // Into the shared cache too, so the next open of this chat (and the peer's profile) reads it
+          // from there instead of fetching the same profile again.
+          try {
+            useEntityStore.getState().upsertProfile({
+              id: data.id,
+              username: data.username,
+              display_name: data.display_name,
+              emoji: data.emoji || '😀',
+              bio: data.bio || '',
+              banner_url: data.banner_url || null,
+              theme_id: data.theme_id || null,
+              links: data.links ? (typeof data.links === 'string' ? data.links : JSON.stringify(data.links)) : null,
+              badge: data.badge || null,
+              is_verified: !!data.is_verified,
+              header_scene: toSceneText(data.header_scene),
+              screenshots_disabled: !!data.screenshots_disabled,
+              created_at: data.created_at || null,
+              updated_at: data.updated_at || null,
+            } as any);
+            // Same stamp `syncProfile` uses, so opening their profile next does not refetch it.
+            import('../../src/services/syncThrottle')
+              .then(({ markSynced }) => markSynced(`profile:${data.id}`))
+              .catch(() => {});
+          } catch {}
         }).catch(() => {})
       );
     });
@@ -3287,6 +3381,7 @@ export default function ChatScreen() {
             ...(sinceCursor ? { since: sinceCursor } : {}),
           });
           if (cancelled || error) return;
+          historyFetchedAtByConv.set(conversationId, Date.now());
           // Advance the watermark even when the page is empty — nothing new means the cursor
           // is still correct, and an empty response is the steady state we want.
           if (Array.isArray(messages) && messages.length > 0) {
@@ -3465,18 +3560,29 @@ export default function ChatScreen() {
         }
       };
 
-      void runFetch();
+      // A reopen seconds after the last answer, with realtime connected, has nothing to catch up on:
+      // everything since then arrived live. Every open used to cost this request.
+      const fetchedAt = historyFetchedAtByConv.get(conversationId) ?? 0;
+      const realtimeUp = getRealtime()?.connection?.state === 'connected';
+      if (!(resumedCursor && realtimeUp && Date.now() - fetchedAt < HISTORY_REOPEN_FRESH_MS)) {
+        void runFetch();
+      }
       // While the realtime socket is connected every message already arrives live, so the poll
-      // only runs as a backstop: every fourth tick (2 min) instead of every 30 s. Each tick parses
-      // up to 200 rows and merges them over the whole transcript on the JS thread.
+      // only runs as a backstop: every tenth tick (5 min) instead of every 30 s. Each tick is a
+      // Worker request and parses up to 200 rows on the JS thread. The Worker also fans every
+      // message out to the recipient's `user:<id>:notifications` channel, so a missed chat-channel
+      // publish is covered twice before this poll ever matters.
       let tick = 0;
       timer = setInterval(() => {
         if (cancelled) return;
         // Foreground only — see the cost note above.
         if (AppState.currentState !== 'active') return;
+        // And only while this chat is the screen on top: a profile or a photo opened from the chat
+        // keeps it mounted underneath, polling for a transcript nobody is looking at.
+        if (!chatFocusedRef.current) return;
         if (!useConnectivityStore.getState().isOnline) return;
         tick += 1;
-        if (getRealtime()?.connection?.state === 'connected' && tick % 4 !== 0) return;
+        if (getRealtime()?.connection?.state === 'connected' && tick % 10 !== 0) return;
         void runFetch();
       }, HISTORY_POLL_MS);
     });
@@ -4782,11 +4888,13 @@ export default function ChatScreen() {
         const { apiPost } = await import('../../src/services/apiClient');
         // Idempotent: returns existing 1:1 conversation if one already
         // exists between this pair, otherwise creates and returns the new id.
-        const { data: convData } = await apiPost<{ conversation_id: string }>(
-          '/v1/conversations',
-          { otherUserId: participantId },
-        );
-        const convId = convData?.conversation_id || null;
+        // Skipped when the canonical id is already known — see `canonicalConvIdForSend`.
+        const convId = canonicalConvIdForSend(conversationId, participantId, convIdSettled)
+          ?? (await apiPost<{ conversation_id: string }>(
+            '/v1/conversations',
+            { otherUserId: participantId },
+          )).data?.conversation_id
+          ?? null;
         if (convId) {
           const { data: sentGifData } = await apiPost<{ id: string }>(
             `/v1/conversations/${encodeURIComponent(convId)}/messages`,
@@ -4849,7 +4957,7 @@ export default function ChatScreen() {
         }
       } catch {}
     })();
-  }, [id, conversationId, replyTo, addMessage, revealNewest, participantId, t, reconcileConversation]);
+  }, [id, conversationId, convIdSettled, replyTo, addMessage, revealNewest, participantId, t, reconcileConversation]);
 
   // Pick a GIF from the inline panel: send it, then close the panel and let the
   // input bar settle back down (GIFs are one-and-done, not multi-pick).
@@ -4937,13 +5045,15 @@ export default function ChatScreen() {
           .catch(() => {});
         showToast(t('toast.report_sent'), 'flag');
       };
+      // `cancelable`: Android's native dialog shows at most three buttons, so the Cancel at the end
+      // never appears there, and without this a mis-tapped report could not be backed out of.
       Alert.alert(t('report.title'), '', [
         { text: t('report.cat.spam'), onPress: () => send('spam') },
         { text: t('report.cat.violence'), onPress: () => send('violence') },
         { text: t('report.cat.fraud'), onPress: () => send('fraud') },
         { text: t('report.cat.other'), onPress: () => send('other') },
         { text: t('common.cancel'), style: 'cancel' },
-      ]);
+      ], { cancelable: true });
     } else if (action === 'translate') {
       // Open the translation sheet with the source message text. The sheet
       // does the LibreTranslate fetch + result UI itself.
@@ -5407,7 +5517,9 @@ export default function ChatScreen() {
     // watermark past anything the PEER sent while this chat was open, without waiting for the leave
     // handler. That matters because the leave handler does not run if the app is killed outright, and
     // a long session in a busy chat would otherwise hand back a pill for messages already read.
-    if (conversationId) markConversationRead(conversationId);
+    // Only when the peer wrote something since the last mark; otherwise it was a request per send
+    // that changed nothing.
+    if (conversationId) markConversationReadIfNewer(conversationId, newestPeerMessageKey(conversationId));
     triggerHaptic('medium');
     playSendSound();
     // Strip dangerous invisible / control / bidi-override chars; keep
@@ -5576,11 +5688,15 @@ export default function ChatScreen() {
       if (!user) return;
 
       const { apiPost } = await import('../../src/services/apiClient');
-      const { data: convData } = await apiPost<{ conversation_id: string }>(
-        '/v1/conversations',
-        { otherUserId: participantId },
-      );
-      const convId = convData?.conversation_id || null;
+      // The create-or-get is only needed while the id is still the peer's user id. Once it is
+      // canonical (opened from the list, a known row, or a resolved profile entry) the answer is
+      // already in hand, and asking again was a second Worker request on every single send.
+      const convId = canonicalConvIdForSend(conversationId, participantId, convIdSettled)
+        ?? (await apiPost<{ conversation_id: string }>(
+          '/v1/conversations',
+          { otherUserId: participantId },
+        )).data?.conversation_id
+        ?? null;
 
       if (convId) {
         // Encode attached images into the stored text with a marker so it
@@ -5702,7 +5818,7 @@ export default function ChatScreen() {
       // participant, migrates optimistic messages, and re-keys the route.
       reconcileConversation(convId, text || (uploadedUrls.length > 0 ? '📷' : ''));
     } catch {}
-  }, [pendingImages, conversationId, editing, replyTo, currentUserId, chatSettings.replyPixelIcon, participantId, id, t, addMessage, revealNewest, setMessages, reconcileConversation, notifyStopped]);
+  }, [pendingImages, conversationId, convIdSettled, editing, replyTo, currentUserId, chatSettings.replyPixelIcon, participantId, id, t, addMessage, revealNewest, setMessages, reconcileConversation, notifyStopped]);
 
   // ── Media-panel long-press actions (Task B) ───────────────────────────────
   // Additive callbacks wired down through MediaPanel → Emoji/Gif panels. A
@@ -6956,7 +7072,7 @@ export default function ChatScreen() {
           can fold in the emoji-panel lift as a MONOTONIC max(), eliminating the
           handoff jump. Hidden while searching. */}
       {!searchMode && (
-      <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, barWrapStyle]}>
+      <Reanimated.View onLayout={onComposerLayout} style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, barWrapStyle]}>
         {/* "…is typing" — above the reply/edit banner so it is the topmost thing in the
             composer stack and never covers the field. Owns its own realtime subscription
             (see the note in the component) so a typing event re-renders this strip alone
@@ -7478,6 +7594,16 @@ export default function ChatScreen() {
             dragActive={dragActiveSV}
             hoveredAction={hoveredActionSV}
             actionZones={actionZonesSV}
+            // The lit cut-out is clipped to the band where messages are actually visible: below the
+            // header (and the pinned bar, when there is one), above the composer (lifted by the
+            // emoji/GIF panel when that is open). Otherwise a message scrolled partly under either
+            // lit their buttons through the hole.
+            visibleBounds={{
+              top: headerContentHeight + (activePin ? PINNED_BAR_BAND : 0),
+              bottom:
+                (composerTopRef.current ?? SCREEN_HEIGHT - (INPUT_BAR_HEIGHT + inputBarBottomPad)) -
+                (emojiOpen || gifOpen || keepLifted ? emojiPanelHeight : 0),
+            }}
             onClosing={releaseHeld}
             onClose={closeMenu}
             onAction={handleMenuAction}

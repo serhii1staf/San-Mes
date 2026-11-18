@@ -58,6 +58,11 @@ try { installPerfErrorHooks(); } catch {}
 // `notificationsBadgeStore.ts` for why the badge could be missing entirely after a push.
 try { installNotificationsBadgeForegroundRefresh(); } catch {}
 
+// Session revalidation (`/v1/auth/me`) cadence. It used to run on every return to the foreground,
+// including iOS `inactive` blips; once per half hour still notices an expired session promptly.
+const SESSION_RECHECK_MS = 30 * 60 * 1000;
+let lastSessionCheckAt = 0;
+
 // ── FREEZE BLURRED SCREENS (the single biggest app-wide lag lever) ───────────
 //
 // Without this, react-native-screens leaves every visited tab and every pushed
@@ -614,6 +619,7 @@ function RootLayout() {
       // sits in the deferred idle phase so it never blocks splash/first paint.
       // No new logout path — restoreSession already owns the dead-token wipe.
       if (useAuthStore.getState().user?.id) {
+        lastSessionCheckAt = Date.now();
         try {
           useAuthStore.getState().restoreSession().catch(() => {});
         } catch {}
@@ -698,13 +704,18 @@ function RootLayout() {
   //   • → 'background': pause the 20s connectivity poll so we don't burn cycles
   //                 / battery while the app isn't visible.
   // All calls are fire-and-forget; none block anything.
+  //
+  // Request budget: `start()` already re-checks on a real return (the separate `checkNow()` that
+  // used to follow it doubled every probe), and the session check is `/v1/auth/me` on the Worker,
+  // so it runs at most every SESSION_RECHECK_MS. Revocation does not depend on it: the device
+  // heartbeat above is the channel for that.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
       try {
         if (next === 'active') {
           try { useConnectivityStore.getState().start(); } catch {}
-          try { useConnectivityStore.getState().checkNow().catch(() => {}); } catch {}
-          if (useAuthStore.getState().user?.id) {
+          if (useAuthStore.getState().user?.id && Date.now() - lastSessionCheckAt >= SESSION_RECHECK_MS) {
+            lastSessionCheckAt = Date.now();
             try { useAuthStore.getState().restoreSession().catch(() => {}); } catch {}
           }
         } else if (next === 'background') {

@@ -17,29 +17,39 @@ import { create } from 'zustand';
 //
 // Two changes fix the whole class of problem:
 //
-//  1. The FIRST probe is our OWN backend health endpoint. If the app's API is
-//     reachable, the app is online by definition — that is the only question that
-//     actually matters here. No third party gets a veto over it.
-//  2. It is an ANY-OF race across several independent hosts on different networks,
-//     not a single point of failure. The first success wins and the rest are
-//     abandoned, so the common case costs one round trip.
+//  1. Our OWN backend health endpoint is always asked before declaring offline. If
+//     the app's API is reachable, the app is online by definition — that is the only
+//     question that actually matters here. No third party gets a veto over it.
+//  2. The neutral hosts are an ANY-OF race across independent networks, not a single
+//     point of failure. The first success wins, so the common case costs one round
+//     trip.
 //
-// Ordering matters: our own host first (authoritative and usually warm), then two
-// widely-reachable neutral endpoints as a backstop for the case where our backend
-// is down but the device genuinely has internet — we still want the app to behave as
-// "online" then, so writes queue and retry rather than being rejected locally.
-const PING_URLS = [
-  // Cheap, public, no auth. Also the only probe whose success guarantees the app
-  // can actually do useful work.
-  'https://san-mes-api.odi44972.workers.dev/v1/health',
-  // Cloudflare's own 204 endpoint: different apex from workers.dev, reachable in
-  // most networks that allow any HTTPS at all.
+// ── WHY OUR OWN BACKEND IS NOW THE LAST PROBE, NOT THE FIRST ─────────────────
+//
+// It used to be raced alongside the other two on every check. A check runs on launch,
+// on every return to the foreground and then every 30-120 s, so that was the single
+// largest source of Worker requests in the app: roughly 40 a session, each one counted
+// against the free plan's 100k a day, and none of them doing any work.
+//
+// The neutral hosts answer the question just as well in the normal case, and they cost
+// us nothing. Our own host is still asked, but only when BOTH of them failed, which
+// keeps the property the race was built for: a third party that is blocked for this
+// user can never put the app into forced-offline on its own, because our backend gets
+// the final word before we declare the network dead.
+const PRIMARY_PROBES = [
+  // Cloudflare's trace endpoint: reachable in most networks that allow any HTTPS.
   'https://cloudflare.com/cdn-cgi/trace',
   // Apple's captive-portal probe. Reachable in China and Russia (iOS itself depends
   // on it), which is exactly why it is a better backstop than Google.
   'https://captive.apple.com/hotspot-detect.html',
 ];
+// Appended to whichever API host is current (see apiHost.ts), so the fallback asks the
+// host the app will actually use.
+const FALLBACK_PATH = '/v1/health';
 const PING_TIMEOUT = 3000;
+
+// A return to the foreground re-checks at once, unless the last answer is this fresh.
+const RECHECK_ON_START_MS = 15000;
 
 // Base poll cadence. On a stable connection the effective interval backs off
 // (see BACKOFF_* below) to cut battery/radio/heat cost; it snaps back to this
@@ -121,10 +131,14 @@ async function probe(url: string): Promise<boolean> {
  * the "first success wins" semantics on some Hermes builds; the explicit resolver is
  * unambiguous and has no dependency on aggregate-error support.
  */
-async function checkConnectivity(): Promise<boolean> {
+function anyOf(urls: readonly string[]): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let settled = false;
-    let pending = PING_URLS.length;
+    let pending = urls.length;
+    if (pending === 0) {
+      resolve(false);
+      return;
+    }
 
     const finish = (value: boolean) => {
       if (settled) return;
@@ -132,7 +146,7 @@ async function checkConnectivity(): Promise<boolean> {
       resolve(value);
     };
 
-    for (const url of PING_URLS) {
+    for (const url of urls) {
       void probe(url).then((ok) => {
         if (ok) {
           finish(true);
@@ -144,6 +158,18 @@ async function checkConnectivity(): Promise<boolean> {
       });
     }
   });
+}
+
+async function checkConnectivity(): Promise<boolean> {
+  if (await anyOf(PRIMARY_PROBES)) return true;
+  // Both neutral hosts failed. Before calling the network dead, ask our own backend: if it answers,
+  // the app can work, whatever the third parties say.
+  try {
+    const { getApiHost } = await import('./apiHost');
+    return await probe(getApiHost() + FALLBACK_PATH);
+  } catch {
+    return false;
+  }
 }
 
 // ─── Lazy import to avoid circular dependency ────────────────────────────────
@@ -210,20 +236,14 @@ export const useConnectivityStore = create<ConnectivityState>((set, get) => {
     lastChecked: null,
 
     start: () => {
+      // Already polling. This is the iOS `inactive → active` blip (Control Center, a
+      // permission sheet), which never called stop(): the loop is live and its last
+      // answer is current, so restarting it would only buy a redundant probe.
+      if (timeoutId !== null) return;
+
       // Bump the generation so any in-flight continuation from a previous
       // start/stop cycle is invalidated (it will see gen !== runGen and die).
       runGen += 1;
-
-      // Idempotent: if a loop is already live, tear down its timer before
-      // arming a fresh one. Combined with the runGen bump above this guarantees
-      // we never leave two parallel loops running.
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-
-      // Fresh session starts at the base cadence.
-      stableCount = 0;
 
       // Drain any leftover queue from a previous session immediately. The
       // queue can carry mutations from a session that was killed before
@@ -233,14 +253,14 @@ export const useConnectivityStore = create<ConnectivityState>((set, get) => {
       // offline-and-back, which on a stable connection might never happen.
       triggerProcessQueue();
 
-      // Check immediately on start
-      checkConnectivity().then((online) => {
-        const prev = get().isOnline;
-        set({ isOnline: online, lastChecked: new Date().toISOString() });
-        if (!prev && online) {
-          triggerProcessQueue();
-        }
-      });
+      // Check immediately, unless the last answer is only seconds old (a quick
+      // app switch). `performCheck` also keeps the back-off honest: the cadence
+      // only drops back to 30 s when the state actually changed, not on every
+      // return to the foreground.
+      const last = get().lastChecked ? Date.parse(get().lastChecked as string) : 0;
+      if (!last || !Number.isFinite(last) || Date.now() - last > RECHECK_ON_START_MS) {
+        void performCheck();
+      }
 
       // Kick off the adaptive poll loop (base 30s, backing off to 60s then
       // 120s while the connection stays stable; resets to 30s on any change).

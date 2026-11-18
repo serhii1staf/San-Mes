@@ -12,11 +12,11 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
-import { getProfiles } from '../../src/lib/supabase';
+import { syncProfiles } from '../../src/services/syncService';
+import { useEntityStore } from '../../src/services/entityStore';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { accountKey } from '../../src/services/cacheService';
 import { kvGetStringRawSync } from '../../src/services/kvStore';
-import { shouldSync } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
 import { emojiTextStyle } from '../../src/components/ui/emojiText';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
@@ -284,15 +284,30 @@ export default function SearchScreen() {
     } catch {}
     if (!hasCache) setIsLoading(true);
     try {
-      // Throttle gate: only hit the profile-directory network fetch if we
-      // haven't synced recently (~15 min). The cache-first display path above
-      // (cheap existence check) and the deferred InteractionManager hydrate of
-      // the cached directory still run, so the screen shows cached profiles
-      // instantly even when we skip the network. shouldSync records the
-      // timestamp when it returns true.
-      if (!(await shouldSync('search_all_profiles', 15 * 60 * 1000))) return;
-      const { profiles: data } = await getProfiles();
-      if (Array.isArray(data) && data.length > 0) setAllProfiles(data as any[]);
+      // Throttle gate: the profile directory is only fetched if it has not been synced recently
+      // (~15 min). The cache-first display path above (cheap existence check) and the deferred
+      // InteractionManager hydrate of the cached directory still run, so the screen shows cached
+      // profiles instantly even when the network is skipped.
+      //
+      // `syncProfiles` rather than a second `getProfiles()` of its own: the messages tab already runs
+      // it on mount, against the same endpoint, under its own 15-minute stamp. Two keys meant the
+      // directory was fetched twice per window. One shared stamp, and the result is read from the
+      // entity store it fills (which is also what `@san:all_profiles` above is a snapshot of).
+      await syncProfiles();
+      const known = Object.values(useEntityStore.getState().profiles || {});
+      if (known.length > 0) {
+        setAllProfiles(
+          known.map((p: any) => ({
+            id: p.id,
+            username: p.username,
+            display_name: p.display_name,
+            emoji: p.emoji,
+            bio: p.bio || '',
+            badge: p.badge || undefined,
+            is_verified: !!p.is_verified,
+          })),
+        );
+      }
     } finally {
       setIsLoading(false);
     }

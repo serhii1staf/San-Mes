@@ -50,13 +50,21 @@ const MAX_TRACKED = 64;
 
 const lastSentAt = new Map<string, number>();
 const pending = new Map<string, ReturnType<typeof setTimeout>>();
+/**
+ * The newest message from the OTHER side that the last mark for each conversation covered, as an
+ * opaque key (a message id). A device-side identity rather than a timestamp, so no clock is compared.
+ */
+const markedPeerKey = new Map<string, string>();
 
 function evictIfNeeded(): void {
   if (lastSentAt.size <= MAX_TRACKED) return;
   // Map preserves insertion order, and entries are re-inserted on every send, so the first key is
   // the least recently used.
   const oldest = lastSentAt.keys().next();
-  if (!oldest.done) lastSentAt.delete(oldest.value);
+  if (!oldest.done) {
+    lastSentAt.delete(oldest.value);
+    markedPeerKey.delete(oldest.value);
+  }
 }
 
 function send(conversationId: string): void {
@@ -94,8 +102,9 @@ function send(conversationId: string): void {
  * Safe to call from anywhere, as often as you like, in any order. The server refuses to move a
  * watermark backwards, so a late-arriving request cannot resurrect a badge.
  */
-export function markConversationRead(conversationId: string): void {
+export function markConversationRead(conversationId: string, latestPeerKey?: string | null): void {
   if (!conversationId) return;
+  if (latestPeerKey) markedPeerKey.set(conversationId, latestPeerKey);
   const now = Date.now();
   const last = lastSentAt.get(conversationId) || 0;
 
@@ -124,9 +133,26 @@ export function markConversationRead(conversationId: string): void {
   pending.set(conversationId, timer);
 }
 
+/**
+ * Mark read only when something from the other side arrived since the last mark.
+ *
+ * For the call sites that fire on the user's own activity (each send, leaving the chat). The server's
+ * unread count already excludes the caller's own messages, so if the newest message from the peer is
+ * the one the previous mark covered, the server watermark is already past everything that could count
+ * and the POST would change nothing. That was one Worker request per sent message.
+ *
+ * `latestPeerKey` is null when the transcript holds nothing from the peer, which needs no mark either.
+ */
+export function markConversationReadIfNewer(conversationId: string, latestPeerKey: string | null): void {
+  if (!conversationId || !latestPeerKey) return;
+  if (markedPeerKey.get(conversationId) === latestPeerKey) return;
+  markConversationRead(conversationId, latestPeerKey);
+}
+
 /** Test seam: drop all throttle state and cancel pending timers. */
 export function __resetReadStateForTests(): void {
   for (const t of pending.values()) clearTimeout(t);
   pending.clear();
   lastSentAt.clear();
+  markedPeerKey.clear();
 }

@@ -21,7 +21,7 @@
  */
 import React, { memo, useCallback, useEffect, useMemo } from 'react';
 import { InteractionManager, StyleSheet, View, useWindowDimensions } from 'react-native';
-import { FontAwesome5, Feather } from '@expo/vector-icons';
+import { FontAwesome5 } from '@expo/vector-icons';
 import Svg, { Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
@@ -42,43 +42,11 @@ import Reanimated, {
 import { triggerHaptic } from '../../utils/haptics';
 import { openUrl } from '../../utils/openUrl';
 import { useT } from '../../i18n/store';
-
-export type LinkKind =
-  | 'github' | 'twitter' | 'instagram' | 'youtube' | 'telegram' | 'tiktok'
-  | 'linkedin' | 'discord' | 'twitch' | 'spotify' | 'website';
-
-export function detectLinkKind(url: string): LinkKind {
-  const l = url.toLowerCase();
-  if (l.includes('github.com')) return 'github';
-  if (l.includes('twitter.com') || l.includes('x.com')) return 'twitter';
-  if (l.includes('instagram.com')) return 'instagram';
-  if (l.includes('youtube.com') || l.includes('youtu.be')) return 'youtube';
-  if (l.includes('t.me') || l.includes('telegram.me')) return 'telegram';
-  if (l.includes('tiktok.com')) return 'tiktok';
-  if (l.includes('linkedin.com')) return 'linkedin';
-  if (l.includes('discord.gg') || l.includes('discord.com')) return 'discord';
-  if (l.includes('twitch.tv')) return 'twitch';
-  if (l.includes('spotify.com')) return 'spotify';
-  return 'website';
-}
-
-/**
- * Icon and gel colour per link kind. Brands whose own colour is black or white (GitHub, TikTok) get
- * a colour from the same palette instead, so every drop has colour.
- */
-const BRAND: Record<LinkKind, { icon: string; gel: string; label: string; brand: boolean }> = {
-  github: { icon: 'github', gel: '#8A63FF', label: 'GitHub', brand: true },
-  twitter: { icon: 'twitter', gel: '#1DA1F2', label: 'Twitter', brand: true },
-  instagram: { icon: 'instagram', gel: '#F2477F', label: 'Instagram', brand: true },
-  youtube: { icon: 'youtube', gel: '#FF4040', label: 'YouTube', brand: true },
-  telegram: { icon: 'telegram-plane', gel: '#2AABEE', label: 'Telegram', brand: true },
-  tiktok: { icon: 'tiktok', gel: '#FF3D7F', label: 'TikTok', brand: true },
-  linkedin: { icon: 'linkedin-in', gel: '#3D8BFF', label: 'LinkedIn', brand: true },
-  discord: { icon: 'discord', gel: '#6F7BFF', label: 'Discord', brand: true },
-  twitch: { icon: 'twitch', gel: '#A970FF', label: 'Twitch', brand: true },
-  spotify: { icon: 'spotify', gel: '#1ED760', label: 'Spotify', brand: true },
-  website: { icon: 'globe', gel: '#22C7B8', label: '', brand: false },
-};
+// Detection by HOST, shared with the editor. The local copy here matched substrings, which is how a
+// Roblox link (`roblox.com` contains `x.com`) came out as Twitter. Icon and gel colour per kind live
+// there too; brands whose own colour is black or white get a colour from the same family, so every
+// drop has colour.
+import { detectLinkKind, linkKindInfo } from '../../utils/linkKind';
 
 /** Drop diameters, by index. Different sizes read as a cluster rather than a row of buttons. */
 const SIZES = [60, 52, 56, 48, 54];
@@ -175,7 +143,7 @@ interface BubbleProps {
 
 const Bubble = memo(function Bubble({ url, size, left, top, index, running, websiteLabel, centers, pops, lastPop }: BubbleProps) {
   const kind = detectLinkKind(url);
-  const brand = BRAND[kind];
+  const brand = linkKindInfo(kind);
   const dx = useSharedValue(0);
   const dy = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -402,7 +370,7 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
             {brand.brand ? (
               <FontAwesome5 name={brand.icon} size={iconSize} color="#FFFFFF" brand style={styles.iconShadow} />
             ) : (
-              <Feather name={brand.icon as any} size={iconSize} color="#FFFFFF" style={styles.iconShadow} />
+              <FontAwesome5 name={brand.icon} size={Math.round(iconSize * 0.9)} color="#FFFFFF" solid style={styles.iconShadow} />
             )}
           </View>
         </Reanimated.View>

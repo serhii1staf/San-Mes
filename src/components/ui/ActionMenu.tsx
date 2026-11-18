@@ -92,6 +92,17 @@ interface ActionMenuProps<Id extends string> {
    * a rounded cut-out around the item, so the item stays lit and the menu reads as acting on it.
    */
   spotlightRadius?: number;
+  /**
+   * Window-space band the held item can actually be seen in: below the screen's header, above its
+   * composer or tab bar. The cut-out is clipped to it.
+   *
+   * Reported: holding a message that had scrolled partly under the header (or the input bar) lit up
+   * the header's buttons through the hole, because the hole was cut at the item's full rect and the
+   * header sits over that part of it. Clipped to the band, the chrome stays dimmed and the hole only
+   * covers the part of the item that is on screen; a clipped edge is square, since it is not the
+   * item's own edge. Omitted, the whole window counts.
+   */
+  spotlightBounds?: { top: number; bottom: number };
 }
 
 export const MENU_WIDTH = 254;
@@ -206,7 +217,7 @@ const ListRow = memo(function ListRow<Id extends string>({
 const NO_ITEMS: never[] = [];
 
 function ActionMenuInner<Id extends string>(
-  { anchor, align = 'left', title, top, items, onSelect, onWillSelect, onClosing, onClose, zones, hovered, spotlightRadius }: ActionMenuProps<Id>,
+  { anchor, align = 'left', title, top, items, onSelect, onWillSelect, onClosing, onClose, zones, hovered, spotlightRadius, spotlightBounds }: ActionMenuProps<Id>,
   ref: React.ForwardedRef<ActionMenuHandle>,
 ) {
   const theme = useTheme();
@@ -366,17 +377,32 @@ function ActionMenuInner<Id extends string>(
   // ── The held item stays lit ──────────────────────────────────────────────
   // Everything is dimmed except a rounded cut-out around the held item, so it is obvious what the
   // menu acts on. One SVG path (screen rect + hole, even-odd), drawn once; only its opacity animates.
+  const boundsTop = spotlightBounds?.top;
+  const boundsBottom = spotlightBounds?.bottom;
   const spotlightPath = useMemo(() => {
     if (!anchor || spotlightRadius === undefined) return null;
     const x = anchor.x - SPOT_PAD;
-    const y = anchor.y - SPOT_PAD;
     const w = anchor.width + SPOT_PAD * 2;
-    const h = anchor.height + SPOT_PAD * 2;
-    const r = Math.max(0, Math.min(spotlightRadius + SPOT_PAD, w / 2, h / 2));
+    const rawTop = anchor.y - SPOT_PAD;
+    const rawBottom = anchor.y + anchor.height + SPOT_PAD;
+    // Clip to the band the item is visible in; see `spotlightBounds`.
+    const y0 = Math.max(rawTop, boundsTop ?? -Infinity);
+    const y1 = Math.min(rawBottom, boundsBottom ?? Infinity);
     const outer = `M-50 -50H${W + 50}V${H + 400}H-50Z`;
-    const hole = `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`;
+    // Next to nothing of it is on screen: dim everything rather than cut a sliver.
+    if (y1 - y0 < 8) return outer;
+    const r = Math.max(0, Math.min(spotlightRadius + SPOT_PAD, w / 2, (y1 - y0) / 2));
+    // A clipped edge is the header's or the composer's edge, not the item's: square it.
+    const rt = y0 > rawTop ? 0 : r;
+    const rb = y1 < rawBottom ? 0 : r;
+    const arc = (rad: number, ex: number, ey: number) => (rad > 0 ? `A${rad} ${rad} 0 0 1 ${ex} ${ey}` : '');
+    const hole =
+      `M${x + rt} ${y0}H${x + w - rt}${arc(rt, x + w, y0 + rt)}` +
+      `V${y1 - rb}${arc(rb, x + w - rb, y1)}` +
+      `H${x + rb}${arc(rb, x, y1 - rb)}` +
+      `V${y0 + rt}${arc(rt, x + rt, y0)}Z`;
     return outer + hole;
-  }, [anchor, spotlightRadius, W, H]);
+  }, [anchor, spotlightRadius, boundsTop, boundsBottom, W, H]);
 
   const isDark = theme.isDark;
   const textColor = theme.colors.text.primary;

@@ -43,12 +43,15 @@ export function ProfilePostMenu({
   isOwn,
   authorName,
   onClose,
+  visibleBounds,
 }: {
   post: ProfilePost;
   anchor: ActionMenuAnchor | null;
   isOwn: boolean;
   authorName: string;
   onClose: () => void;
+  /** Window band the cards are visible in (under the pinned tabs, above the tab bar). */
+  visibleBounds?: { top: number; bottom: number };
 }) {
   const t = useT();
   const [step, setStep] = useState<'menu' | 'report'>('menu');
@@ -166,6 +169,7 @@ export function ProfilePostMenu({
           anchor={anchor}
           // The held card stays lit in a cut-out of the dim (same radius as the card).
           spotlightRadius={28}
+          spotlightBounds={visibleBounds}
           align="left"
           top={top}
           items={items}
@@ -179,6 +183,7 @@ export function ProfilePostMenu({
           ref={menuRef}
           anchor={anchor}
           spotlightRadius={28}
+          spotlightBounds={visibleBounds}
           align="left"
           title={t('report.title')}
           items={reasons}

@@ -48,6 +48,22 @@ let cachedClient: Ably.Realtime | null = null;
 let cachedClientUserId: string | null = null;
 
 /**
+ * The previous connection's Ably token, kept across a background disconnect.
+ *
+ * `RealtimeAccountBridge` closes the connection after 10 s in the background, and the next client
+ * then minted a new token: one request to `/api/ably-token`, which in turn asks the Worker
+ * (`/v1/auth/me`) who the caller is. That was a Worker request on almost every return to the app,
+ * for a token that still had most of its hour left. The new client now starts from the old token and
+ * only calls the auth callback when Ably says it has expired.
+ *
+ * Bound to the user AND the Worker session it was minted under, so a logout, an account switch or a
+ * re-login can never connect with a token from before.
+ */
+let parkedToken: { userId: string; session: string; details: Ably.TokenDetails } | null = null;
+/** A parked token this close to expiry is not worth reusing. */
+const PARKED_TOKEN_MIN_LEFT_MS = 2 * 60 * 1000;
+
+/**
  * Build the auth callback the Ably SDK uses on (re)connect to fetch a
  * fresh TokenRequest.
  *
@@ -143,10 +159,23 @@ export function getRealtime(): Ably.Realtime | null {
 
   let opts: Ably.ClientOptions;
   if (haveToken) {
+    // Resume with the token from the previous connection when it is this user's, from this session,
+    // and not about to expire. See `parkedToken`.
+    const parked = parkedToken;
+    parkedToken = null;
+    const reuse =
+      parked &&
+      parked.userId === user.id &&
+      parked.session === getAuthToken() &&
+      (!parked.details.expires || parked.details.expires - Date.now() > PARKED_TOKEN_MIN_LEFT_MS)
+        ? parked.details
+        : undefined;
     opts = {
       // No `key` here — auth is purely via the callback so the bundle never
       // ships an Ably credential strong enough to publish on its own.
       authCallback: buildAuthCallback(),
+      // Still renewed through the callback above when Ably reports it expired.
+      ...(reuse ? { tokenDetails: reuse } : {}),
       // Reduce idle ping noise — the connection is short-lived (only while
       // the user is on a chat / messages screen), so we don't need
       // aggressive heartbeats.
@@ -185,6 +214,18 @@ export function getRealtime(): Ably.Realtime | null {
  */
 export function disconnectRealtime(): void {
   if (cachedClient) {
+    // Keep the token for the next connection; see `parkedToken`. `auth.tokenDetails` is the SDK's
+    // own cache of the token it is using (not in the public typings, hence the cast).
+    try {
+      const details = (cachedClient as any).auth?.tokenDetails as Ably.TokenDetails | null | undefined;
+      const session = getAuthToken();
+      parkedToken =
+        details && details.token && cachedClientUserId && session
+          ? { userId: cachedClientUserId, session, details }
+          : null;
+    } catch {
+      parkedToken = null;
+    }
     try {
       cachedClient.close();
     } catch {}

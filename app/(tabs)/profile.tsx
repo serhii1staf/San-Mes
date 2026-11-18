@@ -9,7 +9,6 @@ import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { useT } from '../../src/i18n/store';
 import { triggerHaptic } from '../../src/utils/haptics';
-import { shouldSync } from '../../src/services/syncThrottle';
 import { prefetchImages } from '../../src/components/ui/CachedImage';
 import { useLiquidGlassActive } from '../../src/components/ui/LiquidGlass';
 import { AccountSwitcher } from '../../src/components/ui/AccountSwitcher';
@@ -43,7 +42,6 @@ export default function ProfileScreen() {
   const t = useT();
   const { width, height: winHeight } = useWindowDimensions();
   const user = useAuthStore((s) => s.user);
-  const updateProfile = useAuthStore((s) => s.updateProfile);
   const glassActive = useLiquidGlassActive();
   const screenFocused = useIsFocused();
   const anim = useProfileScrollAnim();
@@ -51,20 +49,10 @@ export default function ProfileScreen() {
 
   const { screenshotDetected } = useScreenCaptureGuard(!!(user as any)?.screenshots_disabled, 'own-profile');
 
-  // Badge / verification can change from the admin panel; refresh at most every 10 minutes.
+  // Badge / verification changes from the admin panel arrive with the session check
+  // (`restoreSession` → `/v1/auth/me` carries both), on launch and on a return to the app. The separate
+  // profile fetch that used to sit here asked the Worker the same question a second time.
   const userId = user?.id;
-  useEffect(() => {
-    if (!userId) return;
-    (async () => {
-      if (!(await shouldSync('self_badge:' + userId, 10 * 60 * 1000))) return;
-      const { apiGet } = await import('../../src/services/apiClient');
-      const { data } = await apiGet<{ badge: string | null; is_verified: boolean }>(`/v1/profiles/${encodeURIComponent(userId)}`);
-      const current = useAuthStore.getState().user;
-      if (data && current && (data.badge !== current.badge || data.is_verified !== current.is_verified)) {
-        updateProfile({ badge: data.badge || undefined, is_verified: data.is_verified || false });
-      }
-    })().catch(() => {});
-  }, [userId, updateProfile]);
 
   // Banner: strip the `#x=&y=&s=` transform hash before the proxy; warm it at the render width.
   const bannerUrlRaw = (user as any)?.bannerUrl as string | undefined;
@@ -140,7 +128,7 @@ export default function ProfileScreen() {
           profileId={user.id}
           isOwn
           author={{ name: user.displayName || user.username || '', emoji: user.emoji || '😊', verified: !!user.is_verified, badge: user.badge }}
-          sticky={{ scrollY: anim.scrollY, top: insets.top + 6, bottomPad: getTabBarHeight(insets.bottom) + 28 }}
+          sticky={{ scrollY: anim.scrollY, top: insets.top + 6, bottomPad: getTabBarHeight(insets.bottom) + 28, chromeBottom: getTabBarHeight(insets.bottom) }}
         />
       </Animated.ScrollView>
 

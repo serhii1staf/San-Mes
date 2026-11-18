@@ -1,24 +1,26 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, ScrollView, Pressable, StyleSheet, Platform, Modal, KeyboardAvoidingView, Text as RNText, Dimensions, Switch } from 'react-native';
+import { View, ScrollView, Pressable, StyleSheet, Text as RNText, Dimensions, Switch, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from '../../src/components/ui/AppBlurView';
 import * as ImagePicker from 'expo-image-picker';
-import {
-  Gesture,
-  GestureDetector,
-  GestureHandlerRootView,
-} from 'react-native-gesture-handler';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-} from 'react-native-reanimated';
 import { useTheme } from '../../src/theme';
-import { Text, Input, Avatar } from '../../src/components/ui';
+import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
+import { SettingsRow, SettingsSection } from '../../src/components/settings/SettingsList';
+import {
+  EditorAddLinkRow,
+  EditorField,
+  EditorHairline,
+  EditorLinkRow,
+  EditorSectionHeader,
+} from '../../src/components/profile/EditorForm';
+import { LinkEditorSheet } from '../../src/components/profile/LinkEditorSheet';
+import { EmojiPickerSheet } from '../../src/components/profile/EmojiPickerSheet';
+import { BannerPositionEditor } from '../../src/components/profile/BannerPositionEditor';
+import type { LinkKind } from '../../src/utils/linkKind';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
 import { updateProfile as updateSupabaseProfile, uploadBanner, loadProfileMeta } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
@@ -42,104 +44,8 @@ import {
   stripBannerTransform,
 } from '../../src/utils/bannerTransform';
 import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
-import { emojiTextStyle } from '../../src/components/ui/emojiText';
 
-const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
-
-// Editor frame matches the on-display banner height (300) so the user
-// is positioning the image inside the exact frame they'll see on the
-// profile screen — what they see here is what shows there.
-const BANNER_EDIT_HEIGHT = 300;
-const MIN_SCALE = 1;
-const MAX_SCALE = 3;
-
-const LINK_TYPES = [
-  { key: 'github', label: 'GitHub', icon: 'github', patterns: ['github.com'] },
-  { key: 'twitter', label: 'Twitter/X', icon: 'twitter', patterns: ['twitter.com', 'x.com'] },
-  { key: 'instagram', label: 'Instagram', icon: 'instagram', patterns: ['instagram.com'] },
-  { key: 'youtube', label: 'YouTube', icon: 'youtube', patterns: ['youtube.com', 'youtu.be'] },
-  { key: 'telegram', label: 'Telegram', icon: 'send', patterns: ['t.me', 'telegram.me'] },
-  { key: 'tiktok', label: 'TikTok', icon: 'video', patterns: ['tiktok.com'] },
-  { key: 'discord', label: 'Discord', icon: 'message-circle', patterns: ['discord.gg', 'discord.com'] },
-  { key: 'twitch', label: 'Twitch', icon: 'tv', patterns: ['twitch.tv'] },
-  { key: 'spotify', label: 'Spotify', icon: 'music', patterns: ['spotify.com', 'open.spotify.com'] },
-  { key: 'linkedin', label: 'LinkedIn', icon: 'linkedin', patterns: ['linkedin.com'] },
-  { key: 'website', label: '', icon: 'globe', patterns: [] },
-];
-
-function detectLinkTypeFromUrl(url: string): string {
-  const lower = url.toLowerCase();
-  for (const lt of LINK_TYPES) {
-    if (lt.patterns.some((p) => lower.includes(p))) return lt.key;
-  }
-  return 'website';
-}
-
-const MOOD_CATEGORIES: { titleKey: string; emojis: string[] }[] = [
-  {
-    titleKey: 'emoji.cat.mood',
-    emojis: [
-      '😊', '😄', '😁', '🥰', '😍', '🤩', '😎', '🥳',
-      '😇', '🤗', '😌', '😏', '🤔', '😴', '🥱', '😢',
-      '😭', '😤', '🤬', '😱', '🤯', '😵‍💫', '🫠', '🥺',
-      '😈', '👻', '💀', '🤡', '😷', '🤒', '🤕', '🤑',
-    ],
-  },
-  {
-    titleKey: 'emoji.cat.animals',
-    emojis: [
-      '🦊', '🐱', '🐶', '🐺', '🦁', '🐯', '🐼', '🐨',
-      '🐸', '🐙', '🦋', '🐝', '🐞', '🦄', '🐰', '🐻',
-      '🦈', '🐬', '🐳', '🦉', '🦅', '🐦', '🦜', '🐧',
-      '🐢', '🦎', '🐍', '🦔', '🐹', '🐿️', '🦩', '🐾',
-    ],
-  },
-  {
-    titleKey: 'emoji.cat.nature',
-    emojis: [
-      '🌸', '🌺', '🌻', '🌹', '🌷', '💐', '🍀', '🌿',
-      '🍃', '🍂', '🍁', '🌾', '🌵', '🎋', '🪷', '🌊',
-      '☀️', '🌙', '⭐', '🌈', '☁️', '⚡', '❄️', '🔥',
-      '🍄', '🪨', '💎', '🪐', '🌍', '🌋', '🏔️', '🌅',
-    ],
-  },
-  {
-    titleKey: 'emoji.cat.food',
-    emojis: [
-      '🍕', '🍔', '🍟', '🌮', '🍣', '🍜', '🍩', '🍪',
-      '🎂', '🍰', '🧁', '🍫', '🍬', '🍭', '🍿', '🥤',
-      '☕', '🍵', '🧋', '🍺', '🍷', '🥂', '🍹', '🧃',
-      '🍎', '🍓', '🍑', '🥑', '🌽', '🥕', '🍉', '🥥',
-    ],
-  },
-  {
-    titleKey: 'emoji.cat.activities',
-    emojis: [
-      '🎮', '🎯', '🎲', '🎸', '🎵', '🎤', '🎬', '🎨',
-      '🎭', '🎪', '🎢', '🏀', '⚽', '🏈', '🎾', '🏓',
-      '🎳', '🛹', '🏄', '🚴', '🏋️', '🧘', '💃', '🕺',
-      '🎧', '📷', '🎥', '💻', '📚', '✍️', '🎓', '🔬',
-    ],
-  },
-  {
-    titleKey: 'emoji.cat.symbols',
-    emojis: [
-      '✨', '💫', '⚡', '💥', '🫧', '🧿', '🪬', '🔮',
-      '💝', '💖', '💗', '💓', '💕', '❤️‍🔥', '🖤', '💜',
-      '💙', '💚', '💛', '🧡', '❤️', '🤍', '🩷', '🩵',
-      '☮️', '✝️', '☯️', '♾️', '🏳️‍🌈', '🎀', '👑', '🦴',
-    ],
-  },
-  {
-    titleKey: 'emoji.cat.objects',
-    emojis: [
-      '🚀', '✈️', '🛸', '🏎️', '🚗', '🛵', '⛵', '🚂',
-      '🏠', '🏰', '⛩️', '🗼', '🎡', '🌉', '💡', '🔑',
-      '🗝️', '💰', '💸', '🎁', '🎈', '🎊', '🎉', '🪩',
-      '🛡️', '⚔️', '🏹', '🪄', '🧲', '💊', '🩹', '🧸',
-    ],
-  },
-];
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function EditProfileScreen() {
   const theme = useTheme();
@@ -181,8 +87,6 @@ export default function EditProfileScreen() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showLinkPicker, setShowLinkPicker] = useState(false);
   const [editingLinkIndex, setEditingLinkIndex] = useState<number | null>(null);
-  const [linkUrl, setLinkUrl] = useState('');
-  const [linkType, setLinkType] = useState('website');
   const [isSaving, setIsSaving] = useState(false);
   // Resolved once so both the glass and the BlurView branch of the header pill render the same string
   // — they are two copies of the same pill and previously each inlined the label expression.
@@ -316,7 +220,27 @@ export default function EditProfileScreen() {
       // Validator threw unexpectedly — never let moderation dead-end the save
       // silently. Fall through and persist; server-side moderation backstops.
     }
+    // ── THE USERNAME IS SAVED NOW ─────────────────────────────────────────────
+    //
+    // The field was always editable, but the value only ever went into the local profile: the PATCH
+    // below never carried it. So a new username showed until the next session check, then quietly
+    // reverted to the old one. It is sent now, FIRST and on its own, because only the server knows
+    // whether it is taken, and `PATCH /v1/profiles/me` rejects the whole update when it is — nothing
+    // else may be applied before that answer.
+    const usernameChanged = username !== displayUser.username;
+    if (usernameChanged && !/^[a-z0-9_]{2,32}$/.test(username)) {
+      showToast(t('edit_profile.username_label') + ': ' + t('edit_profile.username_invalid'), 'alert-circle');
+      return;
+    }
     setIsSaving(true);
+    if (usernameChanged && user?.id) {
+      const { error } = await updateSupabaseProfile(user.id, { username });
+      if (error) {
+        setIsSaving(false);
+        showToast(error === 'username_taken' ? t('auth.error.username_taken') : t('toast.error_generic'), 'alert-circle');
+        return;
+      }
+    }
     try {
       // Strip dangerous invisible / control / bidi-override characters before
       // persisting (decorative Unicode + emoji are preserved). Single-line for
@@ -384,46 +308,51 @@ export default function EditProfileScreen() {
   const handleAddLink = () => {
     if (links.length >= 3) return;
     setEditingLinkIndex(null);
-    setLinkUrl('');
-    setLinkType('website');
     setShowLinkPicker(true);
   };
 
-  const handleEditLink = (index: number) => {
+  const handleEditLink = useCallback((index: number) => {
     setEditingLinkIndex(index);
-    setLinkUrl(links[index].url);
-    setLinkType(links[index].type);
     setShowLinkPicker(true);
-  };
+  }, []);
 
-  const handleSaveLink = () => {
-    beginEditing();
-    if (!linkUrl.trim()) {
-      setShowLinkPicker(false);
-      return;
-    }
-    const detectedType = detectLinkTypeFromUrl(linkUrl.trim());
-    const finalType = detectedType !== 'website' ? detectedType : linkType;
-    const newLink: UserLink = { type: finalType, url: linkUrl.trim() };
+  // The sheet hands back a normalised link and the kind it recognised; nothing is chosen by hand.
+  const handleSaveLink = (link: { type: LinkKind; url: string }) => {
+    const newLink: UserLink = { type: link.type, url: link.url };
     if (editingLinkIndex !== null) {
-      const updated = [...links];
-      updated[editingLinkIndex] = newLink;
-      setLinks(updated);
+      setLinks((prev) => prev.map((l, i) => (i === editingLinkIndex ? newLink : l)));
     } else {
-      setLinks([...links, newLink]);
+      setLinks((prev) => (prev.length >= 3 ? prev : [...prev, newLink]));
     }
     setShowLinkPicker(false);
   };
 
-  const handleRemoveLink = (index: number) => {
-    beginEditing();
-    setLinks(links.filter((_, i) => i !== index));
+  const handleRemoveLink = useCallback((index: number) => {
+    setLinks((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const handleRemoveEditingLink = () => {
+    if (editingLinkIndex !== null) handleRemoveLink(editingLinkIndex);
+    setShowLinkPicker(false);
   };
+
+  const closeLinkPicker = useCallback(() => setShowLinkPicker(false), []);
+  const closeEmojiPicker = useCallback(() => setShowEmojiPicker(false), []);
+  const pickEmoji = useCallback((e: string) => {
+    setSelectedEmoji(e);
+    setShowEmojiPicker(false);
+  }, []);
+
+  // Only what the server accepts (`^[a-z0-9_]{2,32}$`, PATCH /v1/profiles/me), with registration's
+  // 16-character limit, so an invalid name cannot be typed in the first place.
+  const onUsernameChange = useCallback((v: string) => {
+    setUsername(v.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16));
+  }, []);
+  const onBioChange = useCallback((v: string) => setBio(v.slice(0, 150)), []);
 
   const bgPrimary = theme.colors.background.primary;
   const bgElevated = theme.colors.background.elevated;
-  const bgSecondary = theme.colors.background.secondary;
-  const borderColor = theme.colors.border.light;
+  const switchOffTrack = theme.isDark ? '#48484A' : '#E5E5EA';
   const accent = theme.colors.accent.primary;
 
   return (
@@ -589,278 +518,119 @@ export default function EditProfileScreen() {
           ) : null}
         </View>
 
-        {/* ── FIELDS: NO OUTER CARD, LABELS INSIDE, WIDER ───────────────────────
-            Asked for: drop the container around the fields, put each label inside its own rounded
-            input, and let the inputs run slightly wider left and right.
-
-            The width change falls out of removing the card rather than being a new number. The card
-            was `marginHorizontal: 16` plus `padding: 16`, so the inputs started 32 pt from each edge.
-            They now sit at `marginHorizontal: 16` themselves, which is exactly the 16 pt per side the
-            card's padding was consuming. `styles.fieldsGroup` is that margin and nothing else.
-
-            The fields are read-only until the header's "Изменить" is tapped — see `isEditing`. They
-            stay `TextInput`s in both states rather than switching to `Text`, so nothing on the screen
-            can move when the mode flips. */}
-        <View style={styles.fieldsGroup}>
-          <Input
-            label={t('edit_profile.name_label')}
-            value={name}
-            onChangeText={setName}
-            placeholder={t('edit_profile.name_placeholder')}
-            labelInside
-            editable={isEditing}
-            style={{ marginBottom: 12 }}
-          />
-          <Input
-            label={t('edit_profile.username_label')}
-            value={username}
-            onChangeText={setUsername}
-            placeholder="username"
-            labelInside
-            editable={isEditing}
-            style={{ marginBottom: 12 }}
-          />
-          <Input
-            label={t('edit_profile.bio_label')}
-            value={bio}
-            onChangeText={(text) => setBio(text.slice(0, 150))}
-            placeholder={t('edit_profile.bio_placeholder')}
-            multiline
-            labelInside
-            editable={isEditing}
-            style={{ marginBottom: 4 }}
-          />
-          {/* Only meaningful while typing; in read-only mode it is noise. */}
-          {isEditing ? (
-            <Text variant="caption" color={theme.colors.text.tertiary} align="right">
-              {t('edit_profile.chars_left', undefined, { count: 150 - bio.length })}
-            </Text>
-          ) : null}
-        </View>
-
-        {/* Links — no card around them any more: a quiet section label, then each link as its own
-            row shaped like the fields above, so the whole screen is one column of rounded rows. */}
-        <View style={styles.linksSection}>
-          <View style={styles.linksHeader}>
-            <Text variant="caption" weight="semibold" color={theme.colors.text.secondary}>
-              {t('edit_profile.links')}
-            </Text>
-            <Text variant="caption" color={theme.colors.text.tertiary}>
-              {links.length}/3
-            </Text>
-          </View>
-          {links.map((link, index) => (
-            <View
-              key={index}
-              style={[styles.linkRow, { backgroundColor: bgElevated }]}
-            >
-              <Feather
-                name={(LINK_TYPES.find((lt) => lt.key === link.type)?.icon || 'link') as any}
-                size={17}
-                color={accent}
-              />
-              <Pressable onPress={() => handleEditLink(index)} style={styles.linkRowText}>
-                <Text variant="caption" weight="medium" numberOfLines={1}>
-                  {link.url}
-                </Text>
-              </Pressable>
-              {/* Remove-link "x" is an editing control; existing links stay readable in view mode. */}
-              {isEditing ? (
-                <Pressable onPress={() => handleRemoveLink(index)} hitSlop={6}>
-                  <Feather name="x-circle" size={18} color={theme.colors.text.tertiary} />
-                </Pressable>
-              ) : null}
-            </View>
-          ))}
-          {/* "Добавить ссылку" only in edit mode — asked for explicitly. */}
-          {isEditing && links.length < 3 ? (
-            <Pressable onPress={handleAddLink} style={[styles.addLinkRow, { backgroundColor: bgElevated }]}>
-              <Feather name="plus-circle" size={18} color={accent} />
-              <Text variant="caption" weight="medium" color={accent}>
-                {t('edit_profile.add_link')}
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-
-        {/* Privacy — owner-controlled screenshot lock. Per-account: the flag
-            is saved on the profile row and read by anyone viewing this
-            account, so no per-second polling. */}
-        {/* One row with its switch, the explanation under it as a footnote (Telegram's settings
-            pattern), instead of a second card. */}
-        <View style={[styles.linksSection, { marginTop: 20 }]}>
-          <View style={[styles.privacyRow, { backgroundColor: bgElevated }]}>
-            <Text variant="body" weight="medium" style={styles.privacyTextWrap}>
-              {t('settings.screenshots_disabled', 'Disable screenshots')}
-            </Text>
-            <Switch
-              value={screenshotsDisabled}
-              onValueChange={setScreenshotsDisabled}
-              trackColor={{ false: borderColor, true: accent }}
-              thumbColor="#FFFFFF"
+        {/* ── THE FORM, AS AN INSET-GROUPED LIST ────────────────────────────────
+            Asked for: the fields looked "очень по-старому". They were three outlined boxes, one per
+            field, each with its own 1.5 pt border. Now they are the settings screens' grouped cards
+            (`SettingsSection`): name and username share one card with a hairline between them, the
+            bio has its own with a character counter, links are rows with the service's own tile, and
+            the privacy switch is an ordinary settings row with its explanation underneath. No outlines
+            anywhere: the card is the container, and a focused field shows it by its caption taking the
+            accent colour. */}
+        <View style={styles.form}>
+          <SettingsSection>
+            <EditorField
+              label={t('edit_profile.name_label')}
+              value={name}
+              onChangeText={setName}
+              placeholder={t('edit_profile.name_placeholder')}
+              maxLength={50}
+              autoCapitalize="words"
             />
-          </View>
-          <Text variant="caption" color={theme.colors.text.tertiary} style={styles.footnote}>
-            {t('settings.screenshots_disabled_desc', 'Stop others from screenshotting or recording your profile and chats')}
-          </Text>
+            <EditorHairline />
+            <EditorField
+              label={t('edit_profile.username_label')}
+              value={username}
+              onChangeText={onUsernameChange}
+              placeholder="username"
+              prefix="@"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType={Platform.OS === 'ios' ? 'ascii-capable' : 'visible-password'}
+            />
+          </SettingsSection>
+
+          <SettingsSection>
+            <EditorField
+              label={t('edit_profile.bio_label')}
+              value={bio}
+              onChangeText={onBioChange}
+              placeholder={t('edit_profile.bio_placeholder')}
+              multiline
+              maxLength={150}
+              showCounter
+            />
+          </SettingsSection>
+
+          {/* Links: each one as the service it was recognised as (tile + name), the address under it.
+              Tap to edit, the cross removes it. Up to three. */}
+          <EditorSectionHeader title={t('edit_profile.links')} right={`${links.length}/3`} />
+          <SettingsSection>
+            {links.map((link, index) => (
+              <React.Fragment key={`${index}:${link.url}`}>
+                {index > 0 ? <EditorHairline inset={60} /> : null}
+                <EditorLinkRow
+                  url={link.url}
+                  index={index}
+                  onEdit={handleEditLink}
+                  onRemove={handleRemoveLink}
+                  removeLabel={t('edit_profile.link_remove')}
+                />
+              </React.Fragment>
+            ))}
+            {links.length < 3 ? (
+              <>
+                {links.length > 0 ? <EditorHairline inset={60} /> : null}
+                <EditorAddLinkRow label={t('edit_profile.add_link')} onPress={handleAddLink} />
+              </>
+            ) : null}
+          </SettingsSection>
+
+          {/* Privacy — owner-controlled screenshot lock. Per-account: the flag is saved on the profile
+              row and read by anyone viewing this account, so no per-second polling. */}
+          <SettingsSection footer={t('settings.screenshots_disabled_desc', 'Stop others from screenshotting or recording your profile and chats')}>
+            <SettingsRow
+              icon="no-photography"
+              iconTint="red"
+              label={t('settings.screenshots_disabled', 'Disable screenshots')}
+              labelLines={2}
+              showChevron={false}
+              rightElement={
+                <Switch
+                  value={screenshotsDisabled}
+                  onValueChange={setScreenshotsDisabled}
+                  // iOS system greys for the off track: `border.light` is the card's own colour in
+                  // the dark palette, which made the switch's track vanish into the row.
+                  trackColor={{ false: switchOffTrack, true: accent }}
+                  ios_backgroundColor={switchOffTrack}
+                  thumbColor="#FFFFFF"
+                />
+              }
+              isLast
+            />
+          </SettingsSection>
         </View>
       </ScrollView>
 
-      {/* Emoji picker — same SlideUpSheet as the post 3-dots menu so the
-          height, corners, and animation match exactly. */}
-      <SlideUpSheet visible={showEmojiPicker} onClose={() => setShowEmojiPicker(false)}>
-        <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 8 }}>
-          {t('edit_profile.emoji_title')}
-        </Text>
-        <View style={[styles.emojiPreviewWrap, { borderColor: accent, backgroundColor: accent + '15' }]}>
-          <RNText style={styles.emojiPreviewText} allowFontScaling={false}>
-            {selectedEmoji}
-          </RNText>
-        </View>
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          style={{ maxHeight: SCREEN_HEIGHT * 0.45 }}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8 }}
-        >
-          {MOOD_CATEGORIES.map((category) => (
-            <View key={category.titleKey} style={{ marginBottom: 16 }}>
-              <Text
-                variant="caption"
-                weight="semibold"
-                color={theme.colors.text.secondary}
-                style={{ marginBottom: 8, paddingHorizontal: 4 }}
-              >
-                {t(category.titleKey)}
-              </Text>
-              <View style={styles.emojiGrid}>
-                {category.emojis.map((e) => {
-                  const active = selectedEmoji === e;
-                  return (
-                    <Pressable
-                      key={e}
-                      onPress={() => {
-                        setSelectedEmoji(e);
-                        beginEditing();
-                        setShowEmojiPicker(false);
-                      }}
-                      style={[
-                        styles.emojiCell,
-                        {
-                          backgroundColor: active ? accent + '30' : bgSecondary,
-                          borderColor: active ? accent : 'transparent',
-                          borderWidth: active ? 2 : 0,
-                        },
-                      ]}
-                    >
-                      <RNText style={styles.emojiCellText} allowFontScaling={false}>
-                        {e}
-                      </RNText>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-          ))}
-        </ScrollView>
-      </SlideUpSheet>
+      {/* Same SlideUpSheet as the rest of the app; the grid inside is virtualised (see the component). */}
+      <EmojiPickerSheet
+        visible={showEmojiPicker}
+        selected={selectedEmoji}
+        onPick={pickEmoji}
+        onClose={closeEmojiPicker}
+      />
 
-      {/* ── NOW THE STANDARD SHEET, AND THE OLD REASON NOT TO IS STALE ────────
-          Asked for: this should be the same modal the rest of the app uses.
+      {/* One field, no type picker: the service is recognised from the link. */}
+      <LinkEditorSheet
+        visible={showLinkPicker}
+        initialUrl={editingLinkIndex !== null ? links[editingLinkIndex]?.url ?? '' : ''}
+        isEdit={editingLinkIndex !== null}
+        onClose={closeLinkPicker}
+        onSave={handleSaveLink}
+        onRemove={handleRemoveEditingLink}
+      />
 
-          It was a bespoke `Modal` + `Pressable` backdrop + `KeyboardAvoidingView` + hand-rolled card
-          and grabber, and the comment justifying that said: "Stays a regular Modal because it needs
-          the keyboard to push its content up; SlideUpSheet's static-bottom anchoring would let the
-          keyboard cover the input."
-
-          That was true when it was written and is not true now. `SlideUpSheet` wraps its content in a
-          `KeyboardAvoidingView` — and the comment beside it there reads "requirement is recorded at
-          length in app/profile/edit.tsx, which hit it first", i.e. the sheet was taught to handle the
-          keyboard BECAUSE of this screen. The capability landed; this call site was never migrated,
-          and its comment kept asserting the old limitation.
-
-          What the sheet now provides that this code was duplicating: the grabber, the backdrop and its
-          fade, drag-to-dismiss, the bottom safe-area spacer, and `ModalStatusBar`. So the local
-          `linkPickerBackdrop` / `linkPickerWrap` / `linkPickerCard` / `linkPickerHandle` /
-          `linkPickerHandleBar` styles are gone with it. */}
-      <SlideUpSheet visible={showLinkPicker} onClose={() => setShowLinkPicker(false)}>
-        <View style={{ paddingHorizontal: 16 }}>
-            <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
-              {editingLinkIndex !== null
-                ? t('edit_profile.link_edit_title')
-                : t('edit_profile.link_add_title')}
-            </Text>
-            <Text
-              variant="caption"
-              weight="medium"
-              color={theme.colors.text.secondary}
-              style={{ marginBottom: 8 }}
-            >
-              {t('edit_profile.link_type')}
-            </Text>
-            <View style={styles.linkTypeRow}>
-              {LINK_TYPES.map((lt) => {
-                const active = linkType === lt.key;
-                return (
-                  <Pressable
-                    key={lt.key}
-                    onPress={() => setLinkType(lt.key)}
-                    style={[
-                      styles.linkTypePill,
-                      {
-                        backgroundColor: active ? accent + '20' : bgSecondary,
-                        borderColor: active ? accent : 'transparent',
-                        borderWidth: active ? 1.5 : 0,
-                      },
-                    ]}
-                  >
-                    <Feather
-                      name={lt.icon as any}
-                      size={14}
-                      color={active ? accent : theme.colors.text.tertiary}
-                    />
-                    <Text
-                      variant="caption"
-                      weight={active ? 'semibold' : 'regular'}
-                      color={active ? accent : theme.colors.text.secondary}
-                    >
-                      {lt.key === 'website' ? t('edit_profile.link_website') : lt.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <Input
-              label="URL"
-              value={linkUrl}
-              onChangeText={(text) => {
-                setLinkUrl(text);
-                const detected = detectLinkTypeFromUrl(text);
-                if (detected !== 'website' || text.length > 10) setLinkType(detected);
-              }}
-              placeholder="https://..."
-              style={{ marginBottom: 20 }}
-            />
-            <Pressable
-              onPress={handleSaveLink}
-              style={[styles.linkPickerSave, { backgroundColor: accent }]}
-            >
-              <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-                {editingLinkIndex !== null
-                  ? t('edit_profile.link_save')
-                  : t('edit_profile.link_add')}
-              </Text>
-            </Pressable>
-        </View>
-      </SlideUpSheet>
-
-      {/* Banner position editor — drag + pinch the picked image inside
-          a 300-tall banner-shaped frame, then save. Reanimated drives
-          everything on the UI thread so the gesture stays at 60fps even
-          while the JS thread is busy with the rest of the form. The
-          GestureHandlerRootView wrapper inside the Modal is mandatory —
-          gesture handlers don't propagate into RN's portal-rendered
-          modals from the app-level root. */}
-      <BannerPositionEditorModal
+      {/* Banner position editor: drag and pinch the picked image in a centred frame. */}
+      <BannerPositionEditor
         visible={showBannerEditor}
         uri={bannerUri}
         initial={bannerTransform}
@@ -870,276 +640,6 @@ export default function EditProfileScreen() {
     </View>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────
-// Banner position editor
-// ─────────────────────────────────────────────────────────────────────────
-// The picked image lives inside a banner-shaped frame; the user drags +
-// pinches to position. Gestures drive shared values via reanimated, so
-// the entire transform pipeline runs on the UI thread without crossing
-// the JS bridge — which matters because the parent screen is doing a lot
-// of other work (form state, image cache invalidations, etc.).
-//
-// On save, the committed shared values are read back via runOnJS into a
-// plain `BannerTransform` object and handed to the parent via `onSave`.
-// Cancel restores the editor's saved state; the parent's transform stays
-// untouched.
-interface BannerPositionEditorModalProps {
-  visible: boolean;
-  uri: string | null;
-  initial: BannerTransform;
-  onCancel: () => void;
-  onSave: (transform: BannerTransform) => void;
-}
-
-function BannerPositionEditorModal({
-  visible,
-  uri,
-  initial,
-  onCancel,
-  onSave,
-}: BannerPositionEditorModalProps) {
-  const theme = useTheme();
-  const insets = useSafeAreaInsets();
-  const t = useT();
-
-  // Live values driven by the gestures.
-  const translateX = useSharedValue(initial.translateX);
-  const translateY = useSharedValue(initial.translateY);
-  const scale = useSharedValue(initial.scale);
-  // Snapshot of the values at the start of each gesture so the live
-  // delta can be applied on top — keeps successive pans/pinches from
-  // resetting position back to (0,0,1).
-  const savedTranslateX = useSharedValue(initial.translateX);
-  const savedTranslateY = useSharedValue(initial.translateY);
-  const savedScale = useSharedValue(initial.scale);
-
-  // Re-seed the shared values whenever the modal opens against a
-  // potentially different `initial`. Without this, opening the editor
-  // a second time after a Cancel would still show the previously
-  // committed in-modal state.
-  useEffect(() => {
-    if (!visible) return;
-    translateX.value = initial.translateX;
-    translateY.value = initial.translateY;
-    scale.value = initial.scale;
-    savedTranslateX.value = initial.translateX;
-    savedTranslateY.value = initial.translateY;
-    savedScale.value = initial.scale;
-  }, [visible, initial.translateX, initial.translateY, initial.scale]);
-
-  // Pan: translates the cover-fitted image inside the frame. No
-  // hard clamp here — at 1× the user can drag the edge inwards to
-  // intentionally show the background tint, which is fine; the
-  // serializer's MAX_TRANSLATE guard catches anything pathological.
-  const panGesture = Gesture.Pan()
-    .onStart(() => {
-      savedTranslateX.value = translateX.value;
-      savedTranslateY.value = translateY.value;
-    })
-    .onUpdate((e) => {
-      translateX.value = savedTranslateX.value + e.translationX;
-      translateY.value = savedTranslateY.value + e.translationY;
-    })
-    .onEnd(() => {
-      savedTranslateX.value = translateX.value;
-      savedTranslateY.value = translateY.value;
-    });
-
-  // Pinch: clamps to 1×–3× per the spec. Hard clamp during the gesture
-  // means the visible value can never escape bounds, so onEnd can just
-  // commit the current value without a spring snap-back.
-  const pinchGesture = Gesture.Pinch()
-    .onStart(() => {
-      savedScale.value = scale.value;
-    })
-    .onUpdate((e) => {
-      const next = savedScale.value * e.scale;
-      if (next < MIN_SCALE) scale.value = MIN_SCALE;
-      else if (next > MAX_SCALE) scale.value = MAX_SCALE;
-      else scale.value = next;
-    })
-    .onEnd(() => {
-      savedScale.value = scale.value;
-    });
-
-  const composedGesture = Gesture.Simultaneous(panGesture, pinchGesture);
-
-  const animatedImageStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
-    ],
-  }));
-
-  // Commit the live transform back to the JS thread on save.
-  const handleSave = () => {
-    const next: BannerTransform = {
-      translateX: translateX.value,
-      translateY: translateY.value,
-      scale: scale.value,
-    };
-    onSave(next);
-  };
-
-  if (!uri) return null;
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onCancel}
-      statusBarTranslucent
-    >
-      {/* GestureHandlerRootView is required inside Modal — RN portals the
-          modal contents outside the app's gesture root, so handlers
-          attached to <GestureDetector> wouldn't fire without this. */}
-      <GestureHandlerRootView style={editorStyles.root}>
-        <View style={[editorStyles.dim, { paddingTop: insets.top }]}>
-          <View style={editorStyles.headerRow}>
-            <Pressable
-              onPress={onCancel}
-              hitSlop={10}
-              style={editorStyles.headerBtn}
-            >
-              <RNText style={editorStyles.headerBtnText} allowFontScaling={false}>
-                {t('edit_profile.banner.cancel')}
-              </RNText>
-            </Pressable>
-            <RNText
-              style={editorStyles.headerTitle}
-              allowFontScaling={false}
-              numberOfLines={1}
-            >
-              {t('edit_profile.banner.editor_title')}
-            </RNText>
-            <Pressable
-              onPress={handleSave}
-              hitSlop={10}
-              style={[editorStyles.headerBtn, editorStyles.headerBtnSave]}
-            >
-              <RNText
-                style={[editorStyles.headerBtnText, editorStyles.headerBtnSaveText]}
-                allowFontScaling={false}
-              >
-                {t('edit_profile.banner.save')}
-              </RNText>
-            </Pressable>
-          </View>
-
-          {/* Banner-shaped frame containing the gesture-driven image.
-              `overflow: 'hidden'` clips the transformed image to the
-              frame so the user only ever sees what would render on
-              the actual profile screen. */}
-          <View
-            style={[
-              editorStyles.frame,
-              {
-                width: SCREEN_WIDTH,
-                height: BANNER_EDIT_HEIGHT,
-                backgroundColor: theme.colors.accent.primary + '33',
-              },
-            ]}
-          >
-            <GestureDetector gesture={composedGesture}>
-              <Animated.View style={[StyleSheet.absoluteFill, animatedImageStyle]}>
-                <CachedImage
-                  uri={uri}
-                  style={StyleSheet.absoluteFillObject}
-                  resizeMode="cover"
-                  proxyWidth={800}
-                />
-              </Animated.View>
-            </GestureDetector>
-            {/* Subtle inset border so the frame edge is visible against
-                the dimmed backdrop even when the image is light. */}
-            <View pointerEvents="none" style={editorStyles.frameBorder} />
-          </View>
-
-          <View style={editorStyles.hintWrap} pointerEvents="none">
-            <View style={editorStyles.hintPill}>
-              <Feather name="move" size={12} color="#FFFFFF" />
-              <RNText style={editorStyles.hintText} allowFontScaling={false}>
-                {t('edit_profile.banner.editor_hint')}
-              </RNText>
-            </View>
-          </View>
-        </View>
-      </GestureHandlerRootView>
-    </Modal>
-  );
-}
-
-const editorStyles = StyleSheet.create({
-  root: { flex: 1 },
-  dim: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.92)',
-    alignItems: 'center',
-  },
-  headerRow: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  headerBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-  },
-  headerBtnSave: {
-    backgroundColor: 'rgba(255,255,255,0.95)',
-  },
-  headerBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  headerBtnSaveText: {
-    color: '#000000',
-  },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-    flex: 1,
-    textAlign: 'center',
-    marginHorizontal: 8,
-  },
-  frame: {
-    overflow: 'hidden',
-    marginTop: 24,
-  },
-  frameBorder: {
-    ...StyleSheet.absoluteFillObject,
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.18)',
-  },
-  hintWrap: {
-    marginTop: 28,
-    alignItems: 'center',
-  },
-  hintPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-  },
-  hintText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-});
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
@@ -1276,105 +776,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // The fields used to live in `cardSection` (marginHorizontal 16 + padding 16). Dropping the card
-  // and keeping only its outer margin is what makes the inputs 16 pt wider on each side.
-  fieldsGroup: {
-    marginHorizontal: 16,
-  },
-  cardSection: {
-    marginHorizontal: 16,
-    padding: 16,
-    borderRadius: 18,
-    borderWidth: 0.5,
-    marginBottom: 16,
-  },
-  // No card: the section is only its outer margin, like `fieldsGroup`.
-  linksSection: {
-    marginHorizontal: 16,
-    marginTop: 8,
-  },
-  linksHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 6,
-    marginBottom: 8,
-  },
-  // Same shape as the labelled inputs above (radius 18), so links read as more fields.
-  linkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  // The grouped cards (SettingsSection) carry their own geometry; this is only the column they sit in.
+  form: {
     paddingHorizontal: 16,
-    minHeight: 52,
-    borderRadius: 18,
-    marginBottom: 8,
-    gap: 12,
-  },
-  linkRowText: { flex: 1 },
-  addLinkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    minHeight: 52,
-    borderRadius: 18,
-  },
-  privacyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 14,
-    paddingHorizontal: 16,
-    minHeight: 52,
-    borderRadius: 18,
-  },
-  privacyTextWrap: { flex: 1 },
-  footnote: { paddingHorizontal: 6, marginTop: 8, lineHeight: 17 },
-  emojiPreviewWrap: {
-    alignSelf: 'center',
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    marginBottom: 12,
-  },
-  emojiPreviewText: emojiTextStyle(36),
-  emojiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  emojiCell: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emojiCellText: emojiTextStyle(24),
-  // `linkPickerBackdrop`, `linkPickerWrap`, `linkPickerCard`, `linkPickerHandle` and
-  // `linkPickerHandleBar` were removed with the bespoke link modal — `SlideUpSheet` supplies the
-  // backdrop, the card, the grabber and the bottom inset itself.
-  linkTypeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
-  },
-  linkTypePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  linkPickerSave: {
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
+    marginTop: 4,
   },
 });

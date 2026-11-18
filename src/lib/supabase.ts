@@ -415,9 +415,15 @@ export async function toggleLike(_userId: string, postId: string): Promise<{ lik
   return { liked: !!data?.liked, error: null };
 }
 
-export async function createComment(postId: string, _authorId: string, content: string, clientMutationId?: string): Promise<{ error: string | null }> {
-  const { error } = await apiPost(`/v1/posts/${encodeURIComponent(postId)}/comments`, { content, ...(clientMutationId ? { clientMutationId } : {}) });
-  return { error };
+/**
+ * The Worker answers with the stored comment, author embedded (the same shape the comments list
+ * returns), so a caller can show it without fetching the thread again. `null` when the response did
+ * not carry a usable row.
+ */
+export async function createComment(postId: string, _authorId: string, content: string, clientMutationId?: string): Promise<{ error: string | null; comment: any | null }> {
+  const { data, error } = await apiPost<any>(`/v1/posts/${encodeURIComponent(postId)}/comments`, { content, ...(clientMutationId ? { clientMutationId } : {}) });
+  const comment = !error && data && typeof data === 'object' && data.id && data.created_at ? data : null;
+  return { error, comment };
 }
 
 export async function updateComment(commentId: string, _authorId: string, content: string): Promise<{ error: string | null }> {

@@ -304,12 +304,16 @@ const en: Record<string, string> = {
   'edit_profile.link_type': 'Type',
   'edit_profile.link_save': 'Save',
   'edit_profile.link_add': 'Add',
+  'edit_profile.link_hint': 'Paste a link — the service is recognised automatically',
+  'edit_profile.link_remove': 'Remove link',
+  'edit_profile.username_invalid': 'at least 2 characters: a–z, 0–9 and _',
   // Banner position editor (drag + pinch) — shown after picking a banner
   // image, or via the "Position" pill on an existing banner.
   'edit_profile.banner.editor_title': 'Position banner',
   'edit_profile.banner.editor_hint': 'Drag and pinch to position',
   'edit_profile.banner.save': 'Save',
   'edit_profile.banner.cancel': 'Cancel',
+  'edit_profile.banner.reset': 'Reset',
   'edit_profile.banner.adjust': 'Position',
 
   // ─── Emoji categories ──────────────────────────────────────────────────

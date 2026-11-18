@@ -11,7 +11,7 @@
  * a profile with a full cached page mounted all thirty cards (text formatting, link previews,
  * thumbnails) in the same commit as the push animation, which is the lag seen on opening a profile.
  */
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, InteractionManager, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator, type LayoutChangeEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -89,6 +89,8 @@ export interface ProfileStickyTabs {
   scrollY: Animated.Value;
   top: number;
   bottomPad: number;
+  /** Height of what floats over the bottom of the screen (the tab bar on the own profile), or 0. */
+  chromeBottom?: number;
 }
 
 const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; onChange: (k: TabKey) => void }) {
@@ -239,6 +241,11 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
     const y = e.nativeEvent.layout.y;
     setStripY((prev) => (prev !== null && Math.abs(prev - y) < 0.5 ? prev : y));
   }, []);
+  // The strip's own height, for the post menu's visible band. A ref: read only when a menu opens.
+  const stripHRef = useRef(48);
+  const onStripLayout = useCallback((e: LayoutChangeEvent) => {
+    stripHRef.current = e.nativeEvent.layout.height;
+  }, []);
   const scrollY = sticky?.scrollY;
   const stickyTop = sticky?.top ?? 0;
   const stickAt = stripY === null ? null : Math.max(0, stripY - stickyTop);
@@ -304,7 +311,7 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
 
   return (
     <View style={[styles.wrap, wrapMinHeight ? { minHeight: wrapMinHeight } : null]} onLayout={sticky ? onWrapLayout : undefined}>
-      <Animated.View style={[styles.stickyLayer, stickTranslate ? { transform: [{ translateY: stickTranslate }] } : null]}>
+      <Animated.View onLayout={onStripLayout} style={[styles.stickyLayer, stickTranslate ? { transform: [{ translateY: stickTranslate }] } : null]}>
         {/* Fades the posts out under the status bar once the strip is pinned. A sibling of the
             strip, never its ancestor: an alpha on a glass view's ancestor drops the glass. */}
         {sticky && scrimOpacity ? (
@@ -393,6 +400,14 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
           isOwn={isOwn}
           authorName={author.name}
           onClose={closeMenu}
+          // A card scrolled partly under the pinned tabs (or the tab bar) must not light them up
+          // through the menu's cut-out. Cards never sit above the strip, so its pinned position is
+          // the top of the band whether or not it is pinned right now.
+          visibleBounds={
+            sticky
+              ? { top: stickyTop + stripHRef.current, bottom: winHeight - (sticky.chromeBottom ?? 0) }
+              : undefined
+          }
         />
       ) : null}
     </View>

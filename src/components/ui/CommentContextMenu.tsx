@@ -38,11 +38,13 @@ interface CommentContextMenuProps {
   replyUser?: string;
   replyText?: string;
   gifUrl?: string | null;
+  /** Window band between the screen's header and its composer; the lit cut-out is clipped to it. */
+  visibleBounds?: { top: number; bottom: number };
   onClose: () => void;
   onAction: (action: CommentAction, comment: any) => void;
 }
 
-export function CommentContextMenu({ visible, comment, isOwn, displayBody, gifUrl, onClose, onAction }: CommentContextMenuProps) {
+export function CommentContextMenu({ visible, comment, isOwn, displayBody, gifUrl, visibleBounds, onClose, onAction }: CommentContextMenuProps) {
   const t = useT();
   const menuRef = useRef<ActionMenuHandle>(null);
   const body: string = displayBody ?? comment?.content ?? '';
@@ -80,6 +82,7 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, gifUr
         anchor={anchor}
         // The held comment stays lit in a cut-out of the dim.
         spotlightRadius={16}
+        spotlightBounds={visibleBounds}
         align="left"
         top={top}
         items={items}

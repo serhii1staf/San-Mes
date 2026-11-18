@@ -304,12 +304,16 @@ const ru: Record<string, string> = {
   'edit_profile.link_type': 'Тип',
   'edit_profile.link_save': 'Сохранить',
   'edit_profile.link_add': 'Добавить',
+  'edit_profile.link_hint': 'Вставьте ссылку — сервис определится сам',
+  'edit_profile.link_remove': 'Удалить ссылку',
+  'edit_profile.username_invalid': 'от 2 символов: латиница, цифры и _',
   // Banner position editor (drag + pinch) — shown after picking a banner
   // image, or via the "Position" pill on an existing banner.
   'edit_profile.banner.editor_title': 'Расположение баннера',
   'edit_profile.banner.editor_hint': 'Перетащите и масштабируйте',
   'edit_profile.banner.save': 'Сохранить',
   'edit_profile.banner.cancel': 'Отмена',
+  'edit_profile.banner.reset': 'Сбросить',
   'edit_profile.banner.adjust': 'Расположить',
 
   // ─── Emoji categories ──────────────────────────────────────────────────
