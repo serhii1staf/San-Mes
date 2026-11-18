@@ -15,7 +15,9 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import Reanimated from 'react-native-reanimated';
+import { useKeyboardRiseStyle } from '../../src/hooks/useKeyboardFrames';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -133,10 +135,13 @@ export default function NewPostScreen() {
   // ── THE PHOTO BUTTON WAS UNDER THE KEYBOARD ─────────────────────────────────
   // Reported on iPhone: the field autofocuses, the keyboard comes up, and the toolbar with «Фото»
   // stays behind it. RN's KeyboardAvoidingView measures against the window, but this screen is a
-  // page sheet that starts lower than the window top, so its padding came out short. The toolbar is
-  // now a KeyboardStickyView (react-native-keyboard-controller, already driving every composer in
-  // the app): it rides exactly on the keyboard's top edge, and the text scrolls above it.
+  // page sheet that starts lower than the window top, so its padding came out short. The toolbar now
+  // rides the keyboard frame by frame (`useKeyboardFrames`, as every composer in the app does), 8 pt
+  // above the keys, and the text scrolls above it. It was a KeyboardStickyView, which on iOS writes
+  // its end position once and jumped there whenever a React commit was in flight, as one always is
+  // here: the field autofocuses while the sheet is still opening.
   const bottomPad = Math.max(insets.bottom, 12);
+  const toolbarRiseStyle = useKeyboardRiseStyle(bottomPad);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -199,9 +204,9 @@ export default function NewPostScreen() {
         ) : null}
       </KeyboardAwareScrollView>
 
-      {/* `opened` pulls the bar down by its own safe-area padding while the keyboard is up (the
+      {/* The bar keeps its safe-area padding and rises by what the keyboard covers beyond it (the
           keyboard already covers the home indicator), leaving an 8 pt gap above the keys. */}
-      <KeyboardStickyView offset={{ closed: 0, opened: bottomPad - 8 }} style={styles.toolbarDock}>
+      <Reanimated.View style={[styles.toolbarDock, toolbarRiseStyle]}>
       <View style={[styles.toolbar, { paddingBottom: bottomPad, borderTopColor: theme.colors.border.light, backgroundColor: theme.colors.background.primary }]}>
         <Pressable
           onPress={pickPhotos}
@@ -218,7 +223,7 @@ export default function NewPostScreen() {
         <View style={{ flex: 1 }} />
         <Text variant="caption" color={theme.colors.text.tertiary}>{text.length}/{MAX_CHARS}</Text>
       </View>
-      </KeyboardStickyView>
+      </Reanimated.View>
     </View>
   );
 }

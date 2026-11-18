@@ -1,9 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, LayoutAnimation, UIManager, InteractionManager, Animated, Alert, Share } from 'react-native';
-import type { ScrollViewProps } from 'react-native';
-import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
-import { ChatKeyboardScrollView } from '../../src/components/ui/ChatKeyboardScrollView';
+import Reanimated from 'react-native-reanimated';
+import { useKeyboardRiseStyle } from '../../src/hooks/useKeyboardFrames';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -321,33 +319,24 @@ export default function AIChatScreen() {
     [t],
   );
 
-  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const INPUT_BAR = 60;
-  // Inverted-list keyboard lift — now handled NATIVELY by the official
-  // KeyboardChatScrollView (via `renderScrollComponent` below). The library
-  // repositions chat content on keyboard open/close with the default "always"
-  // (Telegram/WhatsApp) lift, so the old per-frame translateY list-wrapper
-  // (which relayout-jumped on the first focus and on dismiss) is gone. The
-  // bottom spacer stays a STATIC height — it only reserves room for the
-  // floating input bar while the keyboard is closed.
   // The floating music mini-player (MusicBottomIndicator, bottom: 102) sits over the end of the
   // transcript while a track is loaded; reserve its height so the newest reply is not under it.
   const musicBarShown = useMusicStore((s) => !!s.current && !s.playerOpen);
   const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom + (musicBarShown ? 96 : 0);
 
-  // Stable renderScrollComponent — FlatList requires a stable reference so it
-  // doesn't tear down / rebuild the scroll view on every render. The wrapper
-  // also receives `inverted` so its internal lift math matches the list.
-  const renderScrollComponent = useCallback(
-    (p: ScrollViewProps) => <ChatKeyboardScrollView {...p} inverted />,
-    [],
-  );
-
-  // Bottom padding under the input: safe-area when keyboard closed → small gap when open.
-  const inputPadStyle = useAnimatedStyle(() => {
-    const open = Math.abs(keyboardHeight.value) > 1;
-    return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 16) };
-  });
+  // ── THE COMPOSER AND THE TRANSCRIPT RISE WITH THE KEYBOARD, FRAME BY FRAME ──
+  //
+  // Reported for every chat: the field sometimes rose with the keyboard and sometimes jumped to its
+  // place first. This screen used KeyboardStickyView for the field and KeyboardChatScrollView for the
+  // list, and on iOS both write their end position once, at keyboardWillShow, which lands late (a
+  // jump) whenever a React commit is in flight. See `useKeyboardFrames`. Now one per-frame transform
+  // moves both by the same amount, as in the user chat, so the gap above the field never changes.
+  // The padding under the field stays at its resting value: it used to drop to 8 as the keyboard
+  // started to move, which was itself a jump by the safe-area height.
+  const restPad = insets.bottom > 0 ? insets.bottom : 16;
+  const inputPadStyle = useMemo(() => ({ paddingBottom: restPad }), [restPad]);
+  const riseStyle = useKeyboardRiseStyle(restPad);
   const [remaining, setRemaining] = useState(() => getRemainingRequestsSync());
   const flatListRef = useRef<FlatList>(null);
 
@@ -929,35 +918,38 @@ export default function AIChatScreen() {
         icon="memory"
       />
 
-      {/* Inverted FlatList — newest at bottom. Content repositioning on
-          keyboard open/close is handled natively by KeyboardChatScrollView
-          via `renderScrollComponent` (default "always" lift). The bottom
-          spacer below stays a STATIC height — it only reserves room for the
-          floating input bar while the keyboard is closed. */}
-      <FlatList
-        ref={flatListRef}
-        data={invertedData}
-        keyExtractor={keyExtractor}
-        inverted
-        renderScrollComponent={renderScrollComponent}
-        contentContainerStyle={listContentStyle}
-        renderItem={renderItem}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-        removeClippedSubviews={false}
-        // Tightened from 12/8/9 — same fix as chat/music. 12 MessageBubbles
-        // on first paint piled up on the navigation transition frame.
-        initialNumToRender={6}
-        maxToRenderPerBatch={4}
-        windowSize={5}
-        ListHeaderComponent={listHeader}
-        ListFooterComponent={listFooter}
-        ListEmptyComponent={listEmpty}
-      />
+      {/* Inverted FlatList — newest at bottom. The whole list rides up with the
+          keyboard on `riseStyle`, the composer's own transform, so the newest
+          message keeps its distance from the field while the keyboard moves.
+          The bottom spacer stays a STATIC height: it only reserves room for the
+          floating input bar. */}
+      <Reanimated.View style={[{ flex: 1 }, riseStyle]}>
+        <FlatList
+          ref={flatListRef}
+          data={invertedData}
+          keyExtractor={keyExtractor}
+          inverted
+          contentContainerStyle={listContentStyle}
+          renderItem={renderItem}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          automaticallyAdjustContentInsets={false}
+          contentInsetAdjustmentBehavior="never"
+          removeClippedSubviews={false}
+          // Tightened from 12/8/9 — same fix as chat/music. 12 MessageBubbles
+          // on first paint piled up on the navigation transition frame.
+          initialNumToRender={6}
+          maxToRenderPerBatch={4}
+          windowSize={5}
+          ListHeaderComponent={listHeader}
+          ListFooterComponent={listFooter}
+          ListEmptyComponent={listEmpty}
+        />
+      </Reanimated.View>
 
       {/* Static under-input fade — pinned to the screen bottom and kept
-          OUTSIDE the KeyboardStickyView so it does NOT ride up with the
+          OUTSIDE the rising composer so it does NOT ride up with the
           keyboard. Mirrors the user-chat under-input gradient: the solid
           input container is gone, so messages scroll UNDER the input and
           dissolve into the background instead of hitting a hard bar edge. */}
@@ -970,9 +962,9 @@ export default function AIChatScreen() {
 
       {/* Input — sticks to keyboard (smooth, no lag). No solid backgroundColor:
           the fade above supplies the darkening so the input floats over content
-          like the user chat. */}
-      <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
-        <Reanimated.View style={[{ paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
+          like the user chat. Rides the keyboard on `riseStyle` (see there). */}
+      <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, riseStyle]}>
+        <View style={[{ paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
           {/* Commands drawer — anchored ABOVE the input row, slides in via
               LayoutAnimation when toggled. Same pattern as Music chat. */}
           {commandsOpen ? (
@@ -1134,8 +1126,8 @@ export default function AIChatScreen() {
               </View>
             )}
           </View>
-        </Reanimated.View>
-      </KeyboardStickyView>
+        </View>
+      </Reanimated.View>
 
       {/* Emoji picker — auto-shown during the create_emoji / edit_emoji
           steps. Closing without a pick cancels the flow back to idle so

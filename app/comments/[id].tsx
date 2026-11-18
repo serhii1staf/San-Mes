@@ -24,6 +24,7 @@ import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { useShortAgo } from '../../src/utils/shortAgo';
+import { compareIso } from '../../src/utils/compareIso';
 import Skeleton from '../../src/components/ui/Skeleton';
 import { useStaggeredReveal, useStaggeredGifReveal, setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { CommentContextMenu, CommentAction, rememberCommentAnchor } from '../../src/components/ui/CommentContextMenu';
@@ -214,8 +215,9 @@ function mergeCommentPages(prev: any[], page: any[]): any[] {
   for (const c of prev) if (c && c.id != null) byId.set(String(c.id), c);
   for (const c of page) if (c && c.id != null) byId.set(String(c.id), c);
   const out = Array.from(byId.values());
-  // `created_at` is ISO-8601 from the Worker, so lexicographic order IS chronological order.
-  out.sort((a, b) => String(a?.created_at || '').localeCompare(String(b?.created_at || '')));
+  // `created_at` is ISO-8601 from the Worker, so lexicographic order IS chronological order. Plain
+  // character order, not `localeCompare`, which runs the locale collator per comparison.
+  out.sort((a, b) => compareIso(String(a?.created_at || ''), String(b?.created_at || '')));
   return reconcileComments(prev, out);
 }
 
@@ -557,6 +559,8 @@ export default function CommentsScreen() {
   // an actionable starting point. Skipped when the monitor is off.
   // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
   // Measured from here it under-reported: every hook above it fell outside the window.
+  // Read only as "is the keyboard up or on its way up" when a panel opens (on iOS it jumps to the
+  // end value at the start of each move). Nothing on screen is positioned from it; see `kbFrames`.
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
   // ── Media panel (emoji / GIF) state — mirrors the chat composer. ──────────
@@ -588,10 +592,12 @@ export default function CommentsScreen() {
   const emojiPanelSV = useSharedValue(300);
   const EMOJI_GAP = 8;
 
-  const inputPadStyle = useAnimatedStyle(() => {
-    const open = Math.abs(keyboardHeight.value) > 1 || liftSV.value > 0.5;
-    return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 14) };
-  });
+  // The input row keeps its resting bottom padding at all times. It used to switch to 8 as soon as
+  // the keyboard started to move, a layout change that made the field jump by the safe-area height
+  // at the start of every keyboard move; the 8 pt gap above the keyboard now comes from the
+  // transform (`barWrapStyle`).
+  const restPad = insets.bottom > 0 ? insets.bottom : 14;
+  const inputPadStyle = useMemo(() => ({ paddingBottom: restPad }), [restPad]);
 
   // Compensate the KeyboardStickyView's `offset.opened` for the bottom-
   // docked browser widget. When the band is active it lives INSIDE the
@@ -609,64 +615,55 @@ export default function CommentsScreen() {
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const browserWidgetPosition = useEffectiveBrowserWidgetPosition();
   const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
-  // Keyboard-driven list repositioning is now handled NATIVELY by the official
-  // KeyboardChatScrollView (wired via `renderScrollComponent` on the FlatList
-  // below, default "always" lift). We keep `useKeyboardHandler` ONLY to capture
-  // the settled keyboard height so the emoji/GIF media panel can size itself to
-  // match the keyboard it replaces.
-  //
-  // The list still needs a PANEL-driven lift, though: when the media panel
-  // opens the keyboard is down (so KeyboardChatScrollView contributes nothing),
-  // yet the panel covers the bottom of the screen, so the list must shift up by
-  // the panel height to keep the last comment visible above it. `listShiftStyle`
-  // below carries only that panel lift.
-  // Capture the settled keyboard height so the media panel can match it.
-  // Guarded to ignore the close (height 0) — runs on the JS thread.
+  // Capture the settled keyboard height so the media panel can match it. A ref only: `openEmoji` /
+  // `openGif` copy it into the panel height when a panel actually opens. Setting state here
+  // re-rendered the whole screen at the end of every keyboard open whose height had changed.
   const captureKbHeight = useCallback((h: number) => {
-    if (h > 1) {
-      lastKbHeightRef.current = h;
-      emojiPanelSV.value = h;
-      setEmojiPanelHeight(h);
-    }
-  }, [emojiPanelSV]);
+    if (h > 1) lastKbHeightRef.current = h;
+  }, []);
+
+  // ── ONE SOURCE, FRAME BY FRAME, FOR EVERYTHING THAT MOVES WITH THE KEYBOARD ──
+  //
+  // Reported on iPhone: the comment field sometimes rose together with the keyboard and sometimes
+  // jumped to its final place first. Both the bar and the list followed
+  // `useReanimatedKeyboardAnimation`, which on iOS is written ONCE, at keyboardWillShow, straight to
+  // the end height; that only looks animated when Reanimated mounts it inside UIKit's keyboard
+  // animation, and a React commit in flight at that moment makes it land late, as a jump. Same cause
+  // and same fix as the chat (app/chat/[id].tsx, `kbFrames`): the keyboard's height frame by frame.
+  const kbFrames = useSharedValue(0);
   useKeyboardHandler(
     {
+      onMove: (e) => {
+        'worklet';
+        kbFrames.value = e.height;
+      },
+      onInteractive: (e) => {
+        'worklet';
+        kbFrames.value = e.height;
+      },
       onEnd: (e) => {
         'worklet';
+        kbFrames.value = e.height;
         runOnJS(captureKbHeight)(e.height);
       },
     },
     [],
   );
-  const listShiftStyle = useAnimatedStyle(() => {
-    // FULL monotonic list lift (chat-style). The comments list is now a
-    // FlashList, which does NOT support `renderScrollComponent`, so the native
-    // KeyboardChatScrollView path is gone — this transform owns the ENTIRE
-    // keyboard + panel lift on the UI thread (driven by the keyboard shared
-    // value, identical mechanism to `app/chat/[id].tsx`'s `listShiftY`).
-    //   lift = max(keyboardHeight, panelLift)
-    // Monotonic max() means opening the GIF/emoji panel while the keyboard is
-    // up produces ZERO net jump (the panel ≈ keyboard height), and the keyboard
-    // ↔ panel handoff is seamless. The input bar uses the same max() in
-    // `barWrapStyle`, so bar + list move together.
-    const raw = keyboardHeight.value;
-    const kb = raw < 0 ? -raw : raw;
-    const panelLift = liftSV.value * emojiPanelSV.value;
-    const lift = Math.max(kb, panelLift);
-    return { transform: [{ translateY: -lift }] };
-  });
 
-  // Input bar lift — replaces KeyboardStickyView so we can fold the media-panel
-  // lift into a MONOTONIC max(keyboardHeight, panelLift), eliminating the
-  // keyboard↔panel handoff jump (same approach as the chat composer).
+  // How far the composer rises: whatever the keyboard (or the emoji/GIF panel) covers beyond the
+  // row's resting bottom padding, so the field ends 8 pt above it. A MAX of keyboard and panel, so
+  // opening a panel while the keyboard is up (panel ≈ keyboard height) moves nothing, and the
+  // handoff can never dip and snap back. `stickyOpenedOffset`: with the browser widget docked at the
+  // bottom this screen ends 56 pt above the window bottom, and the keyboard first covers that band.
+  //
+  // The list moves by exactly as much as the bar (the same style), so the gap between the last
+  // comment and the field stays the same with the keyboard up, down or replaced by a panel.
+  const padDelta = restPad - 8;
   const barWrapStyle = useAnimatedStyle(() => {
-    const raw = keyboardHeight.value;
-    const kb = raw < 0 ? -raw : raw;
-    const panelLift = liftSV.value * emojiPanelSV.value;
-    const lift = Math.max(kb, panelLift);
-    const band = kb > 1 ? stickyOpenedOffset : 0;
-    return { transform: [{ translateY: -(lift - band) }] };
+    const lift = Math.max(kbFrames.value - stickyOpenedOffset, liftSV.value * emojiPanelSV.value);
+    return { transform: [{ translateY: -Math.max(0, lift - padDelta) }] };
   });
+  const listShiftStyle = barWrapStyle;
 
   // Slide the media panel up/down in sync with the bar lift. liftSV 0 → pushed
   // fully below the screen; liftSV 1 → resting in place.
@@ -2120,7 +2117,8 @@ export default function CommentsScreen() {
                 top: headerContentHeight,
                 bottom:
                   (composerTopRef.current ?? SCREEN_HEIGHT - insets.bottom - 64) -
-                  Math.max(keyboardUpRef.current, emojiOpen || gifOpen || keepLifted ? emojiPanelHeight : 0),
+                  // The composer rises by this less its resting padding (`barWrapStyle`).
+                  Math.max(0, Math.max(keyboardUpRef.current, emojiOpen || gifOpen || keepLifted ? emojiPanelHeight : 0) - padDelta),
               }}
               onClose={closeCommentMenu}
               onAction={handleMenuAction}

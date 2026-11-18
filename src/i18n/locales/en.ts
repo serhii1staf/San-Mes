@@ -496,6 +496,7 @@ const en: Record<string, string> = {
   'typing.many': '{n} people are typing…',
   'typing.someone': 'Typing…',
   'chat.photo': 'Photo',
+  'chat.deleted_account': 'Deleted account',
   'chat.photos_count': '{n} photos',
   'chat.open_fullscreen': 'Open fullscreen',
   'chat.pin': 'Pin',

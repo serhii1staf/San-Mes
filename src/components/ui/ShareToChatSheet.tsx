@@ -11,6 +11,7 @@ import { useEntityStore } from '../../services/entityStore';
 import { useT } from '../../i18n/store';
 import { showToast } from '../../store/toastStore';
 import { triggerHaptic } from '../../utils/haptics';
+import { compareIso } from '../../utils/compareIso';
 
 /**
  * "Send this to someone" sheet — pick a person, forward a post into the chat with them.
@@ -77,7 +78,7 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
       // Most recently active conversation first. `lastMessageAt` is ISO-8601, so a string compare IS a
       // chronological compare and needs no Date parsing per row.
       .slice()
-      .sort((a, b) => String(b?.lastMessageAt || '').localeCompare(String(a?.lastMessageAt || '')))
+      .sort((a, b) => compareIso(String(b?.lastMessageAt || ''), String(a?.lastMessageAt || '')))
       .slice(0, MAX_PEOPLE)
       .map((c) => ({
         userId: c.participantId,

@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { View, FlatList, ScrollView, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, ActivityIndicator, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, useRecyclingState, type FlashListRef } from '@shopify/flash-list';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -117,21 +117,69 @@ const PINNED_BAR_BAND = 46;
 // threshold would make the list chase older messages toward the top as they are prepended,
 // i.e. it would CAUSE the teleport rather than cure it.
 //
-// `autoscrollToBottomThreshold: 0.1` is deliberate and correct: when a new message arrives at
-// the bottom and the user is already near the newest message, follow it. That is the
-// stick-to-newest behaviour a chat wants.
+// (This list used to set `autoscrollToBottomThreshold: 0.1` as its stick-to-newest behaviour. That
+// was right while the list was not inverted, and wrong after; see below.)
 // ── INVERTED CONFIG ─────────────────────────────────────────────────────────────────
 //
 // `startRenderingFromBottom` is GONE, and its absence is deliberate. It existed to make a
 // non-inverted list open at its last row; an inverted list opens at index 0, which IS the newest
 // message, so asking for it again would be asking the list to start at the oldest end.
 //
-// `autoscrollToBottomThreshold` is KEPT and still means the right thing. New messages arrive at
-// index 0 — the anchored end — so this is the stick-to-newest behaviour a chat wants: follow a
-// new message when the user is already near it, leave them alone when they are reading history.
+// ── AND NO THRESHOLD: THE NOTES ABOVE WERE WRITTEN FOR THE NON-INVERTED LIST ─────────
 //
-// The note below about `autoscrollToTopThreshold` still applies and still says do not add it.
-const MVCP_INVERTED = { autoscrollToBottomThreshold: 0.1 } as const;
+// Seen on the emulator: a message arriving while the chat was open landed half under the input
+// bar, with the scroll-to-newest button showing. From the installed FlashList 2.3.2 source:
+//
+//   • Position maintenance is on by default. It records the first visible row and, after an update,
+//     scrolls by however far that row moved (`useRecyclerViewController.applyOffsetCorrection`;
+//     the native ScrollView gets `minIndexForVisible: 0` as well). In this inverted list a new
+//     message is inserted at index 0, BELOW that anchor, so the correction lifts the list by the new
+//     row's height and the new message ends up under the bottom edge, behind the composer.
+//   • `autoscrollToBottomThreshold` tests the END of the content and then calls `scrollToEnd`
+//     (`useBoundDetection`). In an inverted list the end is the OLDEST message, so it never followed
+//     a new message. It pulled the reader to the top of the history whenever they were near it and the
+//     data or a row's height changed.
+//   • `autoscrollToTopThreshold` is declared in the typings and read nowhere.
+//
+// So: no threshold, and position maintenance only while the user is reading history (scrolled past
+// `SCROLL_BTN_THRESHOLD`, i.e. while the scroll-to-newest button shows), where a new message must not
+// move what they are reading. At the newest message it is off, and a new message simply pushes the
+// transcript up, as in any messenger. Two constants, so the prop identity only changes when the
+// button does. Switching it back on needs `MvcpResumeGuard`, below.
+const MVCP_AT_NEWEST = { disabled: true } as const;
+const MVCP_READING_HISTORY = {} as const;
+/** Distance from the newest message (pt) past which the user counts as reading history. */
+const SCROLL_BTN_THRESHOLD = 120;
+
+/**
+ * FlashList refreshes its remembered anchor row only while position maintenance is on
+ * (`computeFirstVisibleIndexForOffsetCorrection` returns early when it is off). So when it comes back
+ * on, the first correction measures against the row remembered from the previous time, and every
+ * message that arrived in between turns into a jump of that height while the user is dragging.
+ * `prepareForLayoutAnimationRender()` makes that one pass refresh the anchor without scrolling
+ * (2.3.2: it sets `animationOptimizationsEnabled`, which only `applyOffsetCorrection` reads, and the
+ * list clears it in the passive effect of its next internal render). Only called when the data did
+ * change while maintenance was off, because until that internal render the flag also skips the next
+ * genuine correction. Rendered before the list, so this layout effect runs before the list's
+ * correction pass in the same commit.
+ */
+function MvcpResumeGuard({ on, data, listRef }: {
+  on: boolean;
+  data: unknown;
+  listRef: React.RefObject<{ prepareForLayoutAnimationRender(): void } | null>;
+}) {
+  const prev = useRef({ on, data });
+  const changedWhileOff = useRef(false);
+  useLayoutEffect(() => {
+    const was = prev.current;
+    prev.current = { on, data };
+    if (!on && data !== was.data) changedWhileOff.current = true;
+    if (!on) return;
+    if (!was.on && changedWhileOff.current) listRef.current?.prepareForLayoutAnimationRender();
+    changedWhileOff.current = false;
+  }, [on, data, listRef]);
+  return null;
+}
 const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 8 } as const;
 
 /**
@@ -2375,7 +2423,9 @@ export default function ChatScreen() {
   // delay using this, and each jump resets it to 0 before issuing the scroll.
   const jumpAttemptRef = useRef(0);
 
-  const { progress, height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  // Read only as "is the keyboard up or on its way up" when a panel opens (on iOS it jumps to the
+  // end value at the start of each move). Nothing on screen is positioned from it; see `composerRise`.
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
   // Last real keyboard height — captured at the end of each keyboard-open
   // settle (see `useKeyboardHandler.onEnd` below) so the emoji panel can match
@@ -2867,14 +2917,10 @@ export default function ChatScreen() {
   // wrapped in a `KeyboardStickyView` and faded out as the keyboard rose,
   // which felt like the gradient was "sticking" to the input bar.
 
-  // Input row bottom padding: safe-area when keyboard closed → small gap when open (UI thread)
-  const inputRowStyle = useAnimatedStyle(() => {
-    const base = interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP);
-    // While the emoji panel holds the bar lifted (keyboard down), keep the
-    // small open-state padding so the bar doesn't gain the safe-area padding
-    // back and visually shift. Purely additive — no effect when liftSV === 0.
-    return { paddingBottom: liftSV.value > 0.5 ? 8 : base };
-  });
+  // The input row keeps its resting bottom padding (the safe area) at all times. It used to shrink
+  // to 8 while the keyboard was up, which was a layout change at the start of every keyboard move;
+  // the same 8 pt gap above the keyboard now comes from the transform (`composerRise`).
+  const inputRowStyle = useMemo(() => ({ paddingBottom: inputBarBottomPad }), [inputBarBottomPad]);
 
   // Compensate the KeyboardStickyView's `offset.opened` for the bottom-
   // docked browser widget. When the band is active it lives INSIDE the
@@ -2895,57 +2941,36 @@ export default function ChatScreen() {
   const browserWidgetPosition = useEffectiveBrowserWidgetPosition();
   const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
 
-  // ── Input-bar lift: robust max() of keyboard height and panel height ──
-  // The bar's distance from the screen bottom = max(liveKeyboardHeight,
-  // panelLiftHeight). Because it's a MAX of the two, the bar position is
-  // MONOTONIC across the keyboard↔panel handoff — it can never dip and snap
-  // back, which is exactly the "jump to the top / settle" the spacer approach
-  // suffered from (that relied on two animations cancelling frame-for-frame).
-  //   • Typing:        kb≈300, panelLift=0      → lift=300 (sits on keyboard)
-  //   • Open emoji:    kb 300→0, panelLift=300  → lift stays 300 (no move)
-  //   • Back to kb:    kb 0→300, panelLift=300  → lift stays 300 (no move)
-  // `keyboardHeight` from useReanimatedKeyboardAnimation animates smoothly on
-  // the UI thread (same source KeyboardStickyView used), so the follow is just
-  // as smooth — we simply read it ourselves to fold in the max().
-  const barWrapStyle = useAnimatedStyle(() => {
-    const raw = keyboardHeight.value;
-    const kb = raw < 0 ? -raw : raw; // library reports height as 0 → -kbHeight
-    const panelLift = liftSV.value * emojiPanelSV.value;
-    const lift = Math.max(kb, panelLift);
-    // Browser-band compensation: historically the sticky view pushed the bar
-    // DOWN by the band height while the keyboard was open (the chat screen
-    // bottom sits `band` px above the real screen bottom). Preserve that.
-    const band = kb > 1 ? stickyOpenedOffset : 0;
-    return { transform: [{ translateY: -(lift - band) }] };
-  });
-
-  // Shift the entire message list upward by exactly the keyboard height when
-  // it rises. We drive the translation from `useKeyboardHandler.onMove`
-  // — the same lowest-level event source `KeyboardStickyView` uses for the
-  // input bar — so the list lifts in lock-step with the input bar instead
-  // of occasionally desyncing into a snap when the JS thread is briefly
-  // busy on the first chat open. `e.height` is the live keyboard height in
-  // pixels, fed to translateY as a negative offset.
+  // ── ONE SOURCE, FRAME BY FRAME, FOR EVERYTHING THAT MOVES WITH THE KEYBOARD ──
   //
-  // `onInteractive` mirrors the same height during an iOS interactive
-  // dismiss gesture (when the user drags the keyboard down with a finger):
-  // without it the list stayed pinned at the keyboard-up position while
-  // the input bar followed the finger, leaving a phantom strip where the
-  // last message used to sit. Now both follow the finger together.
-  const listShiftY = useSharedValue(0);
+  // Reported on iPhone: the input bar sometimes rose together with the keyboard and sometimes jumped
+  // to its final place first, with the keyboard sliding up after it.
+  //
+  // The bar followed `useReanimatedKeyboardAnimation`, whose value on iOS is written ONCE, at
+  // keyboardWillShow, straight to the end height (keyboard-controller lib/module/animated.js). That
+  // only looks animated when Reanimated mounts the update inside UIKit's keyboard animation; with a
+  // React commit in flight at that moment Reanimated holds it back, and the bar snaps. The library
+  // documents exactly this for KeyboardStickyView. The list, meanwhile, already followed the
+  // per-frame events, so the two moved from different sources.
+  //
+  // Now the bar, the list and the scroll button all follow `kbFrames`, the keyboard's height frame
+  // by frame (onMove; onInteractive while a finger drags it; onEnd for the exact end value), the
+  // source the search field moved to when it stopped jumping. And only transforms move: the row's
+  // bottom padding used to shrink with the keyboard, a layout change on every keyboard move.
+  const kbFrames = useSharedValue(0);
   useKeyboardHandler(
     {
       onMove: (e) => {
         'worklet';
-        listShiftY.value = -e.height;
+        kbFrames.value = e.height;
       },
       onInteractive: (e) => {
         'worklet';
-        listShiftY.value = -e.height;
+        kbFrames.value = e.height;
       },
       onEnd: (e) => {
         'worklet';
-        listShiftY.value = -e.height;
+        kbFrames.value = e.height;
         // Capture the settled keyboard height (once per transition) so the
         // emoji panel can match it. Guarded to ignore the close (height 0).
         runOnJS(captureKbHeight)(e.height);
@@ -2953,16 +2978,26 @@ export default function ChatScreen() {
     },
     [],
   );
-  const listShiftStyle = useAnimatedStyle(() => ({
-    // While the emoji panel is up (or the keyboard is rising back after a
-    // close), shift the list by the panel height instead of the live keyboard
-    // height so the newest messages stay visible above the panel. We blend the
-    // two with min() (both are ≤ 0) so the list rises in lock-step with the bar
-    // during the animated open (keyboard-down case) instead of snapping at a
-    // 0.5 threshold. Additive: when liftSV === 0 this is exactly the original
-    // keyboard-driven shift.
-    transform: [{ translateY: Math.min(listShiftY.value, -liftSV.value * emojiPanelSV.value) }],
-  }));
+
+  // How far the composer rises: whatever the keyboard (or the emoji/GIF panel) covers beyond the
+  // row's resting bottom padding, which leaves the field 8 pt above the keyboard.
+  //   • Typing:     kb≈300, panel 0     → max 300 (sits on the keyboard)
+  //   • Open emoji: kb 300→0, panel 300 → max stays 300 (no move)
+  //   • Back to kb: kb 0→300, panel 300 → max stays 300 (no move)
+  // A MAX, so the keyboard↔panel handoff is monotonic: it can never dip and snap back.
+  // `stickyOpenedOffset`: with the browser widget docked at the bottom this screen ends 56 pt above
+  // the window bottom, so the keyboard first has to cover that band.
+  //
+  // The transcript and the scroll button move by exactly as much as the bar (the same style), so the
+  // gap between the newest message and the field is the same with the keyboard up, down, or
+  // replaced by a panel. They used to move by the whole keyboard height while the bar moved less,
+  // which opened that gap by the safe-area height whenever the keyboard came up.
+  const padDelta = inputBarBottomPad - 8;
+  const barWrapStyle = useAnimatedStyle(() => {
+    const lift = Math.max(kbFrames.value - stickyOpenedOffset, liftSV.value * emojiPanelSV.value);
+    return { transform: [{ translateY: -Math.max(0, lift - padDelta) }] };
+  });
+  const listShiftStyle = barWrapStyle;
 
   // Slide the media panel itself up/down in sync with the bar lift. At
   // liftSV === 0 it is pushed fully below the screen (translateY = +panelH);
@@ -3038,8 +3073,8 @@ export default function ChatScreen() {
     const kbUp = Math.abs(keyboardHeight.value) > 1;
     if (kbUp) {
       // CRITICAL (keyboard UP): arm the lift mirror SYNCHRONOUSLY so the
-      // keyboard's descent REVEALS the panel with zero bar movement (the spacer
-      // grows frame-for-frame as `progress` falls 1→0). No translate animation.
+      // keyboard's descent REVEALS the panel with zero bar movement (the bar's
+      // max() of keyboard and panel stays level as the keyboard falls).
       liftSV.value = 1;
       requestAnimationFrame(() => Keyboard.dismiss());
     } else {
@@ -4201,16 +4236,19 @@ export default function ChatScreen() {
 
   const revealNewest = useCallback(() => {
     const m = scrollMetricsRef.current;
-    // Unknown metrics (nothing scrolled yet) means we are at the bottom on a
-    // freshly-opened chat — the native autoscroll has it.
+    // Unknown metrics (nothing scrolled yet) means we are at the newest message on a
+    // freshly-opened chat, where the new row simply pushes the transcript up (see `MVCP_AT_NEWEST`).
     if (!m || m.layoutH <= 0) return;
     // INVERTED: `contentOffset.y` measures distance from the NEWEST end, because index 0 is at
     // the bottom and scrolling up increases y. So the old `contentH - (y + layoutH)` arithmetic
     // is not just wrong here, it is inverted — it would report "far from newest" precisely when
     // the user is sitting on the newest message.
     const distanceFromBottom = m.y;
-    // Comfortably inside the native threshold → let FlashList do it.
-    if (distanceFromBottom <= m.layoutH * 0.25) return;
+    // At the newest message the list is not holding its position, so the sent message is already
+    // in view. Past the threshold it is holding it (reading history), so scroll down to the message.
+    // This used to wait until a quarter of a screen, relying on an autoscroll that, in the inverted
+    // list, never followed new messages; between the two the sent message stayed out of view.
+    if (distanceFromBottom <= SCROLL_BTN_THRESHOLD) return;
 
     // ── Serialise against any other in-flight scroll ────────────────────────
     //
@@ -6701,7 +6739,8 @@ export default function ChatScreen() {
   // native-driver opacity tween so the show/hide is free on the JS thread.
   // Per-chat toggle in `chatSettings.scrollToBottomButton` (default true)
   // gates rendering at the JSX level, so an opted-out user pays nothing.
-  const SCROLL_BTN_THRESHOLD = 120;
+  // `SCROLL_BTN_THRESHOLD` (module scope) also decides whether the transcript holds its position
+  // when a message arrives; see `MVCP_AT_NEWEST`.
   const [scrollBtnVisible, setScrollBtnVisible] = useState(false);
   // Built the first time it is needed, not on every open: it is an interactive glass view sitting at
   // scale 0 until the user scrolls up, and most opens never scroll up.
@@ -6893,8 +6932,10 @@ export default function ChatScreen() {
   //   Every other prop in the block is already stable by construction: `chatKeyExtractor` and
   //   `chatGetItemType` are useCallback([]), `viewabilityConfig` and `onViewableItemsChanged` are
   //   useRef(...).current, `onStartReached` and `onChatScroll` are useCallback([]), the two spacer
-  //   elements are memoised, and MVCP_INVERTED / LIST_CONTENT_CONTAINER_STYLE are module constants.
-  //   They are listed anyway so a future change to any of them cannot silently stale the memo.
+  //   elements are memoised, and LIST_CONTENT_CONTAINER_STYLE is a module constant. The position
+  //   config is one of two module constants chosen by `scrollBtnVisible`, which flips only when the
+  //   scroll-to-newest button does. They are listed anyway so a future change to any of them cannot
+  //   silently stale the memo.
   //
   // The dead `listReady` ternary went with this. `listReady` is a hardcoded `true` (its rAF gate was
   // removed earlier and the branch was left behind), so the `<View absoluteFill/>` fallback had been
@@ -6919,7 +6960,7 @@ export default function ChatScreen() {
           // note on `windowedMessages`. From the v2 prop docs: "Reverses the direction of the
           // list... Useful for chat-like interfaces where the newest content appears at the bottom."
           inverted
-          maintainVisibleContentPosition={MVCP_INVERTED}
+          maintainVisibleContentPosition={scrollBtnVisible ? MVCP_READING_HISTORY : MVCP_AT_NEWEST}
           // Bound how far ahead rows are built. Chat bubbles are expensive — each
           // carries gesture handlers and Reanimated layers — so an unbounded
           // pre-render window turns a fling through a media-heavy chat into a burst
@@ -6983,7 +7024,7 @@ export default function ChatScreen() {
     ),
     [windowedMessages, renderItem, chatBudget.drawDistance, transcriptDrawDistance, listHeaderEl, listFooterEl,
      chatKeyExtractor, chatGetItemType, onStartReached, onChatScroll, viewabilityConfig,
-     onViewableItemsChanged],
+     onViewableItemsChanged, scrollBtnVisible],
   );
 
   return (
@@ -7000,6 +7041,7 @@ export default function ChatScreen() {
           rises every message rides up with it (last message stays visible
           above the input bar) without triggering FlatList layout. */}
       <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
+      <MvcpResumeGuard on={scrollBtnVisible} data={windowedMessages} listRef={flatListRef} />
       <GestureDetector gesture={panelDismissTap}>
       {transcriptEl}
       </GestureDetector>
@@ -7080,11 +7122,9 @@ export default function ChatScreen() {
           barely above the input bar's top edge, so it visually anchors
           to the input rather than floating in the chat area), and the
           entire wrapper is a Reanimated.View driven by `listShiftStyle`
-          so it rides up with the input bar when the keyboard rises —
-          `listShiftY` already tracks the live keyboard height (driven
-          by `useKeyboardHandler.onMove`), so reusing the same shared
-          value keeps the button perfectly in lockstep with the input
-          bar across both keyboard-up and interactive-dismiss frames.
+          (the input bar's own style, fed frame by frame by `kbFrames`),
+          so the button stays in lockstep with the input bar across both
+          keyboard-up and interactive-dismiss frames.
 
           Gated entirely on `chatSettings.scrollToBottomButton`: when off,
           nothing mounts (no scroll listener cost, no opacity animator). */}
@@ -7260,7 +7300,7 @@ export default function ChatScreen() {
           visible={!!activeMatchMessage}
           isPinned={!!activeMatchMessage && pinnedIds.includes(activeMatchMessage.id)}
           bottomInset={insets.bottom}
-          keyboardHeight={keyboardHeight}
+          keyboardHeight={kbFrames}
           glassActive={glassActive}
           theme={theme}
           pinLabel={t('chat.pin', 'Закрепить')}
@@ -7703,7 +7743,8 @@ export default function ChatScreen() {
               top: headerContentHeight + (activePin ? PINNED_BAR_BAND : 0),
               bottom:
                 (composerTopRef.current ?? SCREEN_HEIGHT - (INPUT_BAR_HEIGHT + inputBarBottomPad)) -
-                (emojiOpen || gifOpen || keepLifted ? emojiPanelHeight : 0),
+                // The composer rises by the panel height less its resting padding (`barWrapStyle`).
+                (emojiOpen || gifOpen || keepLifted ? Math.max(0, emojiPanelHeight - padDelta) : 0),
             }}
             onClosing={releaseHeld}
             onClose={closeMenu}
@@ -7872,18 +7913,17 @@ const SearchActionBar = React.memo(function SearchActionBar({
   //
   // The search field autofocuses, so the keyboard is ALWAYS up while this bar is
   // relevant. Anchored to the screen bottom it was simply behind the keyboard —
-  // the reported "the delete/pin buttons appear somewhere I can't see". Reading
-  // `keyboardHeight` (the same `useReanimatedKeyboardAnimation` value the input bar
-  // uses) keeps it just above the keyboard on the UI thread, so it tracks the
-  // keyboard's own animation curve rather than approximating it.
-  //
-  // `keyboardHeight` is reported as 0 → -kbHeight by the library, hence the abs.
+  // the reported "the delete/pin buttons appear somewhere I can't see".
+  // `keyboardHeight` is the screen's frame-by-frame keyboard height (`kbFrames`, the
+  // same source as the input bar), so the bar moves with the keyboard itself.
   const barStyle = useAnimatedStyle(() => {
     const raw = keyboardHeight.value;
     const kb = raw < 0 ? -raw : raw;
     // While the keyboard is up the bottom inset is already inside the keyboard's
-    // footprint, so subtract it to avoid double-counting the home-indicator gap.
-    const kbLift = kb > 1 ? kb - bottomInset : 0;
+    // footprint, so only what it covers beyond that inset lifts the bar. A plain
+    // max(), not a step at kb > 1: with a value that moves every frame, the step
+    // dipped the bar by the inset on the first frame of each keyboard move.
+    const kbLift = Math.max(0, kb - bottomInset);
     const enter = interpolate(progress.value, [0, 1], [140, 0]);
     return { transform: [{ translateY: enter - kbLift }] };
   });

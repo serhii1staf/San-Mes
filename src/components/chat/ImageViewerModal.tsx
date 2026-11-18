@@ -902,8 +902,24 @@ const styles = StyleSheet.create({
  * re-rendering every mounted image) on each of those renders, which is what made
  * dragging it stutter.
  */
+/**
+ * Builds the viewer only once a photo has been opened in this screen. Every chat, profile and
+ * comments thread mounts a viewer, and before its first use it rendered nothing yet still created
+ * its shared values, gestures and animated styles on each mount: in a CPU profile of opening a chat
+ * that was a visible slice of the open, for a viewer most opens never show. After the first photo
+ * it stays mounted, exactly as before, so later opens and the close animation are unchanged.
+ */
+function ImageViewerModalGate(props: ImageViewerModalProps) {
+  const [armed, setArmed] = useState(!!props.payload);
+  // Derived from props during render (React's documented pattern for state that follows a prop),
+  // so the first open builds the viewer in the same render that receives the photo.
+  if (!armed && props.payload) setArmed(true);
+  if (!armed && !props.payload) return null;
+  return <ImageViewerModalComponent {...props} />;
+}
+
 export const ImageViewerModal = memo(
-  ImageViewerModalComponent,
+  ImageViewerModalGate,
   (prev, next) =>
     prev.payload === next.payload &&
     prev.onClose === next.onClose &&

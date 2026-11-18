@@ -22,6 +22,15 @@ function shortDate(ms: number, locale: string): string {
   }
 }
 
+/**
+ * Build the date formatter now rather than on the first card that needs it. The first Intl formatter
+ * of a session also loads the locale data, which a CPU profile put at hundreds of ms on a slow
+ * device, inside the first profile open. Called once, idle, after launch (app/_layout.tsx).
+ */
+export function prewarmShortAgo(locale: string): void {
+  shortDate(Date.now(), locale);
+}
+
 export function formatShortAgo(iso: string, t: Translate, locale: string): string {
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return '';

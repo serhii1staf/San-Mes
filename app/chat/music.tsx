@@ -1,9 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { View, Pressable, TextInput, FlatList, ActivityIndicator, Platform, LayoutAnimation, UIManager, Alert, Animated, InteractionManager, StyleSheet } from 'react-native';
-import type { ScrollViewProps } from 'react-native';
-import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
-import { ChatKeyboardScrollView } from '../../src/components/ui/ChatKeyboardScrollView';
+import Reanimated from 'react-native-reanimated';
+import { useKeyboardRiseStyle } from '../../src/hooks/useKeyboardFrames';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -81,27 +79,16 @@ export default function MusicChatScreen() {
   const glassActive = useLiquidGlassActive();
   const headerHeight = useSpecialChatHeaderHeight();
 
-  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const INPUT_BAR = 60;
-  // Inverted-list keyboard lift — now handled NATIVELY by the official
-  // KeyboardChatScrollView (via `renderScrollComponent` below). The library
-  // repositions chat content on keyboard open/close with the default "always"
-  // (Telegram/WhatsApp) lift, replacing the old per-frame translateY list
-  // wrapper that relayout-jumped on the first focus / on dismiss. The bottom
-  // spacer stays STATIC — it only reserves room for the floating input bar
-  // while the keyboard is closed.
+  // The bottom spacer stays STATIC: it only reserves room for the floating input bar.
   const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom;
-  // Stable renderScrollComponent — FlatList requires a stable reference so it
-  // doesn't tear down / rebuild the scroll view on every render. `inverted` is
-  // forwarded so the wrapper's internal lift math matches the list.
-  const renderScrollComponent = useCallback(
-    (p: ScrollViewProps) => <ChatKeyboardScrollView {...p} inverted />,
-    [],
-  );
-  const inputPadStyle = useAnimatedStyle(() => {
-    const open = Math.abs(keyboardHeight.value) > 1;
-    return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 16) };
-  });
+  // The composer and the transcript rise with the keyboard frame by frame, by the same amount, as
+  // in the AI chat (see the note there and `useKeyboardFrames`). KeyboardStickyView and
+  // KeyboardChatScrollView write their end position once on iOS, and that landed as a jump whenever
+  // a React commit was in flight. The padding under the field stays at its resting value.
+  const restPad = insets.bottom > 0 ? insets.bottom : 16;
+  const inputPadStyle = useMemo(() => ({ paddingBottom: restPad }), [restPad]);
+  const riseStyle = useKeyboardRiseStyle(restPad);
 
   // Persist the trimmed message history to MMKV. The JSON.stringify of up to
   // 50 messages (each potentially carrying multiple tracks worth of metadata)
@@ -354,33 +341,37 @@ export default function MusicChatScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       <SpecialChatHeader title={t('music_chat.title')} subtitle={t('music_chat.subtitle')} icon="music-note" />
 
-      <FlatList
-        ref={listRef}
-        data={invertedData}
-        keyExtractor={keyExtractor}
-        inverted
-        renderScrollComponent={renderScrollComponent}
-        contentContainerStyle={listContentStyle}
-        renderItem={renderItem}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-        removeClippedSubviews
-        // Tightened from 12/8/9 — 12 TrackResultCards on first paint were
-        // hammering the JS thread on the same RAF as the navigation transition,
-        // which the perf monitor flagged as `SLOW long task @ (tabs)/messages
-        // 292ms` when opening this screen. 6/4/5 leaves the visible-window
-        // mounted on first frame and lets later batches stream in.
-        initialNumToRender={6}
-        maxToRenderPerBatch={4}
-        windowSize={5}
-        ListHeaderComponent={listHeader}
-        ListFooterComponent={listFooter}
-        ListEmptyComponent={listEmpty}
-      />
+      {/* Rides up with the keyboard on the composer's own transform (`riseStyle`). */}
+      <Reanimated.View style={[{ flex: 1 }, riseStyle]}>
+        <FlatList
+          ref={listRef}
+          data={invertedData}
+          keyExtractor={keyExtractor}
+          inverted
+          contentContainerStyle={listContentStyle}
+          renderItem={renderItem}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          automaticallyAdjustContentInsets={false}
+          contentInsetAdjustmentBehavior="never"
+          removeClippedSubviews
+          // Tightened from 12/8/9 — 12 TrackResultCards on first paint were
+          // hammering the JS thread on the same RAF as the navigation transition,
+          // which the perf monitor flagged as `SLOW long task @ (tabs)/messages
+          // 292ms` when opening this screen. 6/4/5 leaves the visible-window
+          // mounted on first frame and lets later batches stream in.
+          initialNumToRender={6}
+          maxToRenderPerBatch={4}
+          windowSize={5}
+          ListHeaderComponent={listHeader}
+          ListFooterComponent={listFooter}
+          ListEmptyComponent={listEmpty}
+        />
+      </Reanimated.View>
 
       {/* Static under-input fade — pinned to the screen bottom and kept
-          OUTSIDE the KeyboardStickyView so it does NOT ride up with the
+          OUTSIDE the rising composer so it does NOT ride up with the
           keyboard. Mirrors the user-chat under-input gradient: the solid
           input container is gone, so track cards scroll UNDER the input and
           dissolve into the background instead of hitting a hard bar edge. */}
@@ -393,8 +384,8 @@ export default function MusicChatScreen() {
 
       {/* Input bar — no solid backgroundColor: the fade above supplies the
           darkening so the input floats over content like the user chat. */}
-      <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
-        <Reanimated.View style={[{ paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
+      <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, riseStyle]}>
+        <View style={[{ paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
           {/* Commands drawer — anchored ABOVE the input row, slides in via
               LayoutAnimation when toggled. */}
           {commandsOpen ? (
@@ -542,8 +533,8 @@ export default function MusicChatScreen() {
               </View>
             )}
           </View>
-        </Reanimated.View>
-      </KeyboardStickyView>
+        </View>
+      </Reanimated.View>
 
       <AuthorInfoModal visible={!!authorTrack} track={authorTrack} onClose={() => setAuthorTrack(null)} />
       <PlaylistSheet visible={playlistOpen} tracks={allUniqueTracks} onClose={() => setPlaylistOpen(false)} />

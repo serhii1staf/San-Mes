@@ -495,9 +495,26 @@ export function formatTimeAgo(dateString: string): string {
   return formatDateOnly(then);
 }
 
+// ── THE MESSAGE TIME, FROM ONE FORMATTER ────────────────────────────────────
+//
+// `toLocaleTimeString(locales, options)` builds a new Intl.DateTimeFormat on every call, and every
+// message bubble calls it once as it mounts. Measured on a production bundle (Hermes CPU profile,
+// opening a chat): that formatting was the largest single cost inside MessageBubble. One instance
+// with the same default locale and options produces the same text.
+let _timeFmt: Intl.DateTimeFormat | null = null;
+
 export function formatMessageTime(dateString: string): string {
-  const date = new Date(dateString);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const ms = Date.parse(dateString);
+  // `format(NaN)` throws where `toLocaleTimeString` returned "Invalid Date"; keep the old output.
+  if (!Number.isFinite(ms)) return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (_timeFmt === null) {
+    try {
+      _timeFmt = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+  }
+  return _timeFmt.format(ms);
 }
 
 export function formatMessageDate(dateString: string): string {
