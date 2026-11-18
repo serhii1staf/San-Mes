@@ -58,6 +58,7 @@ import { useBrowserStore } from '../../src/store/browserStore';
 import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
+import { useTransitionSettled } from '../../src/hooks/useTransitionSettled';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 
@@ -539,6 +540,9 @@ export default function CommentsScreen() {
   const insets = useSafeAreaInsets();
   const t = useT();
   const ago = useShortAgo();
+  // The push animation is over. Gates the realtime attach and the list's pre-render window, which
+  // `runAfterInteractions` could not keep off the slide (the native stack holds no interaction).
+  const transitionSettled = useTransitionSettled();
   // Shared with the chat screen so the two label sets cannot drift apart.
   const mediaPanelLabels = useMediaPanelLabels();
   // Android: while focused, stop the OS window resize so ONLY our JS-driven
@@ -998,12 +1002,14 @@ export default function CommentsScreen() {
   // lands on the same RAF as the comments-list mount and steals frame
   // time.
   useEffect(() => {
-    if (!postId) return;
+    if (!postId || !transitionSettled) return;
     let cancelled = false;
     let cleanup: (() => void) | null = null;
     const handle = InteractionManager.runAfterInteractions(async () => {
       if (cancelled) return;
       const { getRealtime, postChannelName } = await import('../../src/services/realtime/ably');
+      // Closed while the module loaded: subscribing now would leave a listener nobody removes.
+      if (cancelled) return;
       const realtime = getRealtime();
       if (!realtime) return;
       const channel = realtime.channels.get(postChannelName(postId));
@@ -1068,7 +1074,7 @@ export default function CommentsScreen() {
       handle.cancel();
       if (cleanup) cleanup();
     };
-  }, [postId]);
+  }, [postId, transitionSettled]);
 
   const loadPost = async () => {
     if (!postId) return;
@@ -1896,6 +1902,10 @@ export default function CommentsScreen() {
             keyExtractor={keyExtractor}
             getItemType={getItemType}
             renderItem={renderComment}
+            // FlashList's own 250 once the push animation is over; until then only what is on
+            // screen, so the open commit does not build comments nobody can see yet. Always a number:
+            // FlashList keeps the previous value when this prop is `undefined`.
+            drawDistance={transitionSettled ? 250 : 40}
             contentContainerStyle={listContentStyle}
             showsVerticalScrollIndicator={false}
             onScroll={onCommentsScroll}

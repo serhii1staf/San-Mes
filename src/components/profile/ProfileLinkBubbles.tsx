@@ -20,7 +20,7 @@
  * profile tab stays mounted behind the other tabs) or when Reduce Motion is on.
  */
 import React, { memo, useCallback, useEffect, useMemo } from 'react';
-import { InteractionManager, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { FontAwesome5 } from '@expo/vector-icons';
 import Svg, { Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -47,6 +47,7 @@ import { useT } from '../../i18n/store';
 // there too; brands whose own colour is black or white get a colour from the same family, so every
 // drop has colour.
 import { detectLinkKind, linkKindInfo } from '../../utils/linkKind';
+import { useTransitionSettled } from '../../hooks/useTransitionSettled';
 
 /** Drop diameters, by index. Different sizes read as a cluster rather than a row of buttons. */
 const SIZES = [60, 52, 56, 48, 54];
@@ -405,13 +406,10 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
   const t = useT();
   const { width } = useWindowDimensions();
   const reduceMotion = useReducedMotion();
-  const [settled, setSettled] = React.useState(false);
+  // The drift starts once the push animation is over, so the two never share frames.
+  const settled = useTransitionSettled();
   const pops = useSharedValue<number[]>([0, 0, 0, 0, 0]);
   const lastPop = useSharedValue<number[]>([0, 0, 0, 0, 0]);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setSettled(true));
-    return () => handle.cancel();
-  }, []);
 
   const list = links.slice(0, 5);
   const areaW = Math.max(0, width - left - 12);

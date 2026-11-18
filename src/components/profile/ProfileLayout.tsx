@@ -42,6 +42,7 @@ import type { BannerTransform } from '../../utils/bannerTransform';
 import { kvGetJSONSync } from '../../services/kvStore';
 import { useEntityStore } from '../../services/entityStore';
 import { triggerHaptic } from '../../utils/haptics';
+import { useTransitionSettled } from '../../hooks/useTransitionSettled';
 import { useT } from '../../i18n/store';
 
 // ─── Scroll-driven values (same curves as the original screens) ─────────────
@@ -145,6 +146,7 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
 }) {
   const theme = useTheme();
   const { width } = useWindowDimensions();
+  const settled = useTransitionSettled();
   // ── Telegram's profile scroll animation ────────────────────────────────────
   // As the profile scrolls, the avatar travels to the Dynamic Island on iPhone (shrinking and turning
   // black, so it merges into it) and slides out through the top of the screen elsewhere — the effect
@@ -237,11 +239,15 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
         />
       ) : null}
 
-      {/* Frost fades in over the whole card as it scrolls away (native-driver opacity). */}
-      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: anim.headerOpacity }]}>
-        <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.isDark ? 'rgba(20,21,28,0.32)' : 'rgba(255,255,255,0.34)' }]} />
-      </Animated.View>
+      {/* Frost fades in over the whole card as it scrolls away (native-driver opacity). It is
+          invisible at the top of the page, so the blur view is created after the push animation
+          instead of during it. */}
+      {settled ? (
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: anim.headerOpacity }]}>
+          <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.isDark ? 'rgba(20,21,28,0.32)' : 'rgba(255,255,255,0.34)' }]} />
+        </Animated.View>
+      ) : null}
 
       <Animated.View style={[{ position: 'absolute', top: topInset + 52, left: 20 }, avatarAnim.container]}>
         <Pressable onPress={onAvatarPress} disabled={!onAvatarPress} style={{ borderRadius: 26 }}>

@@ -83,6 +83,9 @@ export interface ChatPeekAction<Id extends string = string> {
 export interface ChatPeekAnchor {
   y: number;
   height: number;
+  /** Centre of the held row's avatar, in window coordinates. The action list closes into it. */
+  avatarCx?: number;
+  avatarCy?: number;
 }
 
 export interface ChatPeekConversation {
@@ -116,7 +119,18 @@ const MAX_PREVIEW_MESSAGES = 60;
 /** One page from the server for a chat with no local copy. */
 const REMOTE_PAGE = 40;
 const OPEN_SPRING = { damping: 22, stiffness: 260, mass: 0.9 };
+/** The close, end to end. Linear here; each layer applies its own curve to it (see `ease`). */
+const CLOSE_MS = 340;
+/** How small the action list gets as it reaches the avatar. */
+const MENU_END_SCALE = 0.04;
 const IOS_RED = '#FF3B30';
+
+/** Smoothstep: starts and ends at rest, so nothing jumps into motion or stops dead. */
+function ease(k: number): number {
+  'worklet';
+  const x = Math.max(0, Math.min(1, k));
+  return x * x * (3 - 2 * x);
+}
 
 // A worklet: the animated styles below call it on the UI thread, and so does the JS layout code.
 function clamp(v: number, lo: number, hi: number): number {
@@ -156,9 +170,10 @@ export function ChatPeekMenu<Id extends string>({
   const insets = useSafeAreaInsets();
   const { width: W, height: H } = useWindowDimensions();
   const p = useSharedValue(0);
-  // Close progress, separate from `p`: closing fades everything out in place instead of running the
-  // open in reverse. The reverse shrank the menu into its corner and slid the card back down to the
-  // row, which read as the action list "flying into the avatar", with glass artifacts on the way.
+  // Close progress, separate from `p`, so the close is its own motion rather than the open run in
+  // reverse: the card fades back toward its row and the action list shrinks INTO the row's avatar
+  // along one smooth path. (Collapsing into the list's own top-left corner read as it darting off
+  // sideways, which is what was reported.)
   const c = useSharedValue(0);
   const closing = useRef(false);
   const after = useRef<(() => void) | null>(null);
@@ -182,9 +197,8 @@ export function ChatPeekMenu<Id extends string>({
       after.current = fn ?? null;
       // `finish` runs whether or not the timing completed: nothing else drives `c` once closing
       // has started, and a menu that never reports closed would leave an invisible layer on top.
-      // Long enough to read as the card going back where it came from (170 ms was reported as too
-      // abrupt), on the standard ease so it starts and stops softly.
-      c.value = withTiming(1, { duration: 280, easing: Easing.bezier(0.4, 0, 0.2, 1) }, () => {
+      // Linear: the styles below shape it themselves (`ease`), each to suit what it animates.
+      c.value = withTiming(1, { duration: CLOSE_MS, easing: Easing.linear }, () => {
         runOnJS(finish)();
       });
     },
@@ -227,30 +241,61 @@ export function ChatPeekMenu<Id extends string>({
   const fromDY = hasPreview ? clamp(anchor.y + anchor.height / 2 - (cardTop + cardH / 2), -280, 280) : 0;
 
   const cardStyle = useAnimatedStyle(() => {
-    const shut = c.value;
+    const shut = ease(c.value);
     return {
       // The fade trails the motion a little, so the card is seen heading back to the row.
-      opacity: interpolate(p.value, [0, 0.35], [0, 1], Extrapolation.CLAMP) * Math.pow(1 - shut, 1.4),
+      opacity: interpolate(p.value, [0, 0.35], [0, 1], Extrapolation.CLAMP) * Math.pow(1 - shut, 1.3),
       transform: [
-        { translateY: interpolate(p.value, [0, 1], [fromDY, 0]) + fromDY * 0.35 * shut },
-        { scale: interpolate(p.value, [0, 1], [0.84, 1]) * (1 - 0.1 * shut) },
+        { translateY: interpolate(p.value, [0, 1], [fromDY, 0]) + fromDY * 0.5 * shut },
+        { scale: interpolate(p.value, [0, 1], [0.84, 1]) * (1 - 0.14 * shut) },
       ],
     };
   });
+
+  // ── Where the action list goes when it closes: into the held row's avatar ──
+  // The row passes the avatar's centre. Without it (the row could not be measured) the list shrinks
+  // where it is.
+  const menuCx = menuLeft + menuW / 2;
+  const menuCy = menuTop + menuH / 2;
+  const hasAvatar = anchor.avatarCx != null && anchor.avatarCy != null && anchor.height > 0;
+  const targetX = hasAvatar ? (anchor.avatarCx as number) : menuCx;
+  const targetY = hasAvatar ? (anchor.avatarCy as number) : menuCy;
+
   // The glass menu never carries an alpha: a GlassView with opacity below 1 on itself or an
   // ancestor stops rendering its glass (expo/expo#41024). It grows out of its corner on open and
-  // collapses back into it on close, glass all the way (it used to swap to a flat surface for a
-  // fade, and that swap at the start of the close read as a glitch).
+  // shrinks into the avatar on close, glass all the way (it used to swap to a flat surface for a
+  // fade, and that swap at the start of the close read as a glitch). Without glass it also fades.
   const glassActive = useLiquidGlassActive();
   const menuGlass = glassActive;
-  const menuStyle = useAnimatedStyle(() => ({
-    opacity: menuGlass ? 1 : interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP) * (1 - c.value),
-    transform: [{ scale: interpolate(p.value, [0, 1], [glassActive ? 0.2 : 0.55, 1]) * (1 - (menuGlass ? 0.9 : 0.14) * c.value) }],
-  }));
-  const dimStyle = useAnimatedStyle(() => ({ opacity: clamp(p.value, 0, 1) * (1 - c.value) }));
+  const menuStyle = useAnimatedStyle(() => {
+    const k = c.value;
+    // The open scale, from the spring (still settling if the menu is closed straight away).
+    const open = interpolate(p.value, [0, 1], [menuGlass ? 0.2 : 0.55, 1]);
+    // The path eases in and out; the shrink starts gently and finishes fast, so the list is still
+    // readable as itself for the first part of the trip and arrives small.
+    const travel = ease(k);
+    const s = open * (1 - (1 - MENU_END_SCALE) * Math.pow(k, 1.35));
+    // `transformOrigin` is the top-left corner (the open grows out of it), so the translation is
+    // what keeps the scaled box CENTRED on its point along the path: from where the list's centre
+    // is, to the avatar.
+    const fromX = menuLeft + (open * menuW) / 2;
+    const fromY = menuTop + (open * menuH) / 2;
+    const atX = fromX + (targetX - fromX) * travel;
+    const atY = fromY + (targetY - fromY) * travel;
+    const fade = interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP);
+    return {
+      opacity: menuGlass ? 1 : fade * (1 - travel),
+      transform: [
+        { translateX: k > 0 ? atX - menuLeft - (s * menuW) / 2 : 0 },
+        { translateY: k > 0 ? atY - menuTop - (s * menuH) / 2 : 0 },
+        { scale: s },
+      ],
+    };
+  });
+  const dimStyle = useAnimatedStyle(() => ({ opacity: clamp(p.value, 0, 1) * (1 - ease(c.value)) }));
   // The blur's INTENSITY is animated, not its opacity: a UIVisualEffectView with alpha below 1
   // renders broken until the alpha returns to 1.
-  const blurProps = useAnimatedProps(() => ({ intensity: clamp(p.value, 0, 1) * (1 - c.value) * 40 }));
+  const blurProps = useAnimatedProps(() => ({ intensity: clamp(p.value, 0, 1) * (1 - ease(c.value)) * 40 }));
 
   const isIOS = Platform.OS === 'ios';
   const dimColor = isIOS ? (theme.isDark ? 'rgba(0,0,0,0.28)' : 'rgba(0,0,0,0.12)') : 'rgba(0,0,0,0.55)';

@@ -5,14 +5,23 @@
  * profile and open a post to comment on it; the owner writes a new post from the «Публикации» tab.
  *
  * Rendered inside the profile's ScrollView as plain views (one page of 30 at most), not as a list
- * component: the profile screens are guarded to stay list-free. What keeps opening a profile cheap
- * is WHEN the cards mount, not the list type: nothing below the tab strip is built during the
- * open transition, then cards are added a few per frame (see `useProgressiveCount`). Before this,
- * a profile with a full cached page mounted all thirty cards (text formatting, link previews,
- * thumbnails) in the same commit as the push animation, which is the lag seen on opening a profile.
+ * component: the profile screens are guarded to stay list-free. What keeps a profile cheap is WHEN
+ * things mount, not the list type:
+ *
+ *   • Opening. Only the first few cards are built in the push commit; the rest are added a few per
+ *     frame once the push animation has finished (`useTransitionSettled`, not
+ *     `runAfterInteractions`, which fires in the middle of a native-stack push).
+ *   • Switching tabs. Each pane is built the first time its tab is opened and then kept. Switching
+ *     only flips which pane is in the layout. It used to unmount the pane that was left and mount
+ *     the other one from scratch, all thirty cards in one commit on every tap, which is the frame
+ *     drop seen when tapping quickly between «Публикации» and «Медиа».
+ *
+ * Hidden panes are taken out of the flow (absolute, so the page height is the visible pane's) and
+ * made transparent and untouchable. Not `display: 'none'`: Fabric drops the native views of a
+ * hidden subtree, so every switch would rebuild them anyway.
  */
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, InteractionManager, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator, type LayoutChangeEvent } from 'react-native';
+import { Animated, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator, type LayoutChangeEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useIsFocused } from '@react-navigation/native';
@@ -31,6 +40,7 @@ import { parseImageUrls } from '../../lib/supabase';
 import { useIsBlocked } from '../../store/blockedUsersStore';
 import { useProfileAppearanceStore } from '../../store/profileAppearanceStore';
 import { stripMarkers } from '../../utils/previewText';
+import { useTransitionSettled } from '../../hooks/useTransitionSettled';
 import { ProfilePostCard } from './ProfilePostCard';
 import {
   useProfilePosts,
@@ -40,6 +50,7 @@ import {
 } from '../../services/profilePosts';
 
 type TabKey = 'posts' | 'media' | 'replies';
+const TAB_KEYS: TabKey[] = ['posts', 'media', 'replies'];
 
 export interface ProfileAuthor {
   name: string;
@@ -57,20 +68,14 @@ function openPost(id: string) {
 
 /**
  * How many of `total` items to render: the first `first` at once, then `step` more per frame once
- * the screen's open transition has finished.
+ * `ready` (the screen's push animation is over).
  *
- * The first batch used to wait for the transition too, so every open painted an empty profile and
- * then filled it in waves, which read as "the data reloads every time" even though the posts come
- * from the memory/disk cache. The first screenful is now in the very first frame; only the cards
- * below the fold are added progressively, where nobody sees them arrive.
+ * The first batch is a screenful, so a cached profile is complete in its very first frame (an
+ * empty page filling in waves read as "the data reloads every time"). Only cards below the fold
+ * are added progressively, where nobody sees them arrive.
  */
-function useProgressiveCount(total: number, first = 5, step = 5): number {
-  const [ready, setReady] = useState(false);
+function useProgressiveCount(total: number, ready: boolean, first: number, step: number): number {
   const [count, setCount] = useState(first);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setReady(true));
-    return () => handle.cancel();
-  }, []);
   useEffect(() => {
     if (!ready || count >= total) return;
     const raf = requestAnimationFrame(() => setCount((c) => Math.min(total, c + step)));
@@ -93,21 +98,49 @@ export interface ProfileStickyTabs {
   chromeBottom?: number;
 }
 
+const STRIP_PAD = 4;
+const STRIP_GAP = 4;
+
 const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; onChange: (k: TabKey) => void }) {
   const theme = useTheme();
   const t = useT();
   const glassActive = useLiquidGlassActive();
+  const reduceMotion = useReducedMotion();
   const scheme = theme.isDark ? 'dark' : 'light';
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'posts', label: t('profile.publications') },
     { key: 'media', label: t('profile.media') },
     { key: 'replies', label: t('profile.replies') },
   ];
+  const fill = theme.colors.accent.primary + (glassActive ? '33' : '26');
+
+  // One highlight that slides between the tabs (UI thread), instead of each tab drawing its own.
+  const [stripW, setStripW] = useState(0);
+  const onLayout = useCallback((e: LayoutChangeEvent) => {
+    const w = e.nativeEvent.layout.width;
+    setStripW((prev) => (Math.abs(prev - w) < 0.5 ? prev : w));
+  }, []);
+  const itemW = stripW > 0 ? (stripW - STRIP_PAD * 2 - STRIP_GAP * (TAB_KEYS.length - 1)) / TAB_KEYS.length : 0;
+  const index = TAB_KEYS.indexOf(value);
+  const pos = useSharedValue(index);
+  useEffect(() => {
+    pos.value = reduceMotion ? index : withTiming(index, { duration: 240, easing: Easing.out(Easing.cubic) });
+  }, [index, reduceMotion, pos]);
+  const indicatorStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: pos.value * (itemW + STRIP_GAP) }],
+  }));
+
   return (
-    <View style={[styles.strip, glassActive ? null : { backgroundColor: theme.colors.background.elevated }]}>
+    <View style={[styles.strip, glassActive ? null : { backgroundColor: theme.colors.background.elevated }]} onLayout={onLayout}>
       {/* Liquid glass behind the whole strip where the material exists (iOS 26 with glass on);
           the flat elevated surface everywhere else. */}
       {glassActive ? <GlassBg borderRadius={20} colorScheme={scheme} /> : null}
+      {/* A tinted fill, not a second glass view: this strip moves with every scroll frame, and
+          each glass view re-samples what is behind it on every one of them. A sibling of the
+          glass, so nothing above the glass ever carries an alpha. */}
+      {itemW > 0 ? (
+        <Reanimated.View pointerEvents="none" style={[styles.indicator, { width: itemW, backgroundColor: fill }, indicatorStyle]} />
+      ) : null}
       {tabs.map((tab) => {
         const active = tab.key === value;
         return (
@@ -118,9 +151,8 @@ const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; on
             accessibilityState={{ selected: active }}
             style={[
               styles.stripItem,
-              // A tinted fill, not a second glass view: this strip moves with every scroll frame,
-              // and each glass view re-samples what is behind it on every one of them.
-              active ? { backgroundColor: theme.colors.accent.primary + (glassActive ? '33' : '26') } : null,
+              // Until the strip has been measured (its first frame) the active tab draws its own fill.
+              active && itemW === 0 ? { backgroundColor: fill } : null,
             ]}
           >
             <Text variant="caption" weight={active ? 'bold' : 'medium'} color={active ? theme.colors.accent.primary : theme.colors.text.secondary} style={{ fontSize: 14 }}>
@@ -168,7 +200,7 @@ const ReplyRow = memo(function ReplyRow({ reply }: { reply: ProfileReply }) {
 // ── «Что нового?» emoji ticker ──────────────────────────────────────────────
 // Replaces the photo icon on the compose row: one emoji at a time, cross-fading into the next while
 // drifting up a little. One shared value drives every glyph on the UI thread, so React never
-// re-renders for it; it stops when the profile is not on screen or Reduce Motion is on.
+// re-renders for it; it stops when the profile or its pane is not on screen, or Reduce Motion is on.
 const TICKER = ['🖼️', '✨', '📸', '🎧', '💭', '🌿', '😊'];
 const TICKER_STEP_MS = 2600;
 const FADE = 0.25;
@@ -191,11 +223,11 @@ const TickerGlyph = memo(function TickerGlyph({ glyph, index, t }: { glyph: stri
   return <Reanimated.Text allowFontScaling={false} style={[styles.tickerGlyph, style]}>{glyph}</Reanimated.Text>;
 });
 
-function EmojiTicker() {
+function EmojiTicker({ visible }: { visible: boolean }) {
   const focused = useIsFocused();
   const reduceMotion = useReducedMotion();
   const t = useSharedValue(0);
-  const running = focused && !reduceMotion;
+  const running = focused && visible && !reduceMotion;
   useEffect(() => {
     if (!running) {
       cancelAnimation(t);
@@ -221,11 +253,133 @@ function Empty({ icon, text }: { icon: React.ComponentProps<typeof Feather>['nam
   );
 }
 
+/** A kept-alive tab page: in the layout while its tab is selected, transparent and inert otherwise. */
+function Pane({ active, children }: { active: boolean; children: React.ReactNode }) {
+  return (
+    <View
+      style={active ? null : styles.paneHidden}
+      pointerEvents={active ? 'auto' : 'none'}
+      accessibilityElementsHidden={!active}
+      importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
+    >
+      {children}
+    </View>
+  );
+}
+
+const PostsPane = memo(function PostsPane({
+  posts, loading, isOwn, visible, ready, authorName, authorEmoji, authorVerified, authorBadge, onLongPressPost,
+}: {
+  posts: ProfilePost[];
+  loading: boolean;
+  isOwn: boolean;
+  visible: boolean;
+  ready: boolean;
+  authorName: string;
+  authorEmoji: string;
+  authorVerified?: boolean;
+  authorBadge?: string | null;
+  onLongPressPost: (p: ProfilePost, anchor: ActionMenuAnchor | null) => void;
+}) {
+  const theme = useTheme();
+  const t = useT();
+  const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
+  const shown = useProgressiveCount(posts.length, ready, 4, 3);
+  const hairline = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const onPressPost = useCallback((p: ProfilePost) => openPost(p.id), []);
+  const compose = useCallback(() => {
+    triggerHaptic('light');
+    router.push('/post/new' as any);
+  }, []);
+  return (
+    <>
+      {isOwn ? (
+        <Pressable
+          onPress={compose}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.compose, { borderColor: hairline }, pressed ? { opacity: 0.85 } : null]}
+        >
+          <View style={[styles.composeIcon, { backgroundColor: theme.colors.accent.primary }]}>
+            <Feather name="edit-3" size={16} color="#FFFFFF" />
+          </View>
+          <Text variant="body" color={theme.colors.text.secondary}>{t('post.compose_prompt')}</Text>
+          <View style={{ flex: 1 }} />
+          <EmojiTicker visible={visible} />
+        </Pressable>
+      ) : null}
+      {loading && posts.length === 0 ? (
+        <ActivityIndicator style={{ marginTop: 28 }} color={theme.colors.text.tertiary} />
+      ) : posts.length === 0 ? (
+        <Empty icon="file-text" text={t('profile.no_posts')} />
+      ) : (
+        posts.slice(0, shown).map((p) => (
+          <ProfilePostCard
+            key={p.id}
+            post={p}
+            authorName={authorName}
+            authorEmoji={authorEmoji}
+            authorVerified={authorVerified}
+            authorBadge={authorBadge}
+            postEmoji={postEmoji}
+            onPress={onPressPost}
+            onLongPress={onLongPressPost}
+          />
+        ))
+      )}
+    </>
+  );
+});
+
+const MediaPane = memo(function MediaPane({ posts, loading, ready }: { posts: ProfilePost[]; loading: boolean; ready: boolean }) {
+  const theme = useTheme();
+  const t = useT();
+  const { width } = useWindowDimensions();
+  const media = useMemo(() => {
+    const out: { url: string; postId: string }[] = [];
+    for (const p of posts) {
+      for (const u of parseImageUrls(p.image_url)) {
+        if (!isAnimated(u)) out.push({ url: u, postId: p.id });
+      }
+    }
+    return out;
+  }, [posts]);
+  const shown = useProgressiveCount(media.length, ready, 12, 12);
+  const cell = Math.floor((width - 32 - 3 * 2) / 3);
+  if (loading && posts.length === 0) return <ActivityIndicator style={{ marginTop: 28 }} color={theme.colors.text.tertiary} />;
+  if (media.length === 0) return <Empty icon="image" text={t('profile.media_posts_empty')} />;
+  return (
+    <View style={styles.mediaGrid}>
+      {media.slice(0, shown).map((m) => (
+        <Pressable key={m.url} onPress={() => openPost(m.postId)} style={[styles.mediaCell, { width: cell, height: cell, backgroundColor: theme.colors.background.elevated }]}>
+          <CachedImage uri={m.url} style={{ width: cell, height: cell }} resizeMode="cover" proxyWidth={cell * 2} />
+        </Pressable>
+      ))}
+    </View>
+  );
+});
+
+/** Built the first time «Ответы» is opened, which is also when its request is made. */
+const RepliesPane = memo(function RepliesPane({ profileId, ready }: { profileId: string; ready: boolean }) {
+  const theme = useTheme();
+  const t = useT();
+  const { replies, loading } = useProfileReplies(profileId);
+  const shown = useProgressiveCount(replies.length, ready, 5, 5);
+  if (loading && replies.length === 0) return <ActivityIndicator style={{ marginTop: 28 }} color={theme.colors.text.tertiary} />;
+  if (replies.length === 0) return <Empty icon="message-square" text={t('profile.replies_empty')} />;
+  return <>{replies.slice(0, shown).map((r) => <ReplyRow key={r.id} reply={r} />)}</>;
+});
+
 export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profileId: string; isOwn: boolean; author: ProfileAuthor; sticky?: ProfileStickyTabs }) {
   const theme = useTheme();
   const t = useT();
-  const { width, height: winHeight } = useWindowDimensions();
+  const { height: winHeight } = useWindowDimensions();
+  const settled = useTransitionSettled();
   const [tab, setTab] = useState<TabKey>('posts');
+  const [opened, setOpened] = useState<Record<TabKey, boolean>>({ posts: true, media: false, replies: false });
+  const selectTab = useCallback((k: TabKey) => {
+    setTab(k);
+    setOpened((o) => (o[k] ? o : { ...o, [k]: true }));
+  }, []);
 
   // ── Sticky strip ──────────────────────────────────────────────────────────
   // The strip is the first child of the wrap, so the wrap's y in the scroll content is the strip's
@@ -264,31 +418,8 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
   const wrapMinHeight = sticky ? Math.max(0, winHeight - sticky.top - sticky.bottomPad) : undefined;
   const bg = theme.colors.background.primary;
   const blocked = useIsBlocked(isOwn ? '' : profileId);
-  const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
   const { posts, loading } = useProfilePosts(blocked ? undefined : profileId);
-  const { replies, loading: repliesLoading } = useProfileReplies(tab === 'replies' && !blocked ? profileId : undefined);
-  const contentWidth = width - 32;
 
-  const shownPosts = useProgressiveCount(posts.length);
-  const shownReplies = useProgressiveCount(replies.length);
-
-  const media = useMemo(() => {
-    const out: { url: string; postId: string }[] = [];
-    for (const p of posts) {
-      for (const u of parseImageUrls(p.image_url)) {
-        if (!isAnimated(u)) out.push({ url: u, postId: p.id });
-      }
-    }
-    return out;
-  }, [posts]);
-  const shownMedia = useProgressiveCount(media.length, 12, 12);
-
-  const compose = useCallback(() => {
-    triggerHaptic('light');
-    router.push('/post/new' as any);
-  }, []);
-
-  const onPressPost = useCallback((p: ProfilePost) => openPost(p.id), []);
   // Every post gets the long-press menu: own posts for copy / share / delete, everyone else's for
   // copy / share / report / block (report and block are required on UGC by App Review 1.2).
   const [menuFor, setMenuFor] = useState<{ post: ProfilePost; anchor: ActionMenuAnchor | null } | null>(null);
@@ -306,9 +437,6 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
     );
   }
 
-  const cell = Math.floor((contentWidth - 3 * 2) / 3);
-  const hairline = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
-
   return (
     <View style={[styles.wrap, wrapMinHeight ? { minHeight: wrapMinHeight } : null]} onLayout={sticky ? onWrapLayout : undefined}>
       <Animated.View onLayout={onStripLayout} style={[styles.stickyLayer, stickTranslate ? { transform: [{ translateY: stickTranslate }] } : null]}>
@@ -322,76 +450,35 @@ export function ProfileContentTabs({ profileId, isOwn, author, sticky }: { profi
             <LinearGradient colors={[bg, bg, bg + '00']} locations={[0, 0.7, 1]} style={StyleSheet.absoluteFill} />
           </Animated.View>
         ) : null}
-        <TabStrip value={tab} onChange={setTab} />
+        <TabStrip value={tab} onChange={selectTab} />
       </Animated.View>
 
-      {tab === 'posts' ? (
-        <View style={{ marginTop: 12 }}>
-          {isOwn ? (
-            <Pressable
-              onPress={compose}
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.compose, { borderColor: hairline }, pressed ? { opacity: 0.85 } : null]}
-            >
-              <View style={[styles.composeIcon, { backgroundColor: theme.colors.accent.primary }]}>
-                <Feather name="edit-3" size={16} color="#FFFFFF" />
-              </View>
-              <Text variant="body" color={theme.colors.text.secondary}>{t('post.compose_prompt')}</Text>
-              <View style={{ flex: 1 }} />
-              <EmojiTicker />
-            </Pressable>
-          ) : null}
-          {loading && posts.length === 0 ? (
-            <ActivityIndicator style={{ marginTop: 28 }} color={theme.colors.text.tertiary} />
-          ) : posts.length === 0 ? (
-            <Empty icon="file-text" text={t('profile.no_posts')} />
-          ) : (
-            posts.slice(0, shownPosts).map((p) => (
-              <ProfilePostCard
-                key={p.id}
-                post={p}
-                authorName={author.name}
-                authorEmoji={author.emoji}
-                authorVerified={author.verified}
-                authorBadge={author.badge}
-                postEmoji={postEmoji}
-                onPress={onPressPost}
-                onLongPress={onLongPressPost}
-              />
-            ))
-          )}
-        </View>
-      ) : null}
-
-      {tab === 'media' ? (
-        <View style={{ marginTop: 12 }}>
-          {loading && posts.length === 0 ? (
-            <ActivityIndicator style={{ marginTop: 28 }} color={theme.colors.text.tertiary} />
-          ) : media.length === 0 ? (
-            <Empty icon="image" text={t('profile.media_posts_empty')} />
-          ) : (
-            <View style={styles.mediaGrid}>
-              {media.slice(0, shownMedia).map((m) => (
-                <Pressable key={m.url} onPress={() => openPost(m.postId)} style={[styles.mediaCell, { width: cell, height: cell, backgroundColor: theme.colors.background.elevated }]}>
-                  <CachedImage uri={m.url} style={{ width: cell, height: cell }} resizeMode="cover" proxyWidth={cell * 2} />
-                </Pressable>
-              ))}
-            </View>
-          )}
-        </View>
-      ) : null}
-
-      {tab === 'replies' ? (
-        <View style={{ marginTop: 12 }}>
-          {repliesLoading && replies.length === 0 ? (
-            <ActivityIndicator style={{ marginTop: 28 }} color={theme.colors.text.tertiary} />
-          ) : replies.length === 0 ? (
-            <Empty icon="message-square" text={t('profile.replies_empty')} />
-          ) : (
-            replies.slice(0, shownReplies).map((r) => <ReplyRow key={r.id} reply={r} />)
-          )}
-        </View>
-      ) : null}
+      <View style={styles.panes}>
+        <Pane active={tab === 'posts'}>
+          <PostsPane
+            posts={posts}
+            loading={loading}
+            isOwn={isOwn}
+            visible={tab === 'posts'}
+            ready={settled}
+            authorName={author.name}
+            authorEmoji={author.emoji}
+            authorVerified={author.verified}
+            authorBadge={author.badge}
+            onLongPressPost={onLongPressPost}
+          />
+        </Pane>
+        {opened.media ? (
+          <Pane active={tab === 'media'}>
+            <MediaPane posts={posts} loading={loading} ready={settled} />
+          </Pane>
+        ) : null}
+        {opened.replies ? (
+          <Pane active={tab === 'replies'}>
+            <RepliesPane profileId={profileId} ready={settled} />
+          </Pane>
+        ) : null}
+      </View>
 
       {menuFor ? (
         <ProfilePostMenu
@@ -419,8 +506,12 @@ const styles = StyleSheet.create({
   // Above the cards that slide under it while pinned.
   stickyLayer: { zIndex: 10 },
   scrim: { position: 'absolute', left: -16, right: -16 },
-  strip: { flexDirection: 'row', borderRadius: 20, padding: 4, gap: 4, overflow: 'hidden' },
+  strip: { flexDirection: 'row', borderRadius: 20, padding: STRIP_PAD, gap: STRIP_GAP, overflow: 'hidden' },
   stripItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 9, borderRadius: 16, overflow: 'hidden' },
+  indicator: { position: 'absolute', top: STRIP_PAD, bottom: STRIP_PAD, left: STRIP_PAD, borderRadius: 16 },
+  panes: { marginTop: 12 },
+  // Out of the flow, so the page is as tall as the visible pane; kept mounted, so coming back is free.
+  paneHidden: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
   compose: {
     flexDirection: 'row',
     alignItems: 'center',

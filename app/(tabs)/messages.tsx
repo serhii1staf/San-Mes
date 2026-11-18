@@ -212,6 +212,8 @@ function MusicConversationItem() { return null; }
 const MESSAGES_ROW_HEIGHT = 64;
 const MESSAGES_SEPARATOR_HEIGHT = 0.5;
 const MESSAGES_ROW_PITCH = MESSAGES_ROW_HEIGHT + MESSAGES_SEPARATOR_HEIGHT;
+/** The row avatar's diameter (`Avatar size="md"`), for the peek menu's close target. */
+const AVATAR_MD = 44;
 const MESSAGES_ITEM_LAYOUT = (_data: ArrayLike<Conversation> | null | undefined, index: number) => ({
   length: MESSAGES_ROW_HEIGHT,
   offset: MESSAGES_ROW_PITCH * index,
@@ -633,11 +635,19 @@ function ConversationItemBase({
     // Selection mode owns long-press (ticking and dragging); no menu there.
     if (editMode) return;
     let shown = false;
-    const show = (y: number, h: number) => {
+    const show = (x: number, y: number, h: number) => {
       if (shown) return;
       shown = true;
+      const ok = Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(h) && h > 0;
       openChatPeek<PeekId>({
-        anchor: { y: Number.isFinite(y) ? y : 0, height: Number.isFinite(h) ? h : 0 },
+        anchor: {
+          y: Number.isFinite(y) ? y : 0,
+          height: Number.isFinite(h) ? h : 0,
+          // The avatar's centre, which the menu closes into: the row's own padding plus half of
+          // the `md` avatar, at the row's vertical middle (the row centres its content).
+          avatarCx: ok ? x + theme.spacing.base + AVATAR_MD / 2 : undefined,
+          avatarCy: ok ? y + h / 2 : undefined,
+        },
         conversation: isSyntheticUserBlockId(item.id)
           ? null
           : { id: item.id, name: displayName, emoji: item.participantEmoji, verified: item.participantVerified },
@@ -651,13 +661,13 @@ function ConversationItemBase({
     // anyway, from the centre.
     const node = rowRef.current;
     if (!node) {
-      show(0, 0);
+      show(0, 0, 0);
       return;
     }
-    const fallback = setTimeout(() => show(0, 0), 150);
-    node.measureInWindow((_x, y, _w, h) => {
+    const fallback = setTimeout(() => show(0, 0, 0), 150);
+    node.measureInWindow((x, y, _w, h) => {
       clearTimeout(fallback);
-      show(y, h);
+      show(x, y, h);
     });
   };
 
