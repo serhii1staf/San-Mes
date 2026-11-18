@@ -407,6 +407,10 @@ describe('ChatInputBar preservation baseline (Task 2 — ¬isBugCondition behavi
         'ITSAppUsesNonExemptEncryption',
         'NSPhotoLibraryAddUsageDescription',
         'NSPhotoLibraryUsageDescription',
+        // Not a permission: React Native's release level, read by ExpoReactNativeFactory. It turns
+        // on `preventShadowTreeCommitExhaustion`, which Reanimated's commit-pausing flag needs.
+        // See scripts/eas-build-pre-install.js and .kiro/steering/apple-compliance.md.
+        'ReactNativeReleaseLevel',
         'UIBackgroundModes',
       ].sort(),
     );
