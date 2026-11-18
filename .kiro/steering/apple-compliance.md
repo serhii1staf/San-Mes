@@ -22,6 +22,14 @@ Currently declared:
 - `NSPhotoLibraryUsageDescription` — gallery picker (photos in posts and chats, profile banner, chat background). Posts came back in Nov 2026 as profile-only publishing (`app/post/new.tsx`, gallery only, no camera); the string mentions them.
 - `NSPhotoLibraryAddUsageDescription` — "Save" on a photo in the full-screen chat viewer (`app/chat/fullscreen.tsx`, add-only access)
 - `UIBackgroundModes: ["audio"]` — required because the music player keeps playing in the background
+- `ReactNativeReleaseLevel: "experimental"` — **not a permission and not a data flow.** It is the React
+  Native release level, read by `ExpoReactNativeFactory` (`node_modules/expo/ios/AppDelegates/`). In RN
+  0.81.5 the iOS experimental overrides extend stable and add only `preventShadowTreeCommitExhaustion`
+  (plus `useTurboModuleInterop`, which nothing on iOS reads). That flag is the precondition Reanimated
+  documents for `DISABLE_COMMIT_PAUSING_MECHANISM`, which `scripts/eas-build-pre-install.js` turns on
+  for iOS EAS builds only. Android gets neither: its experimental level does not extend stable. Both
+  are native settings, so they reach users only with a new binary. Remove the key and the script
+  together, never one without the other.
 
 **Removed (Nov 2026, with the publishing feature):** `NSCameraUsageDescription`. The camera was used
 only by the deleted Create screen (`app/(tabs)/create.tsx`); nothing captures photos now. `expo-image-picker`

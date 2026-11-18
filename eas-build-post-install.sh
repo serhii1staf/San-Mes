@@ -41,3 +41,10 @@ echo ""
 echo "=== Verification ==="
 find . -name "base.h" -path "*/fmt*" -not -type l -exec grep -l "FMT_USE_CONSTEVAL" {} \; 2>/dev/null | head -5
 echo "=== Done patching fmt ==="
+# Reanimated's static feature flags as `pod install` compiled them into RNReanimated. On iOS,
+# scripts/eas-build-pre-install.js turns on DISABLE_COMMIT_PAUSING_MECHANISM; this line is the proof
+# that it reached the build. Informational only, so it can never fail the build.
+if [ -d "ios/Pods/Target Support Files/RNReanimated" ]; then
+  echo "=== Reanimated static feature flags ==="
+  grep -ho 'REANIMATED_FEATURE_FLAGS=[^ ]*' "ios/Pods/Target Support Files/RNReanimated/"*.xcconfig 2>/dev/null | sort -u || true
+fi
