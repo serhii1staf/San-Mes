@@ -436,6 +436,9 @@ const ru: Record<string, string> = {
   'search.empty': 'Никого не найдено',
   'search.hint_title': 'Найдите людей и мини-приложения',
   'search.hint_body': 'Введите имя или @username. Здесь появятся те, кого вы недавно открывали.',
+  'search.people': 'Люди',
+  'search.latest_posts': 'Последние публикации',
+  'search.clear_query': 'Очистить поиск',
 
   // ─── Create post ───────────────────────────────────────────────────────
   'create.title.repost': 'Репост',

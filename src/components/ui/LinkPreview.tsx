@@ -94,6 +94,19 @@ function ytThumb(uri: string | undefined | null): string | undefined {
   return uri.replace('/hqdefault.', '/mqdefault.');
 }
 
+/**
+ * The proxy width the card requests for this preview's thumbnail: 200 for the 16:9 video layout, 60
+ * for the thumbnail of the thin link row (see the two `CachedImage`s below). The warm-up prefetch must
+ * ask for the same width, because the width is part of the cache key. It used `prefetchImages`'
+ * default of 600, so every preview downloaded and decoded a large copy that nothing displayed, next
+ * to the small one the card then fetched anyway.
+ */
+function thumbWidthFor(d: LinkPreviewData | null | undefined): number {
+  if (!d) return 60;
+  const video = ((d.provider === 'youtube' || d.provider === 'vimeo') && !!d.videoId) || d.type === 'video';
+  return video ? 200 : 60;
+}
+
 export const LinkPreview = React.memo(function LinkPreview(props: LinkPreviewProps) {
   // ── OUR OWN LINKS NEVER GET THE GENERIC OG TREATMENT ────────────────────────
   //
@@ -192,7 +205,7 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
     // "preview reloads every time" — even though the metadata never re-fetched.
     if (cached?.image) {
       const u = ytThumb(cached.image);
-      if (u) prefetchImages([u]);
+      if (u) prefetchImages([u], thumbWidthFor(cached));
     }
     if (cached !== undefined) {
       if (!cached) onError?.();
@@ -228,7 +241,7 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
         // first-ever-view path where `cached` was undefined above.
         if (d?.image) {
           const u = ytThumb(d.image);
-          if (u) prefetchImages([u]);
+          if (u) prefetchImages([u], thumbWidthFor(d));
         }
         if (!d) onError?.();
       })

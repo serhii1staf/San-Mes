@@ -21,6 +21,8 @@ import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../src/utils/appLinks';
 import { acquireDecodeSlot } from '../../src/utils/decodeGate';
+import { wasVariantLoaded } from '../../src/services/mediaVariants';
+import { useTransitionSettled } from '../../src/hooks/useTransitionSettled';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
@@ -714,6 +716,10 @@ function OlderMessagesLoader({ visible, color }: { visible: boolean; color: stri
 // have kept them consistent.
 const CHAT_IMG_MAX_W = Math.min(Math.round(SCREEN_WIDTH * 0.66), 270, BUBBLE_MAX_W - BUBBLE_H_PADDING);
 const CHAT_IMG_MAX_H = 340;
+/** A tile of a multi-photo bubble; the width `bubbleStyles.imageMulti` requests from the proxy. */
+const MULTI_IMG_SIZE = 120;
+/** The transcript's pre-render window while the chat's push animation is still running, in px. */
+const OPENING_DRAW_DISTANCE = 40;
 
 /**
  * The box used when a photo's real dimensions are not known yet.
@@ -1104,8 +1110,6 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   const bodyTextColor = coloredBubble ? sideTextColor : theme.colors.text.primary;
   const linkTextColor = coloredBubble ? sideTextColor : theme.colors.accent.primary;
   const timeColor = coloredBubble ? sideTextFaint : theme.colors.text.tertiary;
-  // Native iOS-26 liquid glass for the swipe-to-reply pill. iOS-only + opt-in.
-  const glassActive = useLiquidGlassActive();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
 
   // Swipe-to-reply + press-drag-select gestures are wired by useMessageGestures (extracted for
@@ -1278,8 +1282,20 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // mounted ungated, for the rest of the session. Keying on the url makes recycling re-arm, which is
   // the same reason `SingleChatImage` uses `useRecyclingState` for its box.
   const firstImgUrl = hasImages ? message.imageUrls![0] : null;
+  // ── ALREADY SHOWN THIS SESSION: NO GATE, NO SKELETON ──────────────────────
+  //
+  // The gate is granted from a passive effect, so even a free slot cost every media bubble one frame
+  // of skeleton, and past the fourth bubble a wave of them. On reopening a chat that is every photo
+  // flashing grey and popping back in: the "data keeps reloading" report. A photo that already
+  // finished loading at exactly the size this bubble requests (`noteVariantLoaded`, written by
+  // `CachedImage` on load) is in the decoded-bitmap memory cache, which is the case
+  // `singleImgKnown` wrongly assumed for anything with remembered dimensions. Only these skip the
+  // gate; a cold photo still waits for a slot.
+  const imgsWarm = hasImages && (message.imageUrls!.length === 1
+    ? wasVariantLoaded(message.imageUrls![0], CHAT_IMG_MAX_W)
+    : message.imageUrls!.every((u) => wasVariantLoaded(u, MULTI_IMG_SIZE)));
   useEffect(() => {
-    if (!firstImgUrl) return;
+    if (!firstImgUrl || imgsWarm) return;
     setImgSlotGranted(false);
     const release = acquireDecodeSlot(() => setImgSlotGranted(true));
     imgSlotReleaseRef.current = release;
@@ -1287,14 +1303,14 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
       imgSlotReleaseRef.current = null;
       release();
     };
-  }, [firstImgUrl]);
+  }, [firstImgUrl, imgsWarm]);
   const releaseImgSlot = useCallback(() => {
     const release = imgSlotReleaseRef.current;
     if (!release) return;
     imgSlotReleaseRef.current = null;
     release();
   }, []);
-  const imgReveal = hasImages && imgSlotGranted;
+  const imgReveal = hasImages && (imgsWarm || imgSlotGranted);
 
   // ── THIS SCREEN HAD NO MOUNT INSTRUMENTATION AT ALL ───────────────────────
   //
@@ -1678,6 +1694,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                           uri={uri}
                           style={bubbleStyles.imageMulti}
                           resizeMode="cover"
+                          // The first tile hands the bubble's decode slot back, as the single
+                          // image does. Without it a grid held its slot until the 1200 ms watchdog.
+                          onLoad={idx === 0 ? releaseImgSlot : undefined}
+                          onError={idx === 0 ? releaseImgSlot : undefined}
                           // Decode at low priority so a heavy GIF/photo never
                           // competes with the chat-open transition or scroll
                           // frames on weak devices.
@@ -1833,7 +1853,6 @@ const VisibilityBubble = React.memo(function VisibilityBubble({ tracker, ...rest
   // staggered-resume can notify just this row. Stable per id so the store
   // subscription isn't torn down on every render.
   const subscribeRow = useCallback((cb: () => void) => tracker.subscribeRow(id, cb), [tracker, id]);
-  const isVisible = useSyncExternalStore(subscribeRow, () => tracker.isVisible(id));
   // Does this row contain an animated image (GIF)? Only such rows need to
   // react to the scroll-pause gate, so we register them with the tracker. A
   // text/photo bubble registers `false` and is therefore never re-rendered
@@ -1849,12 +1868,37 @@ const VisibilityBubble = React.memo(function VisibilityBubble({ tracker, ...rest
       return path.endsWith('.gif') || low.indexOf('giphy') !== -1;
     });
   }, [rest.message.imageUrls]);
+  // Registered BEFORE the first snapshot is read. Registered only in the effect below, a GIF row's
+  // first `isVisible` ran as a plain row, so on open every mounted GIF started animating at once and
+  // the GIF_ANIM_CAP ranking (which falls back to registration order before the first viewability
+  // report) saw an empty set. `setHasGif` only adds to a set and notifies no one, so this is safe
+  // during render; the effect keeps the cleanup.
+  if (hasGif) tracker.setHasGif(id, true);
+  const isVisible = useSyncExternalStore(subscribeRow, () => tracker.isVisible(id));
   useEffect(() => {
     tracker.setHasGif(id, hasGif);
     return () => tracker.setHasGif(id, false);
   }, [id, hasGif, tracker]);
   return <MemoMessageBubble isVisible={isVisible} {...rest} />;
 });
+
+/**
+ * The canonical conversation id for a route, from data already on the device, and whether it can be
+ * trusted (`settled`). The same three local answers the reconciliation effect in `ChatScreen` gives,
+ * computed once before the first render instead of after it. Anything it cannot answer (a first-ever
+ * chat opened from a profile) keeps the raw id, unsettled, for that effect's network path.
+ */
+function resolveConversationLocally(id: string | undefined, paramParticipantId: string | undefined): { id: string; settled: boolean } {
+  if (!id) return { id: '', settled: false };
+  if (paramParticipantId && paramParticipantId !== id) return { id, settled: true };
+  try {
+    const convs = (useEntityStore.getState().conversations || []) as any[];
+    if (convs.some((c) => c && c.id === id)) return { id, settled: true };
+    const local = convs.find((c) => c && c.participantId === id && typeof c.id === 'string' && c.id !== id);
+    if (local?.id) return { id: local.id, settled: true };
+  } catch {}
+  return { id, settled: false };
+}
 
 export default function ChatScreen() {
   // FIRST hook, deliberately. See the note further down where the old local stamp used to live, and
@@ -1894,7 +1938,13 @@ export default function ChatScreen() {
   // message-data pipeline keys off it (selector, optimistic sends,
   // persistence, realtime channel + publishes), while `participantId` (the
   // OTHER user's id) stays separate for display + notification routing.
-  const [conversationId, setConversationId] = useState<string>(() => id || '');
+  //
+  // Resolved on the FIRST render when the device can answer it (see `resolveConversationLocally`).
+  // A chat opened from a profile used to render once under the peer's user id, an empty bucket, and
+  // then again a frame later under the real id: the transcript appeared, vanished into the empty
+  // state and came back, one more "it reloads" on every profile-initiated open.
+  const [initialConv] = useState(() => resolveConversationLocally(id, paramParticipantId));
+  const [conversationId, setConversationId] = useState<string>(initialConv.id);
 
   // Whether this chat is the screen on top, as a ref so focus changes never re-render the screen.
   // Read by the history poll: a profile or a photo pushed from the chat keeps it mounted underneath.
@@ -1926,27 +1976,25 @@ export default function ChatScreen() {
   //   • two `markChatOpened` writes, each re-sorting and re-rendering the STILL-MOUNTED messages tab;
   //   • two Ably channel attaches.
   //
-  // So: gate the network work on the id being SETTLED. `routeIdIsCanonical` answers that
-  // synchronously for the two cases where it can be answered synchronously — which are the common
-  // ones, so nothing gets slower for them:
+  // So: gate the network work on the id being SETTLED. `resolveConversationLocally` answers that
+  // synchronously for the cases where it can be answered synchronously — which are the common ones,
+  // so nothing gets slower for them:
   //
   //   (a) the messages list passes an explicit `participantId` distinct from the route id, so the
   //       route id is already a conversation id;
-  //   (b) the route id matches a conversation row we already hold.
+  //   (b) the route id matches a conversation row we already hold;
+  //   (b2) the route id is a peer whose 1:1 row we already hold (a profile-entry open of an existing
+  //       chat), so the canonical id is that row's.
   //
-  // Only the profile-entry case starts `false`, and it flips once the POST resolves. It also flips on
-  // every OTHER exit of that effect — offline, and a failed POST — because a chat that never settles
-  // would never poll at all, and "best-effort with the raw id" is the documented offline behaviour.
-  const routeIdIsCanonical = useMemo(() => {
-    if (!id) return false;
-    if (paramParticipantId && paramParticipantId !== id) return true;
-    try {
-      return useEntityStore.getState().conversations.some((c) => c.id === id);
-    } catch {
-      return false;
-    }
-  }, [id, paramParticipantId]);
-  const [convIdSettled, setConvIdSettled] = useState(routeIdIsCanonical);
+  // Only a first-ever chat opened from a profile starts `false`, and it flips once the POST resolves.
+  // It also flips on every OTHER exit of that effect — offline, and a failed POST — because a chat
+  // that never settles would never poll at all, and "best-effort with the raw id" is the documented
+  // offline behaviour.
+  const [convIdSettled, setConvIdSettled] = useState(initialConv.settled);
+  // The push animation is over. The open-path work below (the chat-list stamp, the history poll, the
+  // image warm, the profile fetch) waits for this rather than `runAfterInteractions`, which the
+  // native stack never holds back and so ran in the middle of the slide.
+  const transitionSettled = useTransitionSettled();
   // Float this chat to the top of the messages list when opened. We stamp the
   // open time in the persisted chat-settings store (kept separate from the
   // conversation's lastMessageAt so a sync can't clobber it); the messages
@@ -1984,14 +2032,18 @@ export default function ChatScreen() {
   // is already canonical (messages-list entry, or a route id matching a known conversation row), so
   // those stamp on mount exactly as before. Only the profile-entry case waits, and it waits for the
   // one id that can actually float the row.
+  //
+  // And it waits for the push animation to END (`transitionSettled`): the re-sort of the messages
+  // list underneath was landing mid-slide, because `runAfterInteractions` does not wait for a
+  // native-stack transition.
   useEffect(() => {
     if (!conversationId) return;
-    if (!convIdSettled) return;
+    if (!convIdSettled || !transitionSettled) return;
     const handle = InteractionManager.runAfterInteractions(() => {
       try { useChatSettingsStore.getState().markChatOpened(conversationId); } catch {}
     });
     return () => handle.cancel();
-  }, [conversationId, convIdSettled]);
+  }, [conversationId, convIdSettled, transitionSettled]);
 
   // ── Tell the push handler this chat is on screen ──────────────────────────
   //
@@ -2345,7 +2397,9 @@ export default function ChatScreen() {
   // a new array holding an unchanged row yields the same reference and Zustand bails out on
   // `Object.is`. Nothing is constructed in the selector, so this cannot trip React 19's
   // "getSnapshot should be cached" rule either.
-  const entityConv = useEntityStore((s) => s.conversations.find((c) => c.id === id));
+  // By the canonical id first: on a profile-entry open the route id is the peer's user id, which no
+  // row carries.
+  const entityConv = useEntityStore((s) => s.conversations.find((c) => c.id === conversationId) || s.conversations.find((c) => c.id === id));
   const participantId = paramParticipantId || entityConv?.participantId || (conversation as any)?.participantId || id;
 
   // Synchronously read this chat's cached messages ONCE so the very first render
@@ -2395,6 +2449,19 @@ export default function ChatScreen() {
 
   // Frame budget for this device and power state (see src/utils/renderBudget.ts).
   const chatBudget = useRenderBudget();
+  // The transcript's pre-render window: almost nothing beyond the viewport while the push animation
+  // runs, then grown to the budget in two steps, one frame apart. FlashList doubles the window at the
+  // newest end of an inverted list (the unused buffer below the last message moves above it), so the
+  // full 250 is ~500 pt of older history, six or eight bubbles. Built in the open commit they made the
+  // slide heavier; built in one go right after it, they were one long frame.
+  const [transcriptDrawDistance, setTranscriptDrawDistance] = useState(OPENING_DRAW_DISTANCE);
+  useEffect(() => {
+    if (!transitionSettled || transcriptDrawDistance >= chatBudget.drawDistance) return;
+    const raf = requestAnimationFrame(() => {
+      setTranscriptDrawDistance((d) => Math.min(chatBudget.drawDistance, d * 3));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [transitionSettled, transcriptDrawDistance, chatBudget.drawDistance]);
 
   /**
    * Set when `conversationId` changes because the SAME chat got its canonical id
@@ -2748,7 +2815,10 @@ export default function ChatScreen() {
   // (and its 5 mounted message bubbles). Two atomic selectors with shallow
   // equality keep references stable across unrelated updates.
   const globalSettings = useChatSettingsStore((s) => s.settings[GLOBAL_CHAT_SETTINGS_KEY]);
-  const specificSettings = useChatSettingsStore((s) => s.settings[id || '']);
+  // Per-chat settings are written under whatever id the chat was opened with. Prefer the
+  // conversation's own entry, so a chat opened from a profile shows the same name and look as when
+  // it is opened from the list.
+  const specificSettings = useChatSettingsStore((s) => s.settings[conversationId] || s.settings[id || '']);
   const chatSettings = useMemo(() => {
     return { ...DEFAULT_CHAT_SETTINGS, ...globalSettings, ...specificSettings };
   }, [globalSettings, specificSettings]);
@@ -3125,8 +3195,12 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (conversation) return;
-    if (cachedProfile) { setProfileData(cachedProfile); return; }
+    // A cached profile is read directly where it is shown (`peerProfile` below). Copying it into
+    // `profileData` here cost a second full-screen commit on every open, and for that one frame the
+    // header showed the conversation row's name and emoji instead of the profile's.
+    if (cachedProfile) return;
     if (!participantId) return;
+    if (!transitionSettled) return;
     // Skip the network call when offline so it can't hang and congest the JS thread
     if (!useConnectivityStore.getState().isOnline) return;
     // Defer the profile fetch past the navigation transition — the network
@@ -3167,7 +3241,7 @@ export default function ChatScreen() {
       );
     });
     return () => handle.cancel();
-  }, [participantId, conversation, cachedProfile]);
+  }, [participantId, conversation, cachedProfile, transitionSettled]);
 
   // Per-account screenshot lock for the CHAT PARTNER. The flag rides along on
   // the partner's profile (cached entity store or the fetched profileData), so
@@ -3353,6 +3427,9 @@ export default function ChatScreen() {
     // a 403, and then the whole effect runs AGAIN under the canonical id. One open, two 200-row pages,
     // one of them guaranteed useless.
     if (!convIdSettled) return;
+    // After the push animation: the answer is a 200-row parse, a merge and a transcript re-render,
+    // and a fast response used to land in the middle of the slide.
+    if (!transitionSettled) return;
     if (!useConnectivityStore.getState().isOnline) return;
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -3591,7 +3668,7 @@ export default function ChatScreen() {
       handle.cancel();
       if (timer) clearInterval(timer);
     };
-  }, [conversationId, convIdSettled, setMessages]);
+  }, [conversationId, convIdSettled, transitionSettled, setMessages]);
 
   // Persist messages to KV cache whenever THIS chat's messages change.
   // `myStoreMessages` (above) already narrows the subscription to this chat,
@@ -3630,7 +3707,7 @@ export default function ChatScreen() {
   // than on every store write (which is why `myMessages` is deliberately NOT a dependency).
   useEffect(() => {
     if (!conversationId) return;
-    if (!convIdSettled) return;
+    if (!convIdSettled || !transitionSettled) return;
     const handle = InteractionManager.runAfterInteractions(() => {
       const current = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
       if (current.length === 0) return;
@@ -3650,7 +3727,7 @@ export default function ChatScreen() {
       }
     });
     return () => handle.cancel();
-  }, [conversationId, convIdSettled]);
+  }, [conversationId, convIdSettled, transitionSettled]);
 
   // Persist messages to KV cache whenever THIS chat's messages change.
   // CRITICAL: the store now holds only the bounded SEED on open (full history
@@ -3928,8 +4005,9 @@ export default function ChatScreen() {
   }, [conversationId, currentUserId, myMessages, setMessages]);
 
   const chatLocalName = specificSettings?.localName;
-  const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || t('chat.fallback_name');
-  const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || entityConv?.participantEmoji || '😊';
+  const peerProfile: any = profileData || cachedProfile;
+  const displayName = chatLocalName || conversation?.participantName || peerProfile?.display_name || entityConv?.participantName || t('chat.fallback_name');
+  const displayEmoji = (conversation as any)?.participantEmoji || peerProfile?.emoji || entityConv?.participantEmoji || '😊';
   const displayVerified = profileData?.is_verified || cachedProfile?.is_verified || (entityConv as any)?.participantVerified || false;
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
   const profileId = participantId;
@@ -4190,6 +4268,13 @@ export default function ChatScreen() {
      * migration is a small array merge over a bucket that is usually empty.
      */
     const settleTo = (convId: string) => {
+      // The first render already resolved to this id (`resolveConversationLocally`): nothing was
+      // parked under the raw id and nothing re-keys, so there is no migration to record. Recording one
+      // anyway would leave `migratedFromRef` armed for a change that never happens.
+      if (convId === initialConv.id) {
+        setConvIdSettled(true);
+        return;
+      }
       try {
         const cs = useChatStore.getState();
         const fromOld = cs.messages[id] || [];
@@ -6611,6 +6696,9 @@ export default function ChatScreen() {
   // gates rendering at the JSX level, so an opted-out user pays nothing.
   const SCROLL_BTN_THRESHOLD = 120;
   const [scrollBtnVisible, setScrollBtnVisible] = useState(false);
+  // Built the first time it is needed, not on every open: it is an interactive glass view sitting at
+  // scale 0 until the user scrolls up, and most opens never scroll up.
+  const [scrollBtnArmed, setScrollBtnArmed] = useState(false);
   const scrollBtnOpacity = useRef(new Animated.Value(0)).current;
   // Last-event throttle. RN's `scrollEventThrottle={32}` already caps the
   // call rate at ~30 Hz on iOS; the JS-side guard here is belt-and-suspenders
@@ -6702,6 +6790,8 @@ export default function ChatScreen() {
     scrollMetricsRef.current = { y, layoutH, contentH };
     const next = y > SCROLL_BTN_THRESHOLD;
     setScrollBtnVisible((prev) => (prev === next ? prev : next));
+    // Same batch as the flag, so the button exists before its reveal animation starts.
+    if (next) setScrollBtnArmed(true);
   }, []);
   useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); scrollPausedRef.current = false; setRevealScrollPaused(false); }, []);
   useEffect(() => {
@@ -6828,7 +6918,11 @@ export default function ChatScreen() {
           // pre-render window turns a fling through a media-heavy chat into a burst
           // of row construction plus image decodes landing on the same frames.
           // Halved again on weak hardware and in Low Power Mode.
-          drawDistance={chatBudget.drawDistance}
+          // And almost nothing beyond the viewport until the push animation is over: the rows
+          // above the first screen are history nobody sees during the slide. See
+          // `transcriptDrawDistance`. Always a number: FlashList keeps the previous value when
+          // this prop is `undefined`.
+          drawDistance={Math.min(transcriptDrawDistance, chatBudget.drawDistance)}
           // ── BOUND THE RECYCLE POOL ────────────────────────────────────────────
           //
           // From the FlashList v2 prop docs: "Maximum number of items in the recycle pool. These
@@ -6880,7 +6974,7 @@ export default function ChatScreen() {
           scrollEventThrottle={32}
         />
     ),
-    [windowedMessages, renderItem, chatBudget.drawDistance, listHeaderEl, listFooterEl,
+    [windowedMessages, renderItem, chatBudget.drawDistance, transcriptDrawDistance, listHeaderEl, listFooterEl,
      chatKeyExtractor, chatGetItemType, onStartReached, onChatScroll, viewabilityConfig,
      onViewableItemsChanged],
   );
@@ -6987,7 +7081,7 @@ export default function ChatScreen() {
 
           Gated entirely on `chatSettings.scrollToBottomButton`: when off,
           nothing mounts (no scroll listener cost, no opacity animator). */}
-      {chatSettings.scrollToBottomButton && (
+      {chatSettings.scrollToBottomButton && scrollBtnArmed && (
         <Reanimated.View
           pointerEvents="box-none"
           style={[

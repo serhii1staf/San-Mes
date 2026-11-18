@@ -153,9 +153,15 @@ function useCachedList<T>(
 ): { items: T[]; loading: boolean } {
   const [items, setItems] = useState<T[]>(() => {
     if (!profileId) return [];
-    return mem.get(profileId)?.items ?? disk?.read(profileId)?.items ?? [];
+    const inMem = mem.get(profileId);
+    if (inMem) return inMem.items;
+    // Adopted into memory here, so the effect below finds the same array (no second parse of the
+    // disk copy, no re-render with an equal page) and `loading` does not read the disk a third time.
+    const fromDisk = disk?.read(profileId);
+    if (fromDisk) mem.set(profileId, fromDisk);
+    return fromDisk?.items ?? [];
   });
-  const [loading, setLoading] = useState<boolean>(() => !!profileId && !mem.get(profileId) && !disk?.read(profileId));
+  const [loading, setLoading] = useState<boolean>(() => !!profileId && !mem.get(profileId));
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
