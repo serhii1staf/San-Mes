@@ -69,6 +69,7 @@ export function SettingsRow({
   rightElement,
   isLast,
   destructive,
+  labelLines = 1,
 }: {
   icon?: keyof typeof MaterialIcons.glyphMap;
   iconTint?: IconTint;
@@ -81,6 +82,8 @@ export function SettingsRow({
   rightElement?: React.ReactNode;
   isLast?: boolean;
   destructive?: boolean;
+  /** How many lines the label may wrap to before it truncates. */
+  labelLines?: number;
 }) {
   const theme = useTheme();
   const tint = iconTint ? ICON_TINTS[iconTint] : null;
@@ -99,7 +102,7 @@ export function SettingsRow({
           <MaterialIcons name={icon} size={19} color={tint.on} />
         </View>
       ) : null}
-      <Text variant="body" color={destructive ? theme.colors.status.error : undefined} style={{ flex: 1 }} numberOfLines={1}>
+      <Text variant="body" color={destructive ? theme.colors.status.error : undefined} style={{ flex: 1 }} numberOfLines={labelLines}>
         {label}
       </Text>
       {valueNode ? <View style={{ marginRight: 8 }}>{valueNode}</View> : null}

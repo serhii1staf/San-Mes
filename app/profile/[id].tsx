@@ -9,6 +9,7 @@ import { Text } from '../../src/components/ui';
 import { useAuthStore, useEntityStore } from '../../src/store';
 import { getProfile } from '../../src/lib/supabase';
 import { syncProfile, toSceneText } from '../../src/services/syncService';
+import { markSynced } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { openProfileShareSheet } from '../../src/store/shareSheetStore';
@@ -83,6 +84,9 @@ export default function UserProfileScreen() {
               created_at: p.created_at || null,
               updated_at: p.updated_at || null,
             });
+            // The same stamp `syncProfile` writes. Without it the next visit (now with a cached copy)
+            // went straight to `syncProfile`, found no stamp, and fetched the profile a second time.
+            void markSynced(`profile:${profileId}`).catch(() => {});
           }
           setIsLoading(false);
         })

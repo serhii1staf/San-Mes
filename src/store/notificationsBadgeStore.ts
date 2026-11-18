@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { AppState } from 'react-native';
 import { kvGetJSONSync, kvSetJSON } from '../services/kvStore';
+import { wasAwayLongEnough } from '../services/appAway';
 
 // Tiny store that drives the unread badge on the home-tab bell icon.
 //
@@ -312,6 +313,11 @@ function runBadgeRefreshPassWhenAuthed(): () => void {
 export function installNotificationsBadgeForegroundRefresh(): () => void {
   const sub = AppState.addEventListener('change', (next) => {
     if (next !== 'active') return;
+    // Only after a real absence. An iOS `inactive` blip (Control Center, a permission sheet, the
+    // photo picker) never left the foreground, so realtime saw everything, and a short trip to
+    // another app is covered by the bridge keeping or resuming its socket. Each pass is two Worker
+    // requests; see `appAway.ts`.
+    if (!wasAwayLongEnough()) return;
     runBadgeRefreshPass();
   });
 

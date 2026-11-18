@@ -4,9 +4,11 @@
  * There is no feed: a post is read on its author's profile («Публикации» / «Медиа») and in its own
  * thread (`app/comments/[id].tsx`); a person's comments are listed under «Ответы» on their profile.
  *
- * Caching: one page per profile, in memory for the session and on disk for the first paint of the
- * next session, refreshed in the background when older than a minute. Composing, deleting or
- * commenting calls `invalidateProfilePosts`, which refetches whatever profile is on screen.
+ * Caching: one page per profile, in memory for the session and on disk (with the time it was
+ * fetched) for the first paint of the next session. A page younger than FRESH_MS is not refetched,
+ * whether it came from memory or from disk; older pages are shown at once and refreshed in the
+ * background. Composing, editing or deleting a post calls `invalidateProfilePosts`, and commenting
+ * calls `invalidateProfileReplies`, which refetch whatever profile is on screen.
  */
 import { useEffect, useState } from 'react';
 import { InteractionManager } from 'react-native';
@@ -48,12 +50,19 @@ export interface ProfileReply {
 }
 
 const PAGE = 30;
-const FRESH_MS = 60_000;
+/**
+ * How long a fetched page is trusted. Was one minute, which made flipping between profiles and tabs
+ * a stream of refetches: every one is a Worker request, and the cards no longer show counters, so
+ * the only thing a refetch can bring is a post the person published in the meantime. Your own
+ * changes invalidate immediately and do not wait for this.
+ */
+const FRESH_MS = 5 * 60_000;
 
 type Entry<T> = { at: number; items: T[] };
+type InvalidationKind = 'all' | 'replies';
 const postsMem = new Map<string, Entry<ProfilePost>>();
 const repliesMem = new Map<string, Entry<ProfileReply>>();
-const listeners = new Set<(profileId: string | null) => void>();
+const listeners = new Set<(profileId: string | null, kind: InvalidationKind) => void>();
 
 const diskKey = (profileId: string) => `profile_posts:${profileId}`;
 
@@ -82,18 +91,36 @@ export function findCachedPost(postId: string): ProfilePost | null {
   return null;
 }
 
+function notify(profileId: string | null, kind: InvalidationKind): void {
+  for (const l of listeners) {
+    try { l(profileId, kind); } catch {}
+  }
+}
+
 /** Drop cached pages so the next read refetches. `undefined` clears every profile. */
 export function invalidateProfilePosts(profileId?: string | null): void {
   if (profileId) {
     postsMem.delete(profileId);
     repliesMem.delete(profileId);
+    // The disk copy carries its fetch time now, so it must not be able to vouch for itself either.
+    const onDisk = postsDisk.read(profileId);
+    if (onDisk) postsDisk.write(profileId, onDisk.items, 0);
   } else {
     postsMem.clear();
     repliesMem.clear();
   }
-  for (const l of listeners) {
-    try { l(profileId ?? null); } catch {}
-  }
+  notify(profileId ?? null, 'all');
+}
+
+/**
+ * Only the «Ответы» page. A comment changes the commenter's replies, and nothing on anyone's posts
+ * page: the cards show no counters, so refetching the post author's page after every comment was a
+ * request that could not change what is on screen.
+ */
+export function invalidateProfileReplies(profileId: string | null | undefined): void {
+  if (!profileId) return;
+  repliesMem.delete(profileId);
+  notify(profileId, 'replies');
 }
 
 async function fetchPosts(profileId: string): Promise<ProfilePost[] | null> {
@@ -112,34 +139,53 @@ async function fetchReplies(profileId: string): Promise<ProfileReply[] | null> {
   return data.filter((r) => r && r.id);
 }
 
+type DiskCache<T> = {
+  read: (id: string) => Entry<T> | null;
+  write: (id: string, items: T[], at?: number) => void;
+};
+
 function useCachedList<T>(
   profileId: string | undefined,
+  kind: 'posts' | 'replies',
   mem: Map<string, Entry<T>>,
   fetcher: (id: string) => Promise<T[] | null>,
-  disk?: { read: (id: string) => T[] | null; write: (id: string, items: T[]) => void },
+  disk?: DiskCache<T>,
 ): { items: T[]; loading: boolean } {
   const [items, setItems] = useState<T[]>(() => {
     if (!profileId) return [];
-    return mem.get(profileId)?.items ?? disk?.read(profileId) ?? [];
+    return mem.get(profileId)?.items ?? disk?.read(profileId)?.items ?? [];
   });
   const [loading, setLoading] = useState<boolean>(() => !!profileId && !mem.get(profileId) && !disk?.read(profileId));
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
-    const onInvalidate = (id: string | null) => {
+    const onInvalidate = (id: string | null, what: InvalidationKind) => {
+      if (what === 'replies' && kind !== 'replies') return;
       if (!id || id === profileId) setNonce((n) => n + 1);
     };
     listeners.add(onInvalidate);
     return () => { listeners.delete(onInvalidate); };
-  }, [profileId]);
+  }, [profileId, kind]);
 
   useEffect(() => {
     if (!profileId) return;
-    const cached = mem.get(profileId);
+    let cached = mem.get(profileId);
+    if (!cached && disk) {
+      // A page fetched minutes ago in the previous session is as good as one fetched in this one.
+      // Adopted into memory so the freshness check below treats both the same way.
+      const fromDisk = disk.read(profileId);
+      if (fromDisk) {
+        cached = fromDisk;
+        mem.set(profileId, fromDisk);
+      }
+    }
     if (cached) {
       setItems(cached.items);
       setLoading(false);
       if (Date.now() - cached.at < FRESH_MS) return;
+    } else {
+      // Nothing to show yet: say so, instead of letting an empty list read as "no posts".
+      setLoading(true);
     }
     let alive = true;
     // After the push transition: the cached page (if any) is already on screen.
@@ -164,27 +210,34 @@ function useCachedList<T>(
   return { items, loading };
 }
 
-const postsDisk = {
+const postsDisk: DiskCache<ProfilePost> = {
   read: (id: string) => {
     try {
-      const v = kvGetJSONSync<ProfilePost[] | null>(diskKey(id), null);
-      return Array.isArray(v) ? v : null;
+      const v = kvGetJSONSync<unknown>(diskKey(id), null);
+      // Written as a bare array before the fetch time was stored: usable for the first paint, but
+      // too old to vouch for, so it is still refreshed.
+      if (Array.isArray(v)) return { at: 0, items: v as ProfilePost[] };
+      if (v && typeof v === 'object' && Array.isArray((v as any).items)) {
+        const at = Number((v as any).at);
+        return { at: Number.isFinite(at) ? at : 0, items: (v as any).items as ProfilePost[] };
+      }
+      return null;
     } catch {
       return null;
     }
   },
-  write: (id: string, items: ProfilePost[]) => {
-    try { kvSetJSON(diskKey(id), items.slice(0, PAGE)); } catch {}
+  write: (id: string, items: ProfilePost[], at: number = Date.now()) => {
+    try { kvSetJSON(diskKey(id), { at, items: items.slice(0, PAGE) }); } catch {}
   },
 };
 
 export function useProfilePosts(profileId: string | undefined) {
-  const { items, loading } = useCachedList<ProfilePost>(profileId, postsMem, fetchPosts, postsDisk);
+  const { items, loading } = useCachedList<ProfilePost>(profileId, 'posts', postsMem, fetchPosts, postsDisk);
   return { posts: items, loading };
 }
 
 /** Pass `undefined` until the «Ответы» tab is opened, so the request is only made when needed. */
 export function useProfileReplies(profileId: string | undefined) {
-  const { items, loading } = useCachedList<ProfileReply>(profileId, repliesMem, fetchReplies);
+  const { items, loading } = useCachedList<ProfileReply>(profileId, 'replies', repliesMem, fetchReplies);
   return { replies: items, loading };
 }

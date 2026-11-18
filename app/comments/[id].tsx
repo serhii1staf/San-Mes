@@ -43,7 +43,7 @@ import { typingPostChannelName, useTypingPublisher } from '../../src/services/re
 import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
 import { getComments, createComment, updateComment, deleteComment, deletePost, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { submitReport } from '../../src/services/moderation';
-import { invalidateProfilePosts } from '../../src/services/profilePosts';
+import { invalidateProfilePosts, invalidateProfileReplies } from '../../src/services/profilePosts';
 import { generateClientMutationId, queueMutation } from '../../src/services/offlineQueue';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
@@ -59,6 +59,7 @@ import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 
 // Delete one full user-perceived character from the end of a string. Handles
 // astral emoji (surrogate pairs), variation selectors, skin-tone modifiers and
@@ -563,6 +564,19 @@ export default function CommentsScreen() {
   const gifOpen = panelTab === 'gif';
   const [emojiPanelHeight, setEmojiPanelHeight] = useState(300);
   const [keepLifted, setKeepLifted] = useState(false);
+  // Resting top edge of the composer stack and the keyboard's current height, both as refs: read
+  // only when the long-press menu opens, to clip its lit cut-out to the area between the header and
+  // the composer. Refs, so neither the input growing nor the keyboard moving re-renders the screen.
+  const composerTopRef = useRef<number | null>(null);
+  const onComposerLayout = useCallback((e: { nativeEvent: { layout: { y: number } } }) => {
+    composerTopRef.current = e.nativeEvent.layout.y;
+  }, []);
+  const keyboardUpRef = useRef(0);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e) => { keyboardUpRef.current = e?.endCoordinates?.height || 0; });
+    const hide = Keyboard.addListener('keyboardDidHide', () => { keyboardUpRef.current = 0; });
+    return () => { show.remove(); hide.remove(); };
+  }, []);
   const [recentEmoji, setRecentEmoji] = useState<string[]>(() => getRecentEmoji());
   const [recentGif, setRecentGif] = useState<GiphyItem[]>(() => getRecentGif());
   const lastKbHeightRef = useRef(0);
@@ -696,11 +710,36 @@ export default function CommentsScreen() {
   const [isLoading, setIsLoading] = useState(initialCommentsRef.current.length === 0);
   const [isSending, setIsSending] = useState(false);
   const [postData, setPostData] = useState<any>(null);
-  // A comment changes the post's count on its author's profile and the commenter's «Ответы».
+  // A comment changes the commenter's «Ответы». It used to refetch the post author's posts page as
+  // well, for the comment counter on the card; the cards no longer show counters, so that was a
+  // Worker request per comment that could not change anything on screen.
   const refreshProfileCaches = () => {
-    const authorId: string | undefined = postData?.author_id;
-    if (authorId) invalidateProfilePosts(authorId);
-    if (user?.id && user.id !== authorId) invalidateProfilePosts(user.id);
+    invalidateProfileReplies(user?.id);
+  };
+  // Put a just-sent comment into the thread. The create answers with the stored row, author
+  // embedded, so it goes straight in; this used to re-fetch the whole newest page after every send,
+  // a second Worker request per comment. The fetch remains as the fallback for a response without a
+  // usable row (and realtime's `comment.new` for the same id merges into the same entry).
+  //
+  // The cache serialize is deferred past the send interaction — JSON.stringify of a long thread is
+  // synchronous and was piling onto the same frame as the list re-render + scroll-to-end.
+  const landSentComment = async (created: any | null) => {
+    if (!postId) return;
+    if (created) {
+      const box: { rows: any[] | null } = { rows: null };
+      setComments((prev) => {
+        const next = mergeCommentPages(prev, [created]);
+        box.rows = next;
+        return next;
+      });
+      InteractionManager.runAfterInteractions(() => {
+        if (box.rows) kvSetJSON(`comments:${postId}`, box.rows.slice(-COMMENTS_PAGE_SIZE));
+      });
+      return;
+    }
+    const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
+    setComments((prev) => mergeCommentPages(prev, data));
+    InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
   };
   const [repostOriginal, setRepostOriginal] = useState<any>(null);
   const { target: actionComment, open: openMenu, close: closeMenu } = useContextMenuGuard<any>();
@@ -1305,16 +1344,11 @@ export default function CommentsScreen() {
     // transient failure with no queue the draft stays in the composer.
     setReplyTo(null);
     setIsSending(true);
-    const { error } = await createComment(postId, user.id, sendText, cmid);
+    const { error, comment: created } = await createComment(postId, user.id, sendText, cmid);
     if (!error) {
       inputRef.current?.clear();
       refreshProfileCaches();
-      const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
-      setComments((prev) => mergeCommentPages(prev, data));
-      // Defer the cache serialize past the send interaction — JSON.stringify of
-      // a long thread is synchronous and was piling onto the same frame as the
-      // list re-render + scroll-to-end.
-      InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
+      await landSentComment(created);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     } else {
       // OFFLINE / TRANSIENT FAILURE FALLBACK: queue with the SAME cmid so a
@@ -1375,12 +1409,10 @@ export default function CommentsScreen() {
     const cmid = generateClientMutationId();
     setReplyTo(null);
     setIsSending(true);
-    const { error } = await createComment(postId, user.id, content, cmid);
+    const { error, comment: created } = await createComment(postId, user.id, content, cmid);
     if (!error) {
       refreshProfileCaches();
-      const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
-      setComments((prev) => mergeCommentPages(prev, data));
-      InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
+      await landSentComment(created);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     } else {
       // OFFLINE / TRANSIENT FALLBACK: queue with the SAME cmid (server dedupes).
@@ -1405,12 +1437,10 @@ export default function CommentsScreen() {
     const cmid = generateClientMutationId();
     setReplyTo(null);
     setIsSending(true);
-    const { error } = await createComment(postId, user.id, sendText, cmid);
+    const { error, comment: created } = await createComment(postId, user.id, sendText, cmid);
     if (!error) {
       refreshProfileCaches();
-      const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
-      setComments((prev) => mergeCommentPages(prev, data));
-      InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
+      await landSentComment(created);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     } else {
       // OFFLINE / TRANSIENT FALLBACK: queue with the SAME cmid (server dedupes).
@@ -1925,7 +1955,7 @@ export default function CommentsScreen() {
             exactly like the chat composer. The input row has no solid
             backgroundColor: the fade above supplies the darkening so the
             composer floats over content like the other chats. */}
-        <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, barWrapStyle]}>
+        <Reanimated.View onLayout={onComposerLayout} style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, barWrapStyle]}>
           {/* "…is typing" — topmost in the composer stack so it never covers the field.
               Owns its own realtime subscription, so a typing event in a busy thread
               re-renders this strip alone and not the comment list. */}
@@ -2074,6 +2104,14 @@ export default function CommentsScreen() {
               replyUser={parsed.replyUser}
               replyText={parsed.replyText}
               gifUrl={gif}
+              // Lit cut-out clipped to where comments are visible: under the header, above the
+              // composer (lifted by the emoji/GIF panel when it is open).
+              visibleBounds={{
+                top: headerContentHeight,
+                bottom:
+                  (composerTopRef.current ?? SCREEN_HEIGHT - insets.bottom - 64) -
+                  Math.max(keyboardUpRef.current, emojiOpen || gifOpen || keepLifted ? emojiPanelHeight : 0),
+              }}
               onClose={closeCommentMenu}
               onAction={handleMenuAction}
             />

@@ -48,10 +48,12 @@ interface MessageContextMenuProps {
   dragActive?: SharedValue<boolean>;
   hoveredAction?: SharedValue<string>;
   actionZones?: SharedValue<ActionZone[]>;
+  /** Window band between the chat header and the composer; the lit cut-out is clipped to it. */
+  visibleBounds?: { top: number; bottom: number };
 }
 
 export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageContextMenuProps>(function MessageContextMenu(
-  { visible, message, isOwn, anchor, isPinned, bubbleRadius, onClose, onClosing, onAction, dragActive, hoveredAction, actionZones },
+  { visible, message, isOwn, anchor, isPinned, bubbleRadius, onClose, onClosing, onAction, dragActive, hoveredAction, actionZones, visibleBounds },
   ref,
 ) {
   const t = useT();
@@ -111,6 +113,7 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       anchor={anchor ?? null}
       // The bubble stays lit in a cut-out of the dim (and lifts a little, see useMessageGestures).
       spotlightRadius={bubbleRadius ?? 18}
+      spotlightBounds={visibleBounds}
       align={isOwn ? 'right' : 'left'}
       top={top}
       items={items}
