@@ -10,17 +10,21 @@
  * slid a sheet up from the bottom. Rebuilding the content was most of the cost of opening them (link
  * previews, image grids, formatted text), and the copy never looked exactly like the original.
  *
- * Surfaces: native liquid glass on iOS 26 with glass enabled, a material blur elsewhere on iOS, and
- * the theme's elevated surface on Android. Glass rule of this codebase: no alpha on a glass view or
- * any of its ancestors (expo/expo#41024). So with glass the card opens by scale only, and for the
- * close it switches to the flat surface (`fading`) before it fades.
+ * Surfaces: native liquid glass on iOS 26 with glass enabled, the theme's elevated surface
+ * elsewhere. Glass rule of this codebase: no alpha on a glass view or any of its ancestors
+ * (expo/expo#41024). So with glass the card opens AND closes by scale only: it grows out of the
+ * corner nearest the held item and collapses back into it.
+ *
+ * With `spotlightRadius`, the backdrop dims everything except a rounded cut-out around the held
+ * item, so it is clear what the menu acts on.
  *
  * Optional press-drag-release: `zones` receives each action's window rect once the card has
  * settled, and `hovered` (written by the caller's gesture) highlights the action under the finger.
  */
-import React, { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { BackHandler, Keyboard, Platform, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Reanimated, {
   Easing,
@@ -78,9 +82,16 @@ interface ActionMenuProps<Id extends string> {
   onSelect: (id: Id) => void;
   /** Runs at the press itself, before the close animation. */
   onWillSelect?: (id: Id) => void;
+  /** Runs when the close animation starts, whatever started it. */
+  onClosing?: () => void;
   onClose: () => void;
   zones?: SharedValue<ActionMenuZone[]>;
   hovered?: SharedValue<string>;
+  /**
+   * Corner radius of the held item. When set (with an anchor), the backdrop dims everything except
+   * a rounded cut-out around the item, so the item stays lit and the menu reads as acting on it.
+   */
+  spotlightRadius?: number;
 }
 
 export const MENU_WIDTH = 254;
@@ -94,7 +105,11 @@ const RADIUS = 24;
 const IOS_RED = '#FF3B30';
 
 const OPEN_SPRING = { damping: 19, stiffness: 300, mass: 0.75 };
-const CLOSE_TIMING = { duration: 210, easing: Easing.bezier(0.4, 0, 0.6, 1) };
+// The open run backwards: the card collapses into the corner it grew out of, accelerating as it
+// goes, so it ends small and fast instead of vanishing at full size.
+const CLOSE_TIMING = { duration: 230, easing: Easing.bezier(0.55, 0, 0.75, 0.2) };
+// Gap between the held item and the edge of its cut-out in the dim.
+const SPOT_PAD = 6;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
@@ -191,7 +206,7 @@ const ListRow = memo(function ListRow<Id extends string>({
 const NO_ITEMS: never[] = [];
 
 function ActionMenuInner<Id extends string>(
-  { anchor, align = 'left', title, top, items, onSelect, onWillSelect, onClose, zones, hovered }: ActionMenuProps<Id>,
+  { anchor, align = 'left', title, top, items, onSelect, onWillSelect, onClosing, onClose, zones, hovered, spotlightRadius }: ActionMenuProps<Id>,
   ref: React.ForwardedRef<ActionMenuHandle>,
 ) {
   const theme = useTheme();
@@ -200,9 +215,12 @@ function ActionMenuInner<Id extends string>(
   const glassActive = useLiquidGlassActive();
   const p = useSharedValue(0);
   const c = useSharedValue(0);
-  const [fading, setFading] = useState(false);
   const closing = useRef(false);
   const after = useRef<(() => void) | null>(null);
+  const onClosingRef = useRef(onClosing);
+  useEffect(() => {
+    onClosingRef.current = onClosing;
+  }, [onClosing]);
 
   // ── Geometry ──────────────────────────────────────────────────────────────
   // Memoized so a parent re-render (the chat re-renders on typing, new messages) does not rebuild
@@ -254,7 +272,7 @@ function ActionMenuInner<Id extends string>(
       if (closing.current) return;
       closing.current = true;
       after.current = cb ?? null;
-      setFading(true);
+      onClosingRef.current?.();
       c.value = withTiming(1, CLOSE_TIMING, () => {
         runOnJS(finish)();
       });
@@ -330,17 +348,35 @@ function ActionMenuInner<Id extends string>(
   );
 
   // ── Styles ───────────────────────────────────────────────────────────────
-  const surfaceGlass = glassActive && !fading;
+  // Glass keeps its glass for the whole close as well: it shrinks back into its corner by scale
+  // alone, which is the open played backwards. (It used to switch to a flat surface and fade, and the
+  // swap from glass to flat at the start of the close was the "strange" close.) An alpha on a glass
+  // view or its ancestor switches its glass off (expo/expo#41024), so glass never fades.
+  const surfaceGlass = glassActive;
   const cardStyle = useAnimatedStyle(() => {
     const open = p.value;
     const shut = c.value;
     return {
-      // Glass: never an alpha, not even in the frame or two before `fading` re-renders the card flat.
       opacity: surfaceGlass ? 1 : interpolate(open, [0, 0.45], [0, 1], Extrapolation.CLAMP) * (1 - shut),
-      transform: [{ scale: interpolate(open, [0, 1], [glassActive ? 0.35 : 0.6, 1]) * (1 - 0.12 * shut) }],
+      transform: [{ scale: interpolate(open, [0, 1], [surfaceGlass ? 0.35 : 0.6, 1]) * (1 - 0.92 * shut) }],
     };
   });
   const dimStyle = useAnimatedStyle(() => ({ opacity: Math.min(1, Math.max(0, p.value)) * (1 - c.value) }));
+
+  // ── The held item stays lit ──────────────────────────────────────────────
+  // Everything is dimmed except a rounded cut-out around the held item, so it is obvious what the
+  // menu acts on. One SVG path (screen rect + hole, even-odd), drawn once; only its opacity animates.
+  const spotlightPath = useMemo(() => {
+    if (!anchor || spotlightRadius === undefined) return null;
+    const x = anchor.x - SPOT_PAD;
+    const y = anchor.y - SPOT_PAD;
+    const w = anchor.width + SPOT_PAD * 2;
+    const h = anchor.height + SPOT_PAD * 2;
+    const r = Math.max(0, Math.min(spotlightRadius + SPOT_PAD, w / 2, h / 2));
+    const outer = `M-50 -50H${W + 50}V${H + 400}H-50Z`;
+    const hole = `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`;
+    return outer + hole;
+  }, [anchor, spotlightRadius, W, H]);
 
   const isDark = theme.isDark;
   const textColor = theme.colors.text.primary;
@@ -351,9 +387,21 @@ function ActionMenuInner<Id extends string>(
   // broken until the alpha is back at 1. The theme's own elevated surface keeps the menu in the theme.
   const flatSurface = isDark ? theme.colors.background.elevated : '#FFFFFF';
 
+  const dimColor = spotlightPath
+    ? isDark ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.26)'
+    : isIOS ? 'rgba(0,0,0,0.10)' : 'rgba(0,0,0,0.32)';
+
   return (
     <View style={StyleSheet.absoluteFill} accessibilityViewIsModal>
-      <Reanimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: isIOS ? 'rgba(0,0,0,0.10)' : 'rgba(0,0,0,0.32)' }, dimStyle]} />
+      <Reanimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, dimStyle]}>
+        {spotlightPath ? (
+          <Svg style={StyleSheet.absoluteFill}>
+            <Path d={spotlightPath} fill={dimColor} fillRule="evenodd" />
+          </Svg>
+        ) : (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: dimColor }]} />
+        )}
+      </Reanimated.View>
       <Pressable style={StyleSheet.absoluteFill} onPress={() => dismiss()} accessibilityRole="button" accessibilityLabel="Close" />
 
       <Reanimated.View

@@ -42,6 +42,8 @@ interface MessageContextMenuProps {
   linkEmoji?: string;
   imageProxyWidth?: number;
   onClose: () => void;
+  /** Runs when the close animation starts (the held bubble settles back while the card collapses). */
+  onClosing?: () => void;
   onAction: (action: MessageAction, message: ChatMessage) => void;
   dragActive?: SharedValue<boolean>;
   hoveredAction?: SharedValue<string>;
@@ -49,7 +51,7 @@ interface MessageContextMenuProps {
 }
 
 export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageContextMenuProps>(function MessageContextMenu(
-  { visible, message, isOwn, anchor, isPinned, onClose, onAction, dragActive, hoveredAction, actionZones },
+  { visible, message, isOwn, anchor, isPinned, bubbleRadius, onClose, onClosing, onAction, dragActive, hoveredAction, actionZones },
   ref,
 ) {
   const t = useT();
@@ -107,10 +109,13 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
     <ActionMenu<MessageAction>
       ref={menuRef}
       anchor={anchor ?? null}
+      // The bubble stays lit in a cut-out of the dim (and lifts a little, see useMessageGestures).
+      spotlightRadius={bubbleRadius ?? 18}
       align={isOwn ? 'right' : 'left'}
       top={top}
       items={items}
       onSelect={(id) => onAction(id, message)}
+      onClosing={onClosing}
       onClose={onClose}
       zones={actionZones}
       hovered={hoveredAction}

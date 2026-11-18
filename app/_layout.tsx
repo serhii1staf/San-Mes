@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, AppState, Pressable, InteractionManager, Platform } from 'react-native';
+import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, AppState, Pressable, InteractionManager, Platform, Dimensions } from 'react-native';
 import { Stack, useRouter, useSegments, useNavigationContainerRef, usePathname } from 'expo-router';
 import { consumeSkipSplashOnce } from '../src/services/launchFlags';
 import { useFonts } from 'expo-font';
@@ -642,6 +642,20 @@ function RootLayout() {
     // (The feed-hero half was removed with the feed.) Capped at ≤12 URIs and
     // routed through expo-image's deduping prefetcher. Fully guarded.
     const warm = setTimeout(() => {
+      // Your own profile banner, decoded into MEMORY (not just disk) at the exact width the profile
+      // requests, so opening the profile after a cold start paints it in the first frame instead of
+      // reading it from disk and popping it in. One image; the decode happens off the main thread.
+      try {
+        const rawBanner = (useAuthStore.getState().user as any)?.bannerUrl as string | undefined;
+        if (rawBanner) {
+          Promise.all([import('../src/utils/bannerTransform'), import('../src/components/ui/CachedImage')])
+            .then(([{ stripBannerTransform }, { prefetchImages }]) => {
+              const url = stripBannerTransform(rawBanner);
+              if (url) prefetchImages([url], Math.round(Dimensions.get('window').width), 'memory-disk');
+            })
+            .catch(() => {});
+        }
+      } catch {}
       try {
         // Recent chat media for the most-active conversations (already capped
         // + chunked inside the helper). entityStore was hydrated in Phase 2,
@@ -822,7 +836,9 @@ function AppStack() {
           see the header comment in `chat/fullscreen.tsx`: pushing unmounts the
           chat's message list instead of leaving it laying out underneath. */}
       <Stack.Screen name="chat/fullscreen" />
-      <Stack.Screen name="profile/edit" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      {/* A normal pushed screen, like Telegram's profile editor, not a sheet sliding up from the
+          bottom. Swipe back from anywhere, same as the profiles it is opened from. */}
+      <Stack.Screen name="profile/edit" options={SWIPE_BACK_ANYWHERE} />
       {/* New post, opened from «Публикации» on your own profile. */}
       <Stack.Screen name="post/new" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
       <Stack.Screen name="profile/[id]" options={SWIPE_BACK_ANYWHERE} />

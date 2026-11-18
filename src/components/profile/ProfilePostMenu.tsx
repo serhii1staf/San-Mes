@@ -164,6 +164,8 @@ export function ProfilePostMenu({
           key="menu"
           ref={menuRef}
           anchor={anchor}
+          // The held card stays lit in a cut-out of the dim (same radius as the card).
+          spotlightRadius={28}
           align="left"
           top={top}
           items={items}
@@ -176,6 +178,7 @@ export function ProfilePostMenu({
           key="report"
           ref={menuRef}
           anchor={anchor}
+          spotlightRadius={28}
           align="left"
           title={t('report.title')}
           items={reasons}

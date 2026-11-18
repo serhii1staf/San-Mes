@@ -116,6 +116,17 @@ export function bestLoadedVariantUrl(rawUri: string, desiredWidth: number): stri
   return proxiedImageUrl(rawUri, pick);
 }
 
+/**
+ * Whether `rawUri` at exactly `width` has already been shown in this session, i.e. is almost
+ * certainly in the decoded-bitmap memory cache. `CachedImage` uses it to decide whether a load
+ * should fade in (first time this session, read from disk or network) or appear at once.
+ */
+export function wasVariantLoaded(rawUri: string, width: number): boolean {
+  if (!rawUri) return false;
+  const set = loaded.get(rawUri);
+  return !!set && set.has(width);
+}
+
 /** Test seam. Not used by the app. */
 export function _resetVariantRegistry(): void {
   loaded.clear();

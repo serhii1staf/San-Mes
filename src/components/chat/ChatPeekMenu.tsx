@@ -160,7 +160,6 @@ export function ChatPeekMenu<Id extends string>({
   // open in reverse. The reverse shrank the menu into its corner and slid the card back down to the
   // row, which read as the action list "flying into the avatar", with glass artifacts on the way.
   const c = useSharedValue(0);
-  const [fading, setFading] = useState(false);
   const closing = useRef(false);
   const after = useRef<(() => void) | null>(null);
 
@@ -181,9 +180,6 @@ export function ChatPeekMenu<Id extends string>({
       if (closing.current) return;
       closing.current = true;
       after.current = fn ?? null;
-      // The glass menu swaps to the flat surface for the fade: an alpha on a glass view switches its
-      // glass off anyway, so the swap is what keeps the fade clean instead of a flicker.
-      setFading(true);
       // `finish` runs whether or not the timing completed: nothing else drives `c` once closing
       // has started, and a menu that never reports closed would leave an invisible layer on top.
       // Long enough to read as the card going back where it came from (170 ms was reported as too
@@ -241,15 +237,15 @@ export function ChatPeekMenu<Id extends string>({
       ],
     };
   });
-  // While OPEN, the glass menu never carries an alpha: a GlassView with opacity below 1 on itself
-  // or an ancestor stops rendering its glass (expo/expo#41024). It grows out of its corner instead.
-  // While closing it is flat (`fading`), so it can fade like everything else.
+  // The glass menu never carries an alpha: a GlassView with opacity below 1 on itself or an
+  // ancestor stops rendering its glass (expo/expo#41024). It grows out of its corner on open and
+  // collapses back into it on close, glass all the way (it used to swap to a flat surface for a
+  // fade, and that swap at the start of the close read as a glitch).
   const glassActive = useLiquidGlassActive();
-  const menuGlass = glassActive && !fading;
+  const menuGlass = glassActive;
   const menuStyle = useAnimatedStyle(() => ({
-    // Glass: no alpha until `fading` has re-rendered the menu flat (see `close`).
     opacity: menuGlass ? 1 : interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP) * (1 - c.value),
-    transform: [{ scale: interpolate(p.value, [0, 1], [glassActive ? 0.2 : 0.55, 1]) * (1 - 0.14 * c.value) }],
+    transform: [{ scale: interpolate(p.value, [0, 1], [glassActive ? 0.2 : 0.55, 1]) * (1 - (menuGlass ? 0.9 : 0.14) * c.value) }],
   }));
   const dimStyle = useAnimatedStyle(() => ({ opacity: clamp(p.value, 0, 1) * (1 - c.value) }));
   // The blur's INTENSITY is animated, not its opacity: a UIVisualEffectView with alpha below 1
