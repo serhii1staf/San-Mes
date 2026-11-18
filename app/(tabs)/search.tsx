@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
-import { View, Pressable, ViewStyle, FlatList, ScrollView, ActivityIndicator, Text as RNText, TextInput, InteractionManager, Keyboard, Platform, StyleSheet } from 'react-native';
-import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
-import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import { View, Pressable, ViewStyle, FlatList, ScrollView, ActivityIndicator, Text as RNText, TextInput, InteractionManager, Keyboard, StyleSheet } from 'react-native';
+import Reanimated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import { useKeyboardHandler } from 'react-native-keyboard-controller';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useIsFocused } from '@react-navigation/native';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
@@ -38,8 +38,9 @@ import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
  * Layout, top to bottom: the title over the same top fade as the chat list; recently opened people
  * and apps (or, once something is typed, the results); and the field itself at the BOTTOM, floating
  * just above the tab bar where the thumb already is. Tapping it raises the keyboard and the field
- * rides up on top of it (UI thread, `useReanimatedKeyboardAnimation`), so the results stay readable
- * from the top of the screen down to the field.
+ * rides up on top of it frame by frame (see `fieldLiftStyle`), so the results stay readable from the
+ * top of the screen down to the field. A tap anywhere outside the field, or a drag, puts the
+ * keyboard away.
  *
  * The first result is shown as a card with that person's latest posts, so a search answers "is this
  * the right person" without opening the profile. Those posts come from the same cached page the
@@ -123,7 +124,8 @@ function matchRank(usernameLc: string, displayNameLc: string, q: string): number
 }
 
 /**
- * One tile in the "Recent" strip: a round 64 pt avatar with its name underneath.
+ * One tile in the "Recent" strip: a round 64 pt avatar with the name underneath, nothing else.
+ * Badges are left to the result rows and the profile; on a 78 pt tile they crowded the name out.
  *
  * Memoized and given only primitives plus a stable callback, so scrolling the strip or
  * typing in the field does not re-render tiles that have not changed.
@@ -131,14 +133,10 @@ function matchRank(usernameLc: string, displayNameLc: string, q: string): number
 const RecentTile = React.memo(function RecentTile({
   emoji,
   label,
-  verified,
-  badge,
   onPress,
 }: {
   emoji: string;
   label: string;
-  verified?: boolean;
-  badge?: string;
   onPress: () => void;
 }) {
   return (
@@ -146,24 +144,12 @@ const RecentTile = React.memo(function RecentTile({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={({ pressed }) => [{ width: RECENT_TILE_WIDTH, alignItems: 'center' }, pressed ? { opacity: 0.7 } : null]}
+      style={({ pressed }) => [styles.recentTile, pressed ? { opacity: 0.6 } : null]}
     >
       <Avatar emoji={emoji} name={label} size="lg" tint />
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 2,
-          marginTop: 8,
-          maxWidth: RECENT_TILE_WIDTH - 6,
-        }}
-      >
-        <Text variant="caption" numberOfLines={1} style={{ flexShrink: 1 }}>
-          {label}
-        </Text>
-        {verified ? <VerifiedBadge size={10} /> : null}
-        {badge ? <UserBadge badge={badge} size="sm" /> : null}
-      </View>
+      <Text variant="caption" numberOfLines={1} align="center" style={styles.recentName}>
+        {label}
+      </Text>
     </Pressable>
   );
 });
@@ -221,7 +207,11 @@ const PreviewPostCard = memo(function PreviewPostCard({ post }: { post: ProfileP
   const theme = useTheme();
   const t = useT();
   const ago = useShortAgo();
-  const thumb = useMemo(() => parseImageUrls(post.image_url).find((u) => !isAnimated(u)) || null, [post.image_url]);
+  const imgs = useMemo(() => parseImageUrls(post.image_url), [post.image_url]);
+  const thumb = imgs.find((u) => !isAnimated(u)) || null;
+  // The width the profile card requests for the same photo (ProfilePostCard: 100 alone, 49 as a
+  // tile), so opening the profile from here reuses this copy instead of fetching another.
+  const thumbWidth = imgs.length === 1 ? 100 : 49;
   const text = stripMarkers(post.content) || (thumb ? t('chat.photo') : '—');
   return (
     <Pressable
@@ -235,7 +225,7 @@ const PreviewPostCard = memo(function PreviewPostCard({ post }: { post: ProfileP
     >
       {thumb ? (
         <View style={styles.postThumb}>
-          <CachedImage uri={thumb} style={StyleSheet.absoluteFill as any} resizeMode="cover" proxyWidth={56} priority="low" />
+          <CachedImage uri={thumb} style={StyleSheet.absoluteFill as any} resizeMode="cover" proxyWidth={thumbWidth} priority="low" />
         </View>
       ) : null}
       <View style={{ flex: 1 }}>
@@ -325,25 +315,26 @@ const SearchField = memo(function SearchField({
   glassActive: boolean;
   theme: AppTheme;
 }) {
-  const [focused, setFocused] = useState(false);
   const scheme = theme.isDark ? 'dark' : 'light';
+  // No focus state: a re-render at the moment of focus is exactly what can push the field's first
+  // keyboard frame out of the keyboard's own animation. The cursor says the field is active.
   const content = (
     <>
-      <Feather name="search" size={18} color={focused ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+      <Feather name="search" size={18} color={theme.colors.text.tertiary} />
       <TextInput
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
         placeholderTextColor={theme.colors.text.tertiary}
         accessibilityLabel={placeholder}
-        style={[styles.fieldInput, { color: theme.colors.text.primary }]}
+        // The app's own font, as in the chat composer. The system font here sat a little off the
+        // centre line next to the Inter labels around it.
+        style={[styles.fieldInput, { color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }]}
         selectionColor={theme.colors.accent.primary}
         keyboardAppearance={theme.isDark ? 'dark' : 'light'}
         returnKeyType="search"
         autoCorrect={false}
         autoCapitalize="none"
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
       />
       {value.length > 0 ? (
         <Pressable
@@ -369,7 +360,7 @@ const SearchField = memo(function SearchField({
         styles.fieldFlat,
         {
           backgroundColor: theme.colors.background.elevated,
-          borderColor: focused ? theme.colors.accent.primary + '66' : theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+          borderColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
         },
       ]}
     >
@@ -386,9 +377,47 @@ export default function SearchScreen() {
   // Android: while this tab is focused the window does not resize for the keyboard; the field lifts
   // itself (below), as the chat composer does. Restored on blur. No-op on iOS.
   useChatKeyboardMode();
-  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const glassActive = useLiquidGlassActive();
   const focused = useIsFocused();
+
+  // ── THE FIELD RIDES THE KEYBOARD FRAME BY FRAME ───────────────────────────
+  //
+  // Reported on iPhone: the first time the field rose smoothly with the keyboard; later it jumped to
+  // its final place first and the keyboard slid up after it.
+  //
+  // `useReanimatedKeyboardAnimation` cannot avoid that. On iOS its value is written ONCE, at
+  // keyboardWillShow, straight to the final height (react-native-keyboard-controller
+  // lib/module/animated.js: the provider updates it in `onKeyboardMoveStart` on iOS and ignores the
+  // per-frame events). It only looks animated when that single update happens to be mounted inside
+  // UIKit's keyboard animation; with any React commit in flight at the same moment (the results list,
+  // a focus re-render) it lands a frame later, outside it, and the field snaps.
+  //
+  // The per-frame events are delivered on iOS too (a display link following the keyboard), so the
+  // field follows those, the same source the chat already uses for its message list. Handlers are
+  // global, so this one listens only while the tab is on screen and rests at 0 otherwise.
+  const kb = useSharedValue(0);
+  const listening = useSharedValue(focused ? 1 : 0);
+  useEffect(() => {
+    listening.value = focused ? 1 : 0;
+    if (!focused) kb.value = 0;
+  }, [focused, listening, kb]);
+  useKeyboardHandler(
+    {
+      onMove: (e) => {
+        'worklet';
+        if (listening.value) kb.value = e.height;
+      },
+      onInteractive: (e) => {
+        'worklet';
+        if (listening.value) kb.value = e.height;
+      },
+      onEnd: (e) => {
+        'worklet';
+        if (listening.value) kb.value = e.height;
+      },
+    },
+    [],
+  );
   const [query, setQuery] = useState('');
   // Debounced mirror of `query`. The text input stays fully controlled by
   // `query` (responsive on every keystroke); only the heavy profile filter
@@ -593,8 +622,6 @@ export default function SearchScreen() {
       <RecentTile
         emoji={item.profile.emoji}
         label={item.profile.display_name || item.profile.username}
-        verified={item.profile.is_verified}
-        badge={item.profile.badge}
         onPress={() => handleSelect(item.profile)}
       />
     ) : (
@@ -616,27 +643,17 @@ export default function SearchScreen() {
 
   // ── The field's place ─────────────────────────────────────────────────────
   // At rest it floats just above the tab bar. With the keyboard up it sits just above the keyboard:
-  // the lift is whatever the keyboard covers beyond the field's resting height, read every frame on
-  // the UI thread, so the field moves with the keyboard rather than after it.
+  // the lift is whatever the keyboard covers beyond the field's resting height (`kb`, above).
   const restBottom = getTabBarHeight(insets.bottom) + FIELD_GAP_ABOVE_BAR;
   const fieldLiftStyle = useAnimatedStyle(() => {
-    const kb = Math.abs(keyboardHeight.value);
-    return { transform: [{ translateY: -Math.max(0, kb + FIELD_GAP_ABOVE_KEYBOARD - restBottom) }] };
+    return { transform: [{ translateY: -Math.max(0, kb.value + FIELD_GAP_ABOVE_KEYBOARD - restBottom) }] };
   }, [restBottom]);
 
-  // The list's bottom padding has to clear the field, and while typing the keyboard as well. A
-  // layout value, so it follows the keyboard's final height (set once per show / hide), not every
-  // animation frame.
-  const [keyboardOpenHeight, setKeyboardOpenHeight] = useState(0);
-  useEffect(() => {
-    if (!focused) return;
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvt, (e) => setKeyboardOpenHeight(e?.endCoordinates?.height ?? 0));
-    const hide = Keyboard.addListener(hideEvt, () => setKeyboardOpenHeight(0));
-    return () => { show.remove(); hide.remove(); };
-  }, [focused]);
-  const fieldTop = Math.max(restBottom, keyboardOpenHeight + FIELD_GAP_ABOVE_KEYBOARD) + FIELD_HEIGHT;
+  // The content's bottom padding clears the field at rest and nothing more. It used to follow the
+  // keyboard as well, through a state set at keyboardWillShow, and that re-render landed at the very
+  // moment the keyboard started to move. Content under the keyboard is a drag away: dragging the
+  // results puts the keyboard down.
+  const contentBottom = restBottom + FIELD_HEIGHT + 20;
 
   // ── The top result's posts ────────────────────────────────────────────────
   // Asked for only once the same person has stayed on top for PREVIEW_SETTLE_MS (see there).
@@ -662,8 +679,8 @@ export default function SearchScreen() {
   const listContentStyle = useMemo(() => ({
     paddingHorizontal: theme.spacing.base,
     paddingTop: headerContentHeight + 8,
-    paddingBottom: fieldTop + 20,
-  }), [theme, headerContentHeight, fieldTop]);
+    paddingBottom: contentBottom,
+  }), [theme, headerContentHeight, contentBottom]);
 
   // The strip's own padding. `base - 6` because each tile is centred inside RECENT_TILE_WIDTH,
   // so the first avatar already carries ~6 pt of its own slack; using the full base inset
@@ -757,7 +774,17 @@ export default function SearchScreen() {
           ListFooterComponent={listFooter}
         />
       ) : (
-        <View style={{ flex: 1, paddingTop: headerContentHeight + 4 }}>
+        // A ScrollView, not a View, only for its tap handling: with `keyboardShouldPersistTaps`
+        // "handled", a tap on empty space puts the keyboard away (reported: tapping above the field
+        // did nothing), while a tap on a recent still opens it on the first try.
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ flexGrow: 1, paddingTop: headerContentHeight + 4, paddingBottom: contentBottom }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          alwaysBounceVertical={false}
+        >
           {/* ── Recent ──────────────────────────────────────────────────────────
               A HORIZONTAL strip of round avatars with the name underneath, people and mini apps
               together, newest first: shortcuts, not a second set of results. At the top, under
@@ -765,18 +792,15 @@ export default function SearchScreen() {
           {showRecents ? (
             <View style={{ paddingTop: 14 }}>
               <View style={[styles.recentHead, { paddingHorizontal: theme.spacing.base }]}>
-                <Text variant="subheading" weight="bold">{t('search.recent')}</Text>
-                <Pressable
-                  onPress={clearHistory}
-                  hitSlop={10}
-                  accessibilityRole="button"
-                  style={({ pressed }) => [
-                    styles.clearPill,
-                    { backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' },
-                    pressed ? { opacity: 0.7 } : null,
-                  ]}
-                >
-                  <Text variant="caption" weight="medium" color={theme.colors.text.secondary}>{t('search.clear')}</Text>
+                <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={styles.recentTitle}>
+                  {t('search.recent')}
+                </Text>
+                <Pressable onPress={clearHistory} hitSlop={12} accessibilityRole="button">
+                  {({ pressed }) => (
+                    <Text variant="caption" weight="medium" color={theme.colors.accent.primary} style={pressed ? styles.recentTitlePressed : styles.recentTitle}>
+                      {t('search.clear')}
+                    </Text>
+                  )}
                 </Pressable>
               </View>
               <FlatList
@@ -805,7 +829,7 @@ export default function SearchScreen() {
               </Text>
             </View>
           ) : null}
-        </View>
+        </ScrollView>
       )}
 
       {/* Floating title row over the same top fade as the chat list. */}
@@ -842,8 +866,11 @@ const styles = StyleSheet.create({
   headerRow: { alignItems: 'center', justifyContent: 'center', paddingBottom: 8, height: '100%' },
   hint: { alignItems: 'center', paddingHorizontal: 40, paddingTop: 72 },
   hintIcon: { width: 64, height: 64, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  recentHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
-  clearPill: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12 },
+  recentHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  recentTitle: { fontSize: 13 },
+  recentTitlePressed: { fontSize: 13, opacity: 0.5 },
+  recentTile: { width: RECENT_TILE_WIDTH, alignItems: 'center' },
+  recentName: { marginTop: 7, fontSize: 12, maxWidth: RECENT_TILE_WIDTH - 8 },
   sectionLabel: { marginBottom: 8, marginTop: 4 },
   topCard: { borderRadius: 24, borderWidth: 1, marginBottom: 8, overflow: 'hidden' },
   topRow: { flexDirection: 'row', alignItems: 'center', padding: 14 },
@@ -870,6 +897,16 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     elevation: 6,
   },
-  fieldInput: { flex: 1, fontSize: 16, paddingVertical: 0, height: FIELD_HEIGHT },
+  // Fills the capsule's height and lets the text field centre its own line: no lineHeight (on iOS a
+  // lineHeight in a single-line field shifts the baseline) and no vertical padding.
+  fieldInput: {
+    flex: 1,
+    alignSelf: 'stretch',
+    fontSize: 16,
+    paddingTop: 0,
+    paddingBottom: 0,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
+  },
   fieldClear: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
 });

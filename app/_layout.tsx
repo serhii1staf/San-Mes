@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, AppState, Pressable, InteractionManager, Platform, Dimensions } from 'react-native';
+import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, AppState, Pressable, InteractionManager, Platform, Dimensions, Keyboard } from 'react-native';
 import { Stack, useRouter, useSegments, useNavigationContainerRef, usePathname } from 'expo-router';
 import { consumeSkipSplashOnce } from '../src/services/launchFlags';
 import { useFonts } from 'expo-font';
@@ -655,9 +655,35 @@ function RootLayout() {
         const rawBanner = (useAuthStore.getState().user as any)?.bannerUrl as string | undefined;
         if (rawBanner) {
           Promise.all([import('../src/utils/bannerTransform'), import('../src/components/ui/CachedImage')])
-            .then(([{ stripBannerTransform }, { prefetchImages }]) => {
+            .then(([{ stripBannerTransform }, { warmIntoMemory }]) => {
               const url = stripBannerTransform(rawBanner);
-              if (url) prefetchImages([url], Math.round(Dimensions.get('window').width), 'memory-disk');
+              if (url) warmIntoMemory([url], Math.round(Dimensions.get('window').width));
+            })
+            .catch(() => {});
+        }
+      } catch {}
+      // The thumbnails of your own first few posts, the same way and at the widths the profile cards
+      // request (100 for a single photo, 49 for a tile; see ProfilePostCard). Reported: after a cold
+      // start, opening your profile showed your posts "loading again". They were on disk; the fade a
+      // first appearance gets is what read as loading. GIFs are left out: decoding an animation
+      // ahead of time is the cost the chat's decode gate exists to avoid.
+      try {
+        const myId = useAuthStore.getState().user?.id;
+        if (myId) {
+          Promise.all([import('../src/services/profilePosts'), import('../src/components/ui/CachedImage'), import('../src/lib/supabase')])
+            .then(([{ peekCachedProfilePosts }, { warmIntoMemory }, { parseImageUrls }]) => {
+              const isAnimated = (u: string) => /\.gif(\?|$)/i.test(u) || /giphy\.com|tenor\.com/i.test(u);
+              const singles: string[] = [];
+              const tiles: string[] = [];
+              for (const post of peekCachedProfilePosts(myId).slice(0, 4)) {
+                // The card's layout depends on how many images there are in all, GIFs included.
+                const all = parseImageUrls(post.image_url);
+                const stills = all.slice(0, 4).filter((u) => !isAnimated(u));
+                if (all.length === 1) singles.push(...stills);
+                else tiles.push(...stills);
+              }
+              warmIntoMemory(singles, 100);
+              warmIntoMemory(tiles, 49);
             })
             .catch(() => {});
         }
@@ -826,6 +852,22 @@ function RootLayout() {
 // content pop recogniser and uses its RNSPanGestureRecognizer for this, gated per screen.
 const SWIPE_BACK_ANYWHERE = { fullScreenGestureEnabled: true } as const;
 
+// ── THE KEYBOARD GOES DOWN AS SOON AS A SCREEN STARTS TO LEAVE ───────────────
+//
+// Reported: with the keyboard up in a chat, starting the swipe back and moving the finger up and
+// down made the input bar follow the finger while the keyboard itself stayed put. In Telegram the
+// keyboard drops the moment the swipe begins.
+//
+// UIKit calls `viewWillDisappear` when the interactive pop STARTS, which native-stack emits as
+// `transitionStart` with `closing: true` (NativeStackView.native.js). The same event fires on a
+// screen that is being covered by a push, where putting the keyboard away is right too. One listener
+// on the root stack covers every screen; if the swipe is cancelled the keyboard simply stays down.
+const DISMISS_KEYBOARD_ON_LEAVE = {
+  transitionStart: (e: { data?: { closing?: boolean } }) => {
+    if (e?.data?.closing) Keyboard.dismiss();
+  },
+};
+
 function AppStack() {
   const theme = useTheme();
   const screenOptions = React.useMemo(
@@ -837,7 +879,7 @@ function AppStack() {
     [theme.colors.background.primary],
   );
   return (
-    <Stack screenOptions={screenOptions}>
+    <Stack screenOptions={screenOptions} screenListeners={DISMISS_KEYBOARD_ON_LEAVE as any}>
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="chat/[id]" />

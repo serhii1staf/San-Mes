@@ -11,7 +11,6 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import { ModalStatusBar } from './ModalStatusBar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 
@@ -266,7 +265,9 @@ export function SlideUpSheet({ visible, onClose, children, exitInstantRef, expan
 
   return (
     <Modal visible={visible || mounted} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
-      <ModalStatusBar />
+      {/* No `ModalStatusBar` here. A bottom sheet is not an immersive surface (iOS never hides the
+          clock for one), and hiding it made the whole top of the screen jump each time a sheet
+          opened, which was reported as strange. Full-screen viewers still hide it. */}
       {/* Mandatory inside a Modal: RN portals modal contents outside the app's root gesture view, so
           handlers attached to <GestureDetector> never fire without a root of their own here. The same
           requirement is recorded at length in app/profile/edit.tsx, which hit it first. */}

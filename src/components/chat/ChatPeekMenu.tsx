@@ -65,6 +65,7 @@ import { stripMarkers } from '../../utils/previewText';
 import { messageImageUrls } from '../../utils/chatImageMarker';
 import { LinkPreview } from '../ui/LinkPreview';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { CHAT_IMG_MAX_W, CHAT_MULTI_IMG_SIZE } from '../../utils/chatMediaSize';
 import { useT } from '../../i18n/store';
 import type { ChatMessage } from '../../types';
 
@@ -83,9 +84,6 @@ export interface ChatPeekAction<Id extends string = string> {
 export interface ChatPeekAnchor {
   y: number;
   height: number;
-  /** Centre of the held row's avatar, in window coordinates. The action list closes into it. */
-  avatarCx?: number;
-  avatarCy?: number;
 }
 
 export interface ChatPeekConversation {
@@ -119,18 +117,13 @@ const MAX_PREVIEW_MESSAGES = 60;
 /** One page from the server for a chat with no local copy. */
 const REMOTE_PAGE = 40;
 const OPEN_SPRING = { damping: 22, stiffness: 260, mass: 0.9 };
-/** The close, end to end. Linear here; each layer applies its own curve to it (see `ease`). */
-const CLOSE_MS = 340;
-/** How small the action list gets as it reaches the avatar. */
-const MENU_END_SCALE = 0.04;
+/** The close: short and decelerating, like a system context menu. */
+const CLOSE_MS = 260;
+/** How far the card and the action list contract toward the held row as they go (1 = not at all). */
+const CLOSE_SCALE = 0.74;
+/** The glass dissolves natively over this long, in seconds; see `GlassStyleConfig`. */
+const GLASS_DISSOLVE_S = 0.2;
 const IOS_RED = '#FF3B30';
-
-/** Smoothstep: starts and ends at rest, so nothing jumps into motion or stops dead. */
-function ease(k: number): number {
-  'worklet';
-  const x = Math.max(0, Math.min(1, k));
-  return x * x * (3 - 2 * x);
-}
 
 // A worklet: the animated styles below call it on the UI thread, and so does the JS layout code.
 function clamp(v: number, lo: number, hi: number): number {
@@ -170,13 +163,22 @@ export function ChatPeekMenu<Id extends string>({
   const insets = useSafeAreaInsets();
   const { width: W, height: H } = useWindowDimensions();
   const p = useSharedValue(0);
-  // Close progress, separate from `p`, so the close is its own motion rather than the open run in
-  // reverse: the card fades back toward its row and the action list shrinks INTO the row's avatar
-  // along one smooth path. (Collapsing into the list's own top-left corner read as it darting off
-  // sideways, which is what was reported.)
+  // ── THE CLOSE ─────────────────────────────────────────────────────────────
+  //
+  // Close progress, separate from `p`. The card and the action list go back together, toward the row
+  // they came out of (straight up or down, the way the card opened), while they fade; the glass of
+  // the list dissolves the way system menus do.
+  //
+  // Two versions were rejected on the device: the list collapsing into its own top-left corner (read
+  // as it darting off sideways), and the list flying on its own across the screen into the row's
+  // avatar while the card faded somewhere else ("very bad"). Moving the two as one, a short distance,
+  // is what a context menu does.
   const c = useSharedValue(0);
   const closing = useRef(false);
   const after = useRef<(() => void) | null>(null);
+  // Set when the close starts: the glass is told to dissolve (`GlassStyleConfig`), natively and in
+  // step with the motion. One render, at the start of the close.
+  const [dissolving, setDissolving] = useState(false);
 
   // The haptic fires in `openChatPeek`, at the long-press itself, not here after the first render.
   useEffect(() => {
@@ -195,10 +197,10 @@ export function ChatPeekMenu<Id extends string>({
       if (closing.current) return;
       closing.current = true;
       after.current = fn ?? null;
+      setDissolving(true);
       // `finish` runs whether or not the timing completed: nothing else drives `c` once closing
       // has started, and a menu that never reports closed would leave an invisible layer on top.
-      // Linear: the styles below shape it themselves (`ease`), each to suit what it animates.
-      c.value = withTiming(1, { duration: CLOSE_MS, easing: Easing.linear }, () => {
+      c.value = withTiming(1, { duration: CLOSE_MS, easing: Easing.out(Easing.cubic) }, () => {
         runOnJS(finish)();
       });
     },
@@ -240,62 +242,60 @@ export function ChatPeekMenu<Id extends string>({
   // The card grows out of the held row: it starts over the row and travels to its place.
   const fromDY = hasPreview ? clamp(anchor.y + anchor.height / 2 - (cardTop + cardH / 2), -280, 280) : 0;
 
+  // Where both go back to on close: the held row's centre line, at the middle of the screen, so the
+  // motion is straight up or down. Without a measured row they contract in place.
+  const homeX = W / 2;
+  const homeY = anchor.height > 0
+    ? anchor.y + anchor.height / 2
+    : hasPreview ? cardTop + cardH / 2 : menuTop + menuH / 2;
+
+  // Both layers use the same contraction toward `home`: a point P goes to home + s * (P - home).
   const cardStyle = useAnimatedStyle(() => {
-    const shut = ease(c.value);
+    const k = c.value;
+    const s = 1 - (1 - CLOSE_SCALE) * k;
+    const openDY = interpolate(p.value, [0, 1], [fromDY, 0]);
+    // The card scales about its centre, so only the centre has to be carried toward home.
+    const centreY = cardTop + cardH / 2 + openDY;
     return {
-      // The fade trails the motion a little, so the card is seen heading back to the row.
-      opacity: interpolate(p.value, [0, 0.35], [0, 1], Extrapolation.CLAMP) * Math.pow(1 - shut, 1.3),
+      opacity: interpolate(p.value, [0, 0.35], [0, 1], Extrapolation.CLAMP) * (1 - k),
       transform: [
-        { translateY: interpolate(p.value, [0, 1], [fromDY, 0]) + fromDY * 0.5 * shut },
-        { scale: interpolate(p.value, [0, 1], [0.84, 1]) * (1 - 0.14 * shut) },
+        { translateY: openDY + (homeY - centreY) * (1 - s) },
+        { scale: interpolate(p.value, [0, 1], [0.84, 1]) * s },
       ],
     };
   });
 
-  // ── Where the action list goes when it closes: into the held row's avatar ──
-  // The row passes the avatar's centre. Without it (the row could not be measured) the list shrinks
-  // where it is.
-  const menuCx = menuLeft + menuW / 2;
-  const menuCy = menuTop + menuH / 2;
-  const hasAvatar = anchor.avatarCx != null && anchor.avatarCy != null && anchor.height > 0;
-  const targetX = hasAvatar ? (anchor.avatarCx as number) : menuCx;
-  const targetY = hasAvatar ? (anchor.avatarCy as number) : menuCy;
-
   // The glass menu never carries an alpha: a GlassView with opacity below 1 on itself or an
-  // ancestor stops rendering its glass (expo/expo#41024). It grows out of its corner on open and
-  // shrinks into the avatar on close, glass all the way (it used to swap to a flat surface for a
-  // fade, and that swap at the start of the close read as a glitch). Without glass it also fades.
+  // ancestor stops rendering its glass (expo/expo#41024). It grows out of its corner on open; on
+  // close it moves with the card while its glass dissolves (`dissolving`) and its rows fade (a
+  // sibling of the glass, so that alpha is safe). Without glass the whole list fades.
   const glassActive = useLiquidGlassActive();
   const menuGlass = glassActive;
   const menuStyle = useAnimatedStyle(() => {
     const k = c.value;
+    const s = 1 - (1 - CLOSE_SCALE) * k;
     // The open scale, from the spring (still settling if the menu is closed straight away).
     const open = interpolate(p.value, [0, 1], [menuGlass ? 0.2 : 0.55, 1]);
-    // The path eases in and out; the shrink starts gently and finishes fast, so the list is still
-    // readable as itself for the first part of the trip and arrives small.
-    const travel = ease(k);
-    const s = open * (1 - (1 - MENU_END_SCALE) * Math.pow(k, 1.35));
-    // `transformOrigin` is the top-left corner (the open grows out of it), so the translation is
-    // what keeps the scaled box CENTRED on its point along the path: from where the list's centre
-    // is, to the avatar.
-    const fromX = menuLeft + (open * menuW) / 2;
-    const fromY = menuTop + (open * menuH) / 2;
-    const atX = fromX + (targetX - fromX) * travel;
-    const atY = fromY + (targetY - fromY) * travel;
     const fade = interpolate(p.value, [0.1, 0.55], [0, 1], Extrapolation.CLAMP);
+    // `transformOrigin` is the top-left corner, so carrying that corner toward home is the whole
+    // contraction: (home - corner) * (1 - s).
     return {
-      opacity: menuGlass ? 1 : fade * (1 - travel),
+      opacity: menuGlass ? 1 : fade * (1 - k),
       transform: [
-        { translateX: k > 0 ? atX - menuLeft - (s * menuW) / 2 : 0 },
-        { translateY: k > 0 ? atY - menuTop - (s * menuH) / 2 : 0 },
-        { scale: s },
+        { translateX: (homeX - menuLeft) * (1 - s) },
+        { translateY: (homeY - menuTop) * (1 - s) },
+        { scale: open * s },
       ],
     };
   });
-  const dimStyle = useAnimatedStyle(() => ({ opacity: clamp(p.value, 0, 1) * (1 - ease(c.value)) }));
+  // The rows go first, in the first half of the close, so what is left is the dissolving glass.
+  const rowsStyle = useAnimatedStyle(() => ({
+    opacity: menuGlass ? 1 - Math.min(1, c.value * 2) : 1,
+  }));
+  const dimStyle = useAnimatedStyle(() => ({ opacity: clamp(p.value, 0, 1) * (1 - c.value) }));
   // The blur's INTENSITY is animated, not its opacity: a UIVisualEffectView with alpha below 1
   // renders broken until the alpha returns to 1.
-  const blurProps = useAnimatedProps(() => ({ intensity: clamp(p.value, 0, 1) * (1 - ease(c.value)) * 40 }));
+  const blurProps = useAnimatedProps(() => ({ intensity: clamp(p.value, 0, 1) * (1 - c.value) * 40 }));
 
   const isIOS = Platform.OS === 'ios';
   const dimColor = isIOS ? (theme.isDark ? 'rgba(0,0,0,0.28)' : 'rgba(0,0,0,0.12)') : 'rgba(0,0,0,0.55)';
@@ -376,19 +376,22 @@ export function ChatPeekMenu<Id extends string>({
           {menuGlass ? (
             <GlassBg
               borderRadius={MENU_RADIUS}
-              glassStyle="regular"
+              glassStyle={dissolving ? { style: 'none', animate: true, animationDuration: GLASS_DISSOLVE_S } : 'regular'}
               interactive={false}
               colorScheme={theme.isDark ? 'dark' : 'light'}
             />
           ) : null}
-          {actions.map((a, i) => (
-            <PeekMenuRow
-              key={a.id}
-              action={a}
-              separator={i > 0 ? separator : null}
-              onPress={() => close(() => onSelect(a.id))}
-            />
-          ))}
+          {/* A sibling of the glass, never its ancestor, so this fade cannot break it. */}
+          <Reanimated.View style={rowsStyle}>
+            {actions.map((a, i) => (
+              <PeekMenuRow
+                key={a.id}
+                action={a}
+                separator={i > 0 ? separator : null}
+                onPress={() => close(() => onSelect(a.id))}
+              />
+            ))}
+          </Reanimated.View>
         </View>
       </Reanimated.View>
     </View>
@@ -430,7 +433,9 @@ function PeekMenuRow<Id extends string>({
   );
 }
 
-function PeekHeader({ conversation }: { conversation: ChatPeekConversation }) {
+// Memoized, with PeekTranscript: the menu renders once more when the close starts (`dissolving`),
+// and nothing in the card changes then.
+const PeekHeader = memo(function PeekHeader({ conversation }: { conversation: ChatPeekConversation }) {
   const theme = useTheme();
   const hairline = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
   // No status line: there is no presence data behind it, so "был(а) недавно" was a constant.
@@ -450,7 +455,7 @@ function PeekHeader({ conversation }: { conversation: ChatPeekConversation }) {
       </View>
     </View>
   );
-}
+});
 
 /** Oldest → newest, as the store and the tail cache keep them. Empty when this device has neither. */
 function readLocal(conversationId: string): ChatMessage[] {
@@ -494,7 +499,7 @@ function formatTime(iso: string): string {
 const remoteCache = new Map<string, { at: number; rows: ChatMessage[] }>();
 const REMOTE_FRESH_MS = 60_000;
 
-function PeekTranscript({ conversationId }: { conversationId: string }) {
+const PeekTranscript = memo(function PeekTranscript({ conversationId }: { conversationId: string }) {
   const theme = useTheme();
   const t = useT();
   const myId = useAuthStore((s) => s.user?.id);
@@ -595,7 +600,7 @@ function PeekTranscript({ conversationId }: { conversationId: string }) {
       nestedScrollEnabled
     />
   );
-}
+});
 
 function keyOf(m: ChatMessage): string {
   return m.id;
@@ -631,7 +636,7 @@ const PeekBubble = memo(function PeekBubble({
   const time = formatTime(message.createdAt);
   return (
     <View style={[styles.bubble, { alignSelf: own ? 'flex-end' : 'flex-start', backgroundColor: bg, borderRadius: radius }]}>
-      {gif ? <CachedImage uri={gif} style={[styles.gif, { borderRadius: inner }]} resizeMode="cover" /> : null}
+      {gif ? <CachedImage uri={gif} style={[styles.gif, { borderRadius: inner }]} resizeMode="cover" proxyWidth={CHAT_IMG_MAX_W} /> : null}
       {images.length > 0 ? <PeekAlbum urls={images} radius={inner} /> : null}
       {body ? (
         <Text variant="body" color={fg} numberOfLines={8} style={styles.bubbleText}>
@@ -656,16 +661,28 @@ const PeekBubble = memo(function PeekBubble({
   );
 });
 
-/** One photo large; two side by side; three or four as a 2×2 grid, like the chat's albums. */
+/**
+ * One photo large; two side by side; three or four as a 2×2 grid, like the chat's albums.
+ *
+ * Requested at the chat's own widths (`proxyWidth`), not at the sizes drawn here: the width is part of
+ * the cache key, so the preview now paints the copies the chat already has in memory instead of
+ * downloading and decoding its own, which is what made every long-press look like a reload.
+ */
 function PeekAlbum({ urls, radius }: { urls: string[]; radius: number }) {
   if (urls.length === 1) {
-    return <CachedImage uri={urls[0]} style={[styles.photo, { borderRadius: radius }]} resizeMode="cover" />;
+    return <CachedImage uri={urls[0]} style={[styles.photo, { borderRadius: radius }]} resizeMode="cover" proxyWidth={CHAT_IMG_MAX_W} />;
   }
   const cellH = urls.length === 2 ? ALBUM_W * 0.68 : (ALBUM_W - 2) / 2;
   return (
     <View style={styles.album}>
       {urls.map((u) => (
-        <CachedImage key={u} uri={u} style={{ width: (ALBUM_W - 2) / 2, height: cellH, borderRadius: radius }} resizeMode="cover" />
+        <CachedImage
+          key={u}
+          uri={u}
+          style={{ width: (ALBUM_W - 2) / 2, height: cellH, borderRadius: radius }}
+          resizeMode="cover"
+          proxyWidth={CHAT_MULTI_IMG_SIZE}
+        />
       ))}
     </View>
   );

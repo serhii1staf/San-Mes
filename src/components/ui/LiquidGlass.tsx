@@ -146,10 +146,17 @@ function subscribeReduceTransparency(onStoreChange: () => void): () => void {
 }
 
 export type GlassStyle = 'clear' | 'regular' | 'none';
+/**
+ * expo-glass-effect's own config form of the style: changing it with `animate: true` runs the change
+ * inside a UIKit animation, which for `style: 'none'` is the system "dematerialise" of the glass. That
+ * is the only way to make glass disappear smoothly, since an alpha on a glass view (or any ancestor)
+ * stops it rendering at all (expo/expo#41024). Present in the 0.1.10 native module every build ships.
+ */
+export type GlassStyleConfig = { style: GlassStyle; animate?: boolean; animationDuration?: number };
 
 interface NativeGlassViewProps extends ViewProps {
   style?: StyleProp<ViewStyle>;
-  glassStyle?: GlassStyle;
+  glassStyle?: GlassStyle | GlassStyleConfig;
   tintColor?: string;
   isInteractive?: boolean;
   /** Override the system appearance to match the app's own theme toggle. */
@@ -273,7 +280,7 @@ export function GlassSurface({ fallback, ...glassProps }: GlassSurfaceProps) {
 
 interface GlassBgProps {
   borderRadius?: number;
-  glassStyle?: GlassStyle;
+  glassStyle?: GlassStyle | GlassStyleConfig;
   colorScheme?: 'auto' | 'light' | 'dark';
   /**
    * Whether the glass reacts to touch (Apple's liquid "stretch"/morph). Safe

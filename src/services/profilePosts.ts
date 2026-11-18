@@ -237,6 +237,13 @@ const postsDisk: DiskCache<ProfilePost> = {
   },
 };
 
+/** The cached first page for a profile (memory, else disk), without fetching. For warm-ups. */
+export function peekCachedProfilePosts(profileId: string): ProfilePost[] {
+  const inMem = postsMem.get(profileId);
+  if (inMem) return inMem.items;
+  return postsDisk.read(profileId)?.items ?? [];
+}
+
 export function useProfilePosts(profileId: string | undefined) {
   const { items, loading } = useCachedList<ProfilePost>(profileId, 'posts', postsMem, fetchPosts, postsDisk);
   return { posts: items, loading };

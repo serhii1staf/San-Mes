@@ -150,7 +150,9 @@ const PRESS_SPRING = { damping: 20, stiffness: 350, mass: 0.6 };
 // the "lens disappears after Settings → back, reappears after opening another
 // screen" bug the user reported. Seeding state from this cache means a remount
 // starts with a valid width, so the lens renders immediately and never blanks.
-let lastSlotWidth = 0;
+// The main capsule has a fixed width (MAIN_CAPSULE_WIDTH), so its slot width is known before the
+// first layout. Starting at 0 kept the lens unmounted for the first frames of every cold start.
+let lastSlotWidth = TAB_SLOT_WIDTH;
 
 // ── WHY IONICONS HERE AND MATERIALICONS IN SETTINGS ──────────────────────────
 //
@@ -1166,7 +1168,20 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   }
 
   // Currently-focused route (in the full routes array).
-  const focusedRoute = state.routes[state.index];
+  //
+  // ── `index` COUNTS AS THE CHAT LIST ───────────────────────────────────────
+  //
+  // Reported: after killing the app and opening it again, the bar first shows Search as the selected
+  // tab and then jumps to Chats. A cold start opens "/", which is the hidden `index` route; its
+  // <Redirect> only moves to `messages` after the first commit (expo-router runs it in a focus
+  // effect). For that commit no main tab was focused, the lens was not mounted, and `pillX` still
+  // held its initial 0, the Search slot, so the lens appeared there and was then snapped across.
+  // `index` exists only to land on the chat list, so the bar treats it as the chat list from the
+  // first frame, and the lens starts at that slot (see `pillX` below).
+  const focusedRoute =
+    state.routes[state.index]?.name === 'index'
+      ? state.routes.find((r) => r.name === 'messages') ?? state.routes[state.index]
+      : state.routes[state.index];
   const isProfileFocused = focusedRoute?.name === 'profile';
   // Active slot WITHIN the main bar (0..3), or -1 when profile is focused.
   // All pill/lens positioning keys off this — never off state.index — so the
@@ -1183,7 +1198,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const hasMounted = useRef(false);
 
   // Animated state — all on UI thread
-  const pillX = useSharedValue(0);
+  // Starts at the active slot, not at 0 (the Search slot): see the note on `focusedRoute`.
+  const pillX = useSharedValue(
+    TAB_ROW_PADDING_H + Math.max(0, activeMainSlot) * (slotWidth > 0 ? slotWidth : TAB_SLOT_WIDTH) + PILL_INSET_X,
+  );
   const pillY = useSharedValue(0);
   const pillScale = useSharedValue(1);
   const pillStretchW = useSharedValue(0);
