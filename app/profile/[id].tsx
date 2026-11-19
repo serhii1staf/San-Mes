@@ -29,6 +29,7 @@ import {
   useProfileScrollAnim,
 } from '../../src/components/profile/ProfileLayout';
 import { ProfileContentTabs } from '../../src/components/profile/ProfileContentTabs';
+import { useAuthorChannel } from '../../src/services/realtime/authorChannel';
 
 /**
  * Someone else's profile. Same design as before (banner card, avatar tile, name, links, bio,
@@ -50,6 +51,8 @@ export default function UserProfileScreen() {
   const glassActive = useLiquidGlassActive();
   const screenFocused = useIsFocused();
   const anim = useProfileScrollAnim();
+  // Their posts and profile edits arrive live while this screen is focused. See the hook.
+  useAuthorChannel(profileId && profileId !== currentUserId ? profileId : undefined, screenFocused);
 
   const cachedProfile = useEntityStore((s) => s.profiles[profileId]);
   const [fallbackProfile, setFallbackProfile] = useState<any>(null);

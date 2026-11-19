@@ -239,7 +239,15 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
         .then((m) => m.registerForPush())
         .catch(() => {});
     }, 1500);
-    return () => clearTimeout(tid);
+    // Every return to the foreground retries a registration that has not succeeded yet, without
+    // asking for permission again; a no-op once it has. See `ensurePushRegistered`.
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s !== 'active') return;
+      import('../src/services/pushNotifications')
+        .then((m) => m.ensurePushRegistered())
+        .catch(() => {});
+    });
+    return () => { clearTimeout(tid); sub.remove(); };
   }, [isAuthenticated, hasHydrated]);
 
   // ── RECORD THIS INSTALL SO THE OWNER CAN SEE IT AND REMOVE IT ─────────────

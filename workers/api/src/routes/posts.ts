@@ -150,8 +150,8 @@ register('POST', '/v1/posts/repost', async (req, env, ctx, _params, authedUserId
   );
   const shaped = created ? shapePost(created) : null;
   if (shaped) {
-    // Repost shows up in the public feed like any other post.
-    publishEvent(env, channels.feedPublic(), 'post.new', { post: shaped }, ctx);
+    // People looking at the reposter's profile refetch it (see `channels.author`).
+    publishEvent(env, channels.author(authedUserId), 'author.post.new', { id }, ctx);
     // The original post's per-post channel gets a count bump so any
     // viewer of that post sees `shares_count` tick up.
     publishEvent(
@@ -214,9 +214,8 @@ register('POST', '/v1/posts', async (req, env, ctx, _params, authedUserId) => {
   );
   const shaped = created ? shapePost(created) : null;
   if (shaped) {
-    // Fan out to the public feed so every device with the home tab
-    // hot can prepend the new card without a refetch.
-    publishEvent(env, channels.feedPublic(), 'post.new', { post: shaped }, ctx);
+    // People looking at the author's profile refetch its first page (see `channels.author`).
+    publishEvent(env, channels.author(authedUserId), 'author.post.new', { id }, ctx);
   }
   return ok(req, shaped);
 });
@@ -287,7 +286,7 @@ register('PATCH', '/v1/posts/:id', async (req, env, ctx, params, authedUserId) =
       image_url: shaped.image_url,
       updated_at: new Date().toISOString(),
     };
-    publishEvent(env, channels.feedPublic(), 'post.edit', delta, ctx);
+    publishEvent(env, channels.author(authedUserId), 'author.post.edit', { id }, ctx);
     publishEvent(env, channels.post(id), 'post.edit', delta, ctx);
   }
   return ok(req, shaped);
@@ -319,7 +318,7 @@ register('DELETE', '/v1/posts/:id', async (req, env, ctx, params, authedUserId) 
     { sql: `DELETE FROM posts WHERE content LIKE ?`, params: [`::repost::${id}%`] },
     { sql: `DELETE FROM posts WHERE id = ?`, params: [id] },
   ]);
-  publishEvent(env, channels.feedPublic(), 'post.delete', { id }, ctx);
+  publishEvent(env, channels.author(authedUserId), 'author.post.delete', { id }, ctx);
   publishEvent(env, channels.post(id), 'post.delete', { id }, ctx);
   return ok(req, { deleted: true });
 });

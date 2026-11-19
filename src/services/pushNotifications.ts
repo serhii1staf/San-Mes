@@ -249,7 +249,38 @@ function resolveProjectId(): string | undefined {
  * a build without the native module, on a simulator, or when permission is
  * denied.
  */
-export async function registerForPush(): Promise<void> {
+// ── A REGISTRATION THAT FAILS IS TRIED AGAIN, NOT AT THE NEXT COLD START ──────
+//
+// Reported: a new tester got no notifications. Her account was created at 20:30 and her push token
+// reached the server at 21:17. Registration ran once per launch, 1.5 s after sign-in, and a failed
+// POST in that first minute of a brand-new session (no network yet, a token still settling) was
+// simply dropped until the app was killed and relaunched. Now a failure is retried after 15 s, 1 min
+// and 5 min, and every return to the foreground tries again until it succeeds. Neither retry asks
+// for permission: a prompt is shown only by the first call, and a denial is respected.
+/** The account this session has a confirmed registration for. Per account, like the sent marker. */
+let registeredFor: string | null = null;
+let retryAttempts = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+const RETRY_DELAYS_MS = [15_000, 60_000, 5 * 60_000];
+
+function scheduleRegisterRetry(): void {
+  if (retryTimer || retryAttempts >= RETRY_DELAYS_MS.length) return;
+  const delay = RETRY_DELAYS_MS[retryAttempts++];
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    void registerForPush({ prompt: false });
+  }, delay);
+}
+
+/** Retry a registration that has not succeeded in this session yet. Cheap no-op once it has. */
+export function ensurePushRegistered(): void {
+  const me = currentUserId();
+  if (!me || registeredFor === me) return;
+  void registerForPush({ prompt: false });
+}
+
+export async function registerForPush(opts: { prompt?: boolean } = {}): Promise<void> {
+  const prompt = opts.prompt !== false;
   // Respect the user's master switch — when push is turned off in Settings we
   // must neither request permission nor register a token. Defensive try/catch
   // so a store-read failure never blocks the (already best-effort) flow.
@@ -275,14 +306,21 @@ export async function registerForPush(): Promise<void> {
     }
 
     let status = (await Notifications.getPermissionsAsync())?.status;
-    if (status !== 'granted') {
+    if (status !== 'granted' && prompt) {
       status = (await Notifications.requestPermissionsAsync())?.status;
     }
     if (status !== 'granted') return;
 
     const projectId = resolveProjectId();
-    const resp = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
-    const token: string | undefined = resp?.data;
+    let token: string | undefined;
+    try {
+      const resp = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+      token = resp?.data;
+    } catch {
+      // Expo's token service unreachable (no network yet): try again later.
+      scheduleRegisterRetry();
+      return;
+    }
     if (!token) return;
 
     // ── THE MARKER IS PER ACCOUNT ─────────────────────────────────────────────
@@ -296,7 +334,10 @@ export async function registerForPush(): Promise<void> {
     // The server already rebinds on conflict (`ON CONFLICT(token) DO UPDATE SET user_id`), so all the
     // client has to do is ask again whenever the account differs from the one it registered for.
     const marker = sentMarker(currentUserId(), token);
-    if (kvGetStringRawSync(TOKEN_SENT_KEY) === marker) return;
+    if (kvGetStringRawSync(TOKEN_SENT_KEY) === marker) {
+      registeredFor = currentUserId() || null;
+      return;
+    }
     // `installId` ties this token to the row the Devices screen lists, so revoking a device can also
     // cut its notifications — and that half of revocation is immediate, because the push fan-out reads
     // `push_tokens` directly. Without the link the revoke would have no way to know which token row
@@ -309,7 +350,12 @@ export async function registerForPush(): Promise<void> {
       // A missing install id costs the revoke-cuts-notifications link, not the registration.
     }
     const { error } = await apiPost('/v1/push/register', { token, platform: Platform.OS, installId });
-    if (!error) kvSetStringRaw(TOKEN_SENT_KEY, marker);
+    if (!error) {
+      kvSetStringRaw(TOKEN_SENT_KEY, marker);
+      registeredFor = currentUserId() || null;
+    } else {
+      scheduleRegisterRetry();
+    }
   } catch {}
 }
 

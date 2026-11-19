@@ -10,7 +10,7 @@
 // every failure is swallowed: a push that doesn't go out must never turn a
 // successful write (message sent, follow added) into an error for the client.
 
-import { Env, query } from './db';
+import { Env, exec, query } from './db';
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
@@ -111,7 +111,7 @@ export function sendPushToUser(
         channelId: 'default',
         data: msg.data ?? {},
       }));
-      await fetch(EXPO_PUSH_URL, {
+      const res = await fetch(EXPO_PUSH_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -120,9 +120,38 @@ export function sendPushToUser(
         },
         body: JSON.stringify(messages),
       });
-    } catch {
-      // best-effort
+      await handleTickets(env, res, rows.map((r) => r.token));
+    } catch (e) {
+      console.log(JSON.stringify({ evt: 'push_send_failed', error: String((e as Error)?.message || e).slice(0, 120) }));
     }
   })();
   ctx.waitUntil(task);
+}
+
+/**
+ * Read what Expo answered for each message. Reported: a tester's message produced no push, and
+ * nothing could say why, because this response used to be thrown away. Now every failure is logged
+ * (error code only: no token, no user id, no message text), and a token Expo reports as
+ * `DeviceNotRegistered` (app deleted, or the device's token changed) is removed, so pushes stop
+ * going to it. Tickets come back in the same order as the messages sent.
+ */
+async function handleTickets(env: Env, res: Response, tokens: string[]): Promise<void> {
+  let json: any = null;
+  try { json = await res.json(); } catch {}
+  if (!res.ok) {
+    const code = json?.errors?.[0]?.code || 'unknown';
+    console.log(JSON.stringify({ evt: 'push_http_error', status: res.status, code }));
+    return;
+  }
+  const tickets: any[] = Array.isArray(json?.data) ? json.data : [];
+  const dead: string[] = [];
+  tickets.forEach((t, i) => {
+    if (t?.status !== 'error') return;
+    const code = String(t?.details?.error || 'unknown');
+    console.log(JSON.stringify({ evt: 'push_ticket_error', code }));
+    if (code === 'DeviceNotRegistered' && tokens[i]) dead.push(tokens[i]);
+  });
+  if (dead.length > 0) {
+    await exec(env, `DELETE FROM push_tokens WHERE token IN (${dead.map(() => '?').join(', ')})`, dead);
+  }
 }

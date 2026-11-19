@@ -14,7 +14,7 @@
 
 import { fail, ok } from '../http';
 import { register } from '../router';
-import { batch, exec, query, queryOne } from '../db';
+import { batch, exec, query, queryOne, type Env } from '../db';
 import { parseUuid } from '../util';
 import { asStr, readJson } from '../validate';
 import { channels, publishEvent } from '../realtime';
@@ -174,6 +174,36 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
   // on their personal notifications channel so the messages-tab badge
   // and conversation row update without polling. Trim the preview hard
   // — the realtime payload should never carry a 16 KB chat body.
+  // ── THE SENDER GETS ITS ANSWER AS SOON AS THE MESSAGE IS STORED ──────────
+  //
+  // Reported: messages and GIFs take a long time to send. The two lookups below only feed the
+  // fan-out, yet they ran before the response: two more D1 round trips on every send, and the
+  // sender's client publishes the message to the open chat only after this response arrives. They
+  // now run after it, in `waitUntil`, together with the publishes and pushes that were already there.
+  ctx.waitUntil(fanOutNewMessage(env, ctx, {
+    conversationId, senderId: authedUserId, id, text, imgW, imgH, now,
+  }));
+
+  return ok(req, {
+    id,
+    conversation_id: conversationId,
+    sender_id: authedUserId,
+    text,
+    img_w: imgW,
+    img_h: imgH,
+    created_at: now,
+  });
+});
+
+/** Realtime ping and push for every other participant of a new message. Never throws. */
+async function fanOutNewMessage(
+  env: Env,
+  ctx: ExecutionContext,
+  m: { conversationId: string; senderId: string; id: string; text: string; imgW: number | null; imgH: number | null; now: string },
+): Promise<void> {
+  const { conversationId, id, text, imgW, imgH, now } = m;
+  const authedUserId = m.senderId;
+  try {
   const otherParticipants = await query<{ user_id: string }>(
     env,
     `SELECT user_id FROM conversation_participants
@@ -236,17 +266,11 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
       data: { type: 'message', conversation_id: conversationId, sender_id: authedUserId },
     });
   }
-
-  return ok(req, {
-    id,
-    conversation_id: conversationId,
-    sender_id: authedUserId,
-    text,
-    img_w: imgW,
-    img_h: imgH,
-    created_at: now,
-  });
-});
+  } catch (e) {
+    // The message is stored; a failed fan-out only delays the peer until their next fetch.
+    console.log(JSON.stringify({ evt: 'message_fanout_failed', error: String((e as Error)?.message || e).slice(0, 160) }));
+  }
+}
 
 // ── DELETE /v1/messages/:id ───────────────────────────────────────────
 //

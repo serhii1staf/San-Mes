@@ -571,13 +571,11 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
   // user id so subscribers don't have to remember which channel they
   // came from, and the fresh updated_at so caches can pick a winner.
   if (Object.keys(delta).length > 0) {
-    publishEvent(
-      env,
-      channels.userProfile(authedUserId),
-      'profile.edit',
-      { id: authedUserId, ...delta, updated_at: updatedAt },
-      ctx,
-    );
+    const edit = { id: authedUserId, ...delta, updated_at: updatedAt };
+    publishEvent(env, channels.userProfile(authedUserId), 'profile.edit', edit, ctx);
+    // And to whoever has this profile open right now, so a changed bio or banner shows without
+    // reopening it. The same public fields the profile endpoint already serves to anyone.
+    publishEvent(env, channels.author(authedUserId), 'author.profile.edit', edit, ctx);
   }
   return ok(req, normalizeProfile(updated));
 });
