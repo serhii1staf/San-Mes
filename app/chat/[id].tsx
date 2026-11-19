@@ -80,7 +80,7 @@ import { GiphyItem } from '../../src/services/giphy';
 import { useT, useI18nStore } from '../../src/i18n/store';
 import { buildDaySeparators, formatDaySeparator } from '../../src/utils/chatDaySeparators';
 import { mergeHistory, pruneServerDeleted } from '../../src/utils/mergeHistory';
-import { CHAT_TAIL_ROWS, readChatDiskSeed } from '../../src/utils/chatDiskSeed';
+import { CHAT_TAIL_ROWS, readChatDiskSeedRows } from '../../src/utils/chatDiskSeed';
 
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -1938,6 +1938,8 @@ type VisibilityTracker = {
 type VisibilityBubbleProps = Omit<React.ComponentProps<typeof MemoMessageBubble>, 'isVisible'> & {
   tracker: VisibilityTracker;
 };
+/** Number of images per message object, for `chatGetItemType`. Weak, so it goes with the objects. */
+const imageCountByItem = new WeakMap<ChatMessage, number>();
 /** What a row whose rendering does not depend on visibility subscribes to: nothing ever changes. */
 const subscribeNothing = (_listener: () => void) => () => {};
 const alwaysVisible = () => true;
@@ -2536,26 +2538,32 @@ export default function ChatScreen() {
   // Synchronously read this chat's cached messages ONCE so the very first render
   // already has content (no blank frame). Memoized per id so it's a single MMKV
   // read, not on every render.
-  const seedMessages = useMemo<ChatMessage[]>(() => {
-    if (!conversationId) return [];
+  // `seedTailRows` is how many rows `chat_tail:<id>` held when the seed was read from disk, and -1 when
+  // the seed did not come from that read. The seed effect below uses it to decide whether the tail
+  // needs rewriting without parsing it again.
+  const { messages: seedMessages, tailRows: seedTailRows } = useMemo<{ messages: ChatMessage[]; tailRows: number }>(() => {
+    if (!conversationId) return { messages: [], tailRows: -1 };
     // One-shot read at chat-open time. We deliberately use getState() instead
     // of subscribing — the seed only matters for the first render frame, and
     // the live `myStoreMessages` selector below feeds subsequent updates.
     const fromStore = useChatStore.getState().messages[conversationId];
-    if (fromStore && fromStore.length > 0) return fromStore as ChatMessage[];
+    if (fromStore && fromStore.length > 0) return { messages: fromStore as ChatMessage[], tailRows: -1 };
     try {
       // First paint reads the bounded recent-tail cache (the last ~SEED_CAP messages), not the full
       // history blob, so the open-frame parse is O(SEED_CAP) however long the chat is. Only a tail
       // shorter than SEED_CAP also reads the blob: that is a short chat (whose blob is as small), a
       // chat that predates the tail cache, or a tail overwritten from a one-message bucket, which is
       // what made chats opened from the in-app banner come up empty. See `readChatDiskSeed`.
-      const disk = perfSpan('chat.seed.diskRead', () => readChatDiskSeed<ChatMessage>(conversationId, SEED_CAP));
-      if (disk.length > 0) {
-        return filterTombstoned(conversationId, disk.map((m) => healLegacySender(m, currentUserId, participantId))) as ChatMessage[];
+      const disk = perfSpan('chat.seed.diskRead', () => readChatDiskSeedRows<ChatMessage>(conversationId, SEED_CAP));
+      if (disk.rows.length > 0) {
+        return {
+          messages: filterTombstoned(conversationId, disk.rows.map((m) => healLegacySender(m, currentUserId, participantId))) as ChatMessage[],
+          tailRows: disk.tailRows,
+        };
       }
-      if (mockMessages[conversationId]) return mockMessages[conversationId] as ChatMessage[];
+      if (mockMessages[conversationId]) return { messages: mockMessages[conversationId] as ChatMessage[], tailRows: -1 };
     } catch {}
-    return [];
+    return { messages: [], tailRows: -1 };
   }, [conversationId, currentUserId, participantId]);
 
   // Use the store value when present, else the synchronous seed — so the list is
@@ -2921,15 +2929,24 @@ export default function ChatScreen() {
           // "Already on disk" is not true for a seed that `readChatDiskSeed` had to top up from the
           // full blob, and the persist effect skips an untouched seed. Rewrite the tail here, or every
           // later open would pay for the full-blob read again.
+          //
+          // The tail's row count comes from the seed read itself. Parsing the tail again here just to
+          // count it was a 10.8 ms task right after the open animation in the emulator profile. The
+          // count is still current: `writeTailCache` is the key's only writer, every other caller
+          // leaves this conversation's store bucket non-empty, and this branch runs only while the
+          // bucket is empty.
+          // -1 means the seed did not come from the disk read, and then the tail is read as before.
           try {
-            const stored = kvGetJSONSync<ChatMessage[]>(tailKey(conversationId), []);
-            if (stored.length < seedMessages.length) writeTailCache(conversationId, seedMessages);
+            const stored = seedTailRows >= 0
+              ? seedTailRows
+              : kvGetJSONSync<ChatMessage[]>(tailKey(conversationId), []).length;
+            if (stored < seedMessages.length) writeTailCache(conversationId, seedMessages);
           } catch {}
         }
       }
     });
     return () => handle.cancel();
-  }, [conversationId, seedMessages, setMessages]);
+  }, [conversationId, seedMessages, seedTailRows, setMessages]);
 
   // Narrow the chat-settings subscription to only the two slices this chat
   // actually reads — global defaults and this chat's own overrides. The
@@ -6846,7 +6863,14 @@ export default function ChatScreen() {
   // differ in alignment and fill (a gradient for own ones), and a cell with a chip is taller; reusing
   // one shape's cell for the other remounted those parts and re-measured the cell on the scroll frame.
   const chatGetItemType = useCallback((item: ChatMessage) => {
-    const n = messageImageUrls(item).length;
+    // FlashList asks for the type of many items on every layout pass, and parsing the stored
+    // `::img::` marker each time showed up as 13-14 ms of `split` inside single scroll tasks. The count
+    // is a property of the message object, so it is computed once per object.
+    let n = imageCountByItem.get(item);
+    if (n === undefined) {
+      n = messageImageUrls(item).length;
+      imageCountByItem.set(item, n);
+    }
     const media = n === 0 ? 'text' : n === 1 ? 'media1' : 'mediaN';
     const who = item.senderId === currentUserId ? 'o' : 'p';
     const day = dayLabelsRef.current.has(item.id) ? 'd' : '';
