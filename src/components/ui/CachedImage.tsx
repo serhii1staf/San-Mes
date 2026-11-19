@@ -41,6 +41,29 @@ import { LottieSticker } from './LottieSticker';
 const PROXY_HOST = 'https://images.weserv.nl';
 const MAX_PROXY_WIDTH = 1200; // hard cap so giant fullscreen viewers don't pull megabytes
 const DEFAULT_PROXY_WIDTH = 800;
+
+/**
+ * Giphy's fixed-size renditions (`200w.gif`, `100w_s.gif`, `200.webp`, ...), which are already the
+ * size we show, served from Giphy's own CDN. Every Giphy GIF in the messages and comments tables is
+ * the `200w` rendition, the one `giphy.ts` sends.
+ *
+ * Through weserv they were re-encoded as GIF AND enlarged to the requested width (weserv enlarges
+ * unless told `we`). Measured on three GIFs from the messages table, at the chat bubble's request
+ * (w=514 on a 390 pt screen):
+ *
+ *     direct 200w.gif     37.6 KB  ·   75.7 KB  ·  2.36 MB    200x200
+ *     weserv w=514       302.8 KB  ·  668.6 KB  · 14.70 MB    514x514
+ *
+ * Six to nine times the bytes, and 6.6 times the pixels to decode for every frame, for the same
+ * picture. Passed through untouched, a Giphy GIF is one URL on every surface (bubble, reply quote,
+ * long-press preview, fullscreen viewer), so it is downloaded once and decoded once.
+ */
+const GIPHY_SIZED_RENDITION =
+  /^https?:\/\/(?:[a-z0-9-]+\.)*giphy\.com\/media\/[^?#]+\/(?:100|200)w?(?:_s|_d)?\.(?:gif|webp)(?:[?#]|$)/i;
+
+function isGiphySizedRendition(uri: string): boolean {
+  return GIPHY_SIZED_RENDITION.test(uri);
+}
 // Retina-sharp display. (An earlier 1.4 experiment to cut decode cost made
 // photos look noticeably soft — and it did NOT fix the chat lag, which comes
 // from heavy bubble MOUNTS, not image decode. So quality is restored to 2×.)
@@ -62,10 +85,12 @@ const DPR = 2;
  *   - the URI is already wrapped in the proxy;
  *   - the URI is a signed/private URL (weserv can't see it).
  */
-export function proxiedImageUrl(uri: string, displayWidth?: number): string {
+export function proxiedImageUrl(uri: string, displayWidth?: number, forceProxy: boolean = false): string {
   if (!uri || typeof uri !== 'string') return uri;
   if (!uri.startsWith('http')) return uri;
   if (uri.indexOf('images.weserv.nl') !== -1) return uri;
+  // `forceProxy` is the fallback for a network that cannot reach Giphy directly; see CachedImage.
+  if (!forceProxy && isGiphySizedRendition(uri)) return uri;
   // Private / signed URLs — weserv usually can't fetch them, and the per-request
   // signature defeats caching. EXCEPTION: legacy Amazon S3 photos
   // (*.amazonaws.com) are proxied ANYWAY. Reopened photo chats surface these as
@@ -96,9 +121,27 @@ export function proxiedImageUrl(uri: string, displayWidth?: number): string {
     ? Math.min(MAX_PROXY_WIDTH, Math.round(displayWidth * DPR))
     : DEFAULT_PROXY_WIDTH;
   if (isGif) {
-    return `${PROXY_HOST}/?url=${encodeURIComponent(stripped)}&w=${w}&output=gif&n=-1`;
+    // `we`: never enlarge. A GIF narrower than the request came back re-encoded at the requested
+    // width, several times its own size (see GIPHY_SIZED_RENDITION); a wider one is still reduced.
+    return `${PROXY_HOST}/?url=${encodeURIComponent(stripped)}&w=${w}&we&output=gif&n=-1`;
   }
   return `${PROXY_HOST}/?url=${encodeURIComponent(stripped)}&w=${w}&output=webp&q=70`;
+}
+
+/**
+ * The width under which `mediaVariants` records a load of `uri` that went out as `finalUri`, chosen
+ * so that `proxiedImageUrl(uri, <that width>)` rebuilds `finalUri` exactly.
+ *
+ * - A URL the proxy passed through unchanged (local file, signed URL, Giphy rendition) is the same
+ *   asset at every width: 0, the registry's entry for the original.
+ * - No usable display width means the proxy's default, which is NOT doubled for density, so its
+ *   display width is half of it. Recording DEFAULT_PROXY_WIDTH itself made the registry rebuild
+ *   w=1200 for an image that had loaded at w=800, a URL nobody had loaded, so a progressive
+ *   placeholder built from it never hit the cache.
+ */
+function variantWidth(uri: string, finalUri: string, displayWidth: number | undefined): number {
+  if (finalUri === uri) return 0;
+  return displayWidth && displayWidth > 0 ? displayWidth : DEFAULT_PROXY_WIDTH / DPR;
 }
 
 /**
@@ -159,9 +202,9 @@ export function warmIntoMemory(uris: (string | null | undefined)[], displayWidth
     Image.prefetch(list, { cachePolicy: 'memory-disk' })
       .then((ok) => {
         if (!ok) return;
-        for (const u of raw) {
-          try { noteVariantLoaded(u, displayWidth); } catch {}
-        }
+        raw.forEach((u, i) => {
+          try { noteVariantLoaded(u, variantWidth(u, list[i], displayWidth)); } catch {}
+        });
       })
       .catch(() => {});
   } catch {}
@@ -382,11 +425,15 @@ export const CachedImage = memo(function CachedImage({
   // so the recorded value cannot drift from the one actually requested. `0` means the proxy was
   // bypassed, i.e. the original asset at full resolution.
   let requestedWidth = 0;
-  if (!noProxy && !proxyFailed) {
+  // A Giphy rendition is loaded straight from Giphy (see GIPHY_SIZED_RENDITION), so its fallback runs
+  // the other way round: when the direct load fails (a network that blocks giphy.com), the proxy
+  // fetches it instead, which is how such a network saw it before.
+  const giphyDirect = !noProxy && isGiphySizedRendition(uri);
+  if (!noProxy && (!proxyFailed || giphyDirect)) {
     const flat = StyleSheet.flatten(style) as ImageStyle | undefined;
     const styleW = typeof flat?.width === 'number' ? flat.width : undefined;
-    requestedWidth = proxyWidth ?? styleW ?? DEFAULT_PROXY_WIDTH;
-    finalUri = proxiedImageUrl(uri, proxyWidth ?? styleW);
+    finalUri = proxiedImageUrl(uri, proxyWidth ?? styleW, giphyDirect && proxyFailed);
+    requestedWidth = variantWidth(uri, finalUri, proxyWidth ?? styleW);
   }
 
   // ── PAINT WHAT IS ALREADY DECODED, THEN SHARPEN ───────────────────────────
@@ -403,7 +450,9 @@ export const CachedImage = memo(function CachedImage({
   // Opt-in per caller (`progressive`) rather than automatic: for a small inline thumbnail there is
   // usually nothing better already loaded, and passing a placeholder there would add a second source
   // for no gain. The viewers are the callers that benefit.
-  const placeholderUri = progressive && !noProxy ? bestLoadedVariantUrl(uri, requestedWidth) : null;
+  const variantUri = progressive && !noProxy ? bestLoadedVariantUrl(uri, requestedWidth) : null;
+  // The URL `source` already loads is not a placeholder, only a second request for it.
+  const placeholderUri = variantUri && variantUri !== finalUri ? variantUri : null;
   // See FIRST_FADE_MS. A progressive placeholder is already a decoded picture, so no fade on top of it.
   const fadeMs = placeholderUri || wasVariantLoaded(uri, requestedWidth) ? 0 : FIRST_FADE_MS;
   const transition = fadeMs > 0 ? { duration: fadeMs, effect: 'cross-dissolve' as const } : 0;
@@ -452,7 +501,9 @@ export const CachedImage = memo(function CachedImage({
   };
 
   const handleError = (e: ImageErrorEventData) => {
-    if (!noProxy && !proxyFailed && finalUri !== uri) {
+    // One retry by the other route: the original after a proxy failure, or the proxy after a direct
+    // Giphy failure (`giphyDirect`). `proxyFailed` stays set, so a second failure ends there.
+    if (!noProxy && !proxyFailed && (finalUri !== uri || giphyDirect)) {
       setProxyFailed(true);
     }
     // Release the in-flight decode counter on error too — otherwise a

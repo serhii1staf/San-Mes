@@ -638,7 +638,9 @@ const PhotoCell = memo(
           contentFit="cover"
           recyclingKey={asset.id}
           transition={0}
-          cachePolicy="memory-disk"
+          // Memory only. These are the device's own photos, already on disk; `memory-disk` made
+          // expo-image write a second copy of every thumbnail scrolled past into its cache.
+          cachePolicy="memory"
         />
         {selected ? (
           <>

@@ -30,19 +30,22 @@
 import { kvGetJSONSync } from './kvStore';
 import { prefetchImages } from '../components/ui/CachedImage';
 import { extractFirstUrl, getCachedPreviewSync } from './linkPreview';
+import { linkPreviewThumbUrl, linkPreviewThumbWidth } from '../utils/linkPreviewThumb';
 import { messageImageUrls } from '../utils/chatImageMarker';
+import { CHAT_IMG_MAX_W, CHAT_MULTI_IMG_SIZE } from '../utils/chatMediaSize';
 import type { ChatMessage } from '../types';
-import { Dimensions } from 'react-native';
 
-// Width (in DP) the chat screen renders a SINGLE-image bubble at — must stay
-// in sync with `CHAT_IMG_MAX_W` in `app/chat/[id].tsx`. We warm the proxy at
-// this exact width so the prefetched bytes share an expo-image cache key with
-// the real `SingleChatImage` mount. Warming at the old generic feed width
-// (600 → w=1200 after DPR) produced a DIFFERENT proxy URL than the chat
-// requested (270 → w=540), so every "warmed" photo still cold-fetched on chat
-// open — the prefetch was paying egress for bytes the chat never used. Single
-// photos are the dominant case behind the 172 ms cold IMG decode on chat open.
-const CHAT_THUMB_WIDTH = Math.min(Math.round(Dimensions.get('window').width * 0.66), 270);
+// ── EVERY URL IS WARMED AT THE WIDTH ITS SURFACE REQUESTS ─────────────────────
+//
+// The width is part of the expo-image cache key (see `proxiedImageUrl`), so a warm at any other width
+// downloads a copy nothing displays and the real mount still cold-fetches. Single photos already used
+// the bubble's width (`CHAT_IMG_MAX_W`, shared with the chat screen); tiles of a multi-photo message
+// (`CHAT_MULTI_IMG_SIZE`) and link-preview thumbnails (60 or 200, `linkPreviewThumbWidth`) were warmed
+// at the single-photo width too, so every one of them was fetched twice.
+//
+// GIFs are left out: an animated file is the largest download per message and should only be fetched
+// for a bubble that is actually shown. The chat's own open-time warm excludes them for the same reason.
+const isAnimated = (u: string) => /\.gif(\?|$)/i.test(u) || /giphy\.com|tenor\.com/i.test(u);
 
 interface PrefetchOpts {
   /** Conversation IDs ordered most-recently-active first. Capped at 8. */
@@ -82,7 +85,8 @@ export async function prefetchRecentChatMedia(opts: PrefetchOpts): Promise<void>
 
   const ids = conversationIds.slice(0, MAX_CONVERSATIONS);
   const seen = new Set<string>();
-  const collected: string[] = [];
+  // Every collected URL with the width its surface requests; see the note at the top.
+  const collected: { uri: string; width: number }[] = [];
 
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
@@ -121,10 +125,11 @@ export async function prefetchRecentChatMedia(opts: PrefetchOpts): Promise<void>
       // from the history fetch (see `messageImageUrls`).
       const imageUrls = messageImageUrls(m);
       if (imageUrls.length > 0) {
+        const width = imageUrls.length > 1 ? CHAT_MULTI_IMG_SIZE : CHAT_IMG_MAX_W;
         for (const u of imageUrls) {
-          if (!u || seen.has(u)) continue;
+          if (!u || seen.has(u) || isAnimated(u)) continue;
           seen.add(u);
-          collected.push(u);
+          collected.push({ uri: u, width });
           if (collected.length >= budgetUris) break;
         }
       }
@@ -136,10 +141,10 @@ export async function prefetchRecentChatMedia(opts: PrefetchOpts): Promise<void>
       const url = extractFirstUrl(m.text);
       if (url) {
         const cached = getCachedPreviewSync(url);
-        const img = cached && cached.image;
-        if (img && !seen.has(img)) {
+        const img = cached ? linkPreviewThumbUrl(cached.image) : undefined;
+        if (img && !seen.has(img) && !isAnimated(img)) {
           seen.add(img);
-          collected.push(img);
+          collected.push({ uri: img, width: linkPreviewThumbWidth(cached) });
         }
       }
       if (collected.length >= budgetUris) break;
@@ -147,19 +152,26 @@ export async function prefetchRecentChatMedia(opts: PrefetchOpts): Promise<void>
   }
 
   if (collected.length === 0) return;
-  // Single batched call into expo-image's prefetcher. Warm at the chat's
-  // single-photo display width so the cache key matches the real mount.
+  // Batched into expo-image's prefetcher, each URL at the width its surface
+  // requests so the cache key matches the real mount (see the top of the file).
   //
   // `'disk'` cache policy: warm the NETWORK round-trip ONLY (bytes land on
   // disk) WITHOUT decoding into the memory bitmap cache. Decoding every
-  // top-8-conversation thumb (incl. animated GIFs) on the messages tab was a
+  // top-8-conversation thumb on the messages tab was a
   // pure off-screen cost — those bitmaps may never be looked at, and GIF
   // decodes are the heaviest. With `'disk'` the decode happens lazily only
   // when a VISIBLE image actually mounts in a chat; the expensive part is
   // deferred to the moment it's needed while we still save the slow cold
   // weserv → origin → resize round-trip ahead of time.
   try {
-    prefetchImages(collected, CHAT_THUMB_WIDTH, 'disk');
+    // One `Image.prefetch` batch per width (at most three: photo, tile, preview thumbnail).
+    const byWidth = new Map<number, string[]>();
+    for (const { uri, width } of collected) {
+      const list = byWidth.get(width);
+      if (list) list.push(uri);
+      else byWidth.set(width, [uri]);
+    }
+    for (const [width, uris] of byWidth) prefetchImages(uris, width, 'disk');
   } catch {
     // ignore — prefetch is best-effort
   }

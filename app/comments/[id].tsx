@@ -376,7 +376,9 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: theme.colors.accent.primary }}>
             {parsed.replyGif ? (
               <>
-                <CachedImage uri={parsed.replyGif} style={{ width: 28, height: 28, borderRadius: 6, marginRight: 6, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+                {/* A 28 pt quote: the first frame is enough, and animating it decoded every frame for
+                    as long as the comment was on screen. */}
+                <CachedImage uri={parsed.replyGif} style={{ width: 28, height: 28, borderRadius: 6, marginRight: 6, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" autoplay={false} />
                 <View style={{ flex: 1 }}>
                   <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{parsed.replyUser}</Text>
                   <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>GIF</Text>
@@ -1992,7 +1994,7 @@ export default function CommentsScreen() {
               {(() => {
                 const rb = parseReply(replyTo.content || '').body;
                 const rgif = parseGif(rb);
-                return rgif ? <CachedImage uri={rgif} style={{ width: 30, height: 30, borderRadius: 6, marginRight: 8, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" /> : null;
+                return rgif ? <CachedImage uri={rgif} style={{ width: 30, height: 30, borderRadius: 6, marginRight: 8, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" autoplay={false} /> : null;
               })()}
               <View style={{ flex: 1 }}>
                 <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>{t('comments.reply_to', undefined, { username: replyTo.profiles?.username || 'user' })}</Text>

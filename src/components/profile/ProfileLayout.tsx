@@ -333,7 +333,8 @@ export const ProfileMediaGrid = memo(function ProfileMediaGrid({ items, onPressI
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap }}>
           {items.map((it) => (
             <Pressable key={it.url} onPress={() => { triggerHaptic('light'); onPressItem(it); }} style={{ width: cell, height: cell, borderRadius: 10, overflow: 'hidden', backgroundColor: theme.colors.background.elevated }}>
-              <CachedImage uri={it.url} style={{ width: cell, height: cell }} resizeMode="cover" proxyWidth={cell * 2} />
+              {/* Display width; `proxiedImageUrl` applies the density factor (see ProfileContentTabs). */}
+              <CachedImage uri={it.url} style={{ width: cell, height: cell }} resizeMode="cover" proxyWidth={cell} />
             </Pressable>
           ))}
         </View>

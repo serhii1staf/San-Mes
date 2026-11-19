@@ -1670,7 +1670,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 style={[bubbleStyles.replyBlock, { borderLeftColor: replyBorderColor }]}
               >
                 {message.replyToImage ? (
-                  <CachedImage uri={message.replyToImage} style={bubbleStyles.replyAvatar} resizeMode="cover" />
+                  // A 30 pt quote of the message being answered: its first frame is enough. Animating
+                  // it decoded every frame for as long as the bubble was mounted, outside the
+                  // GIF_ANIM_CAP that limits the transcript's real GIFs to two at a time.
+                  <CachedImage uri={message.replyToImage} style={bubbleStyles.replyAvatar} resizeMode="cover" autoplay={isAnimatedImageUrl(message.replyToImage) ? false : undefined} />
                 ) : null}
                 {/* Pixel icon attached to the reply via the chat-level
                     setting. Renders alongside the text/image preview —
@@ -3772,17 +3775,26 @@ export default function ChatScreen() {
       const current = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
       if (current.length === 0) return;
       const recent = current.slice(-WARM_RECENT);
-      const uris: string[] = [];
+      // Each at the width its bubble requests, because the width is part of the cache key: a photo
+      // alone fills the bubble (CHAT_IMG_MAX_W), photos in a group are CHAT_MULTI_IMG_SIZE tiles. The
+      // tiles were warmed at the single-photo width, a URL no tile ever requests, so each one was
+      // downloaded twice: once by the warm, once more when it appeared.
+      const singles: string[] = [];
+      const tiles: string[] = [];
       for (const m of recent) {
         // Server-sourced rows still hold their photos in the stored marker; see `messageImageUrls`.
-        for (const u of messageImageUrls(m)) {
+        const urls = messageImageUrls(m);
+        for (const u of urls) {
           if (isAnimatedImageUrl(u)) continue; // skip GIFs — decode on render
-          uris.push(u);
+          (urls.length > 1 ? tiles : singles).push(u);
         }
       }
-      if (uris.length) {
+      if (singles.length || tiles.length) {
         import('../../src/components/ui/CachedImage')
-          .then(({ prefetchImages }) => prefetchImages(uris, CHAT_IMG_MAX_W, 'disk'))
+          .then(({ prefetchImages }) => {
+            if (singles.length) prefetchImages(singles, CHAT_IMG_MAX_W, 'disk');
+            if (tiles.length) prefetchImages(tiles, CHAT_MULTI_IMG_SIZE, 'disk');
+          })
           .catch(() => {});
       }
     });
@@ -7306,7 +7318,7 @@ export default function ChatScreen() {
             <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
             <MaterialIcons name={editing ? 'edit' : 'reply'} size={15} color={theme.colors.accent.primary} />
             {banner.imageUrls && banner.imageUrls.length > 0 ? (
-              <CachedImage uri={banner.imageUrls[0]} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="cover" />
+              <CachedImage uri={banner.imageUrls[0]} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="cover" autoplay={isAnimatedImageUrl(banner.imageUrls[0]) ? false : undefined} />
             ) : null}
             <View style={{ flex: 1 }}>
               <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? t('chat.editing') : t('chat.replying')}</Text>

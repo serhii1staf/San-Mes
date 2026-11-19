@@ -385,7 +385,9 @@ const MediaPane = memo(function MediaPane({ posts, loading, ready }: { posts: Pr
     <View style={styles.mediaGrid}>
       {media.slice(0, shown).map((m) => (
         <Pressable key={m.url} onPress={() => openPost(m.postId)} style={[styles.mediaCell, { width: cell, height: cell, backgroundColor: theme.colors.background.elevated }]}>
-          <CachedImage uri={m.url} style={{ width: cell, height: cell }} resizeMode="cover" proxyWidth={cell * 2} />
+          {/* The display width, not twice it: `proxiedImageUrl` doubles for density itself, so
+              `cell * 2` asked for four times the cell's width (and 16x its pixels) in the URL. */}
+          <CachedImage uri={m.url} style={{ width: cell, height: cell }} resizeMode="cover" proxyWidth={cell} />
         </Pressable>
       ))}
     </View>
