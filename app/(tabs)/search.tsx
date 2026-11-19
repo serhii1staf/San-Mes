@@ -741,6 +741,11 @@ export default function SearchScreen() {
 
   const hasQuery = query.trim().length > 0;
   const showRecents = !hasQuery && recents.length > 0;
+  // The results are computed from `debouncedQuery`, the list is shown as soon as `query` has text.
+  // In between (160 ms after each keystroke that changes the query) the results still belong to the
+  // previous query, so "nothing found" there was a statement about a query the user had already
+  // left: typing the first letter flashed it every time, before the matches appeared.
+  const resultsSettled = debouncedQuery === query;
 
   const clearQuery = useCallback(() => setQuery(''), []);
 
@@ -769,7 +774,7 @@ export default function SearchScreen() {
           windowSize={7}
           renderItem={renderItem}
           ListHeaderComponent={listHeader}
-          ListEmptyComponent={listEmpty}
+          ListEmptyComponent={resultsSettled ? listEmpty : null}
           // Mini apps as their own trailing category — see `listFooter`.
           ListFooterComponent={listFooter}
         />
