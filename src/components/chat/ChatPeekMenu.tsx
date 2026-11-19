@@ -59,7 +59,7 @@ import { useAuthStore, useChatStore } from '../../store';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useChatSettingsStore } from '../../store/chatSettingsStore';
 import { useChatPeekStore } from '../../store/chatPeekStore';
-import { kvGetJSONSync } from '../../services/kvStore';
+import { CHAT_TAIL_ROWS, readChatDiskSeed } from '../../utils/chatDiskSeed';
 import { readableTextOn, withOpacity } from '../../constants/bubbleColors';
 import { stripMarkers } from '../../utils/previewText';
 import { messageImageUrls } from '../../utils/chatImageMarker';
@@ -461,7 +461,9 @@ const PeekHeader = memo(function PeekHeader({ conversation }: { conversation: Ch
 function readLocal(conversationId: string): ChatMessage[] {
   try {
     const mem = useChatStore.getState().messages[conversationId];
-    const src = mem && mem.length > 0 ? mem : kvGetJSONSync<ChatMessage[]>(`chat_tail:${conversationId}`, []) || [];
+    // The same disk read the chat screen seeds from, so a tail overwritten by a one-message bucket
+    // does not make the preview show one message either.
+    const src = mem && mem.length > 0 ? mem : readChatDiskSeed<ChatMessage>(conversationId, CHAT_TAIL_ROWS);
     return Array.isArray(src) ? src.filter(Boolean).slice(-MAX_PREVIEW_MESSAGES) : [];
   } catch {
     return [];

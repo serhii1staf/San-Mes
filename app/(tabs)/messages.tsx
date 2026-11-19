@@ -2177,13 +2177,16 @@ export default function MessagesScreen() {
     if (activeTab === 'apps') return [];
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
+      const qHandle = q.replace(/^@/, '');
       // Search only within non-deleted, non-blocked chats. User-level
       // blocked authors are also excluded here — they wouldn't show up
       // in normal search results in any case (they appear in the Blocked
       // tab only).
       return conversations.filter(
         (c) =>
-          c.participantName.toLowerCase().includes(q) &&
+          // The @handle as well as the name: people are found by either, and a chat started a minute
+          // ago from a search for "@name" must not vanish from the results for the same query.
+          (c.participantName.toLowerCase().includes(q) || (!!qHandle && (c.participantUsername || '').toLowerCase().includes(qHandle))) &&
           !deletedSet.has(c.id) &&
           !blockedSet.has(c.id) &&
           !blockedUserSet.has(c.participantId),

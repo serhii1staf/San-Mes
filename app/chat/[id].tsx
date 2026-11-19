@@ -59,7 +59,7 @@ import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
 import { composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
-import { addTombstones, filterTombstoned } from '../../src/services/messageTombstones';
+import { addTombstones, filterTombstoned, isTombstoned } from '../../src/services/messageTombstones';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
 import { typingChatChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
 import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
@@ -80,6 +80,7 @@ import { GiphyItem } from '../../src/services/giphy';
 import { useT, useI18nStore } from '../../src/i18n/store';
 import { buildDaySeparators, formatDaySeparator } from '../../src/utils/chatDaySeparators';
 import { mergeHistory, pruneServerDeleted } from '../../src/utils/mergeHistory';
+import { CHAT_TAIL_ROWS, readChatDiskSeed } from '../../src/utils/chatDiskSeed';
 
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -141,43 +142,48 @@ const PINNED_BAR_BAND = 46;
 //     data or a row's height changed.
 //   • `autoscrollToTopThreshold` is declared in the typings and read nowhere.
 //
-// So: no threshold, and position maintenance only while the user is reading history (scrolled past
-// `SCROLL_BTN_THRESHOLD`, i.e. while the scroll-to-newest button shows), where a new message must not
-// move what they are reading. At the newest message it is off, and a new message simply pushes the
-// transcript up, as in any messenger. Two constants, so the prop identity only changes when the
-// button does. Switching it back on needs `MvcpResumeGuard`, below.
-const MVCP_AT_NEWEST = { disabled: true } as const;
-const MVCP_READING_HISTORY = {} as const;
+// So: no threshold. Position maintenance stays on (the default), because it is what keeps a history
+// reader's place when a message arrives or a row below them changes height. The one correction it
+// must not make is for a message inserted at the newest end while the user is AT the newest end:
+// that is the correction that hid new messages. `SkipCorrectionAtNewest` and `onListCommitLayout`
+// make FlashList skip its correction pass in exactly that state.
+//
+// ── WHY NOT `disabled: true` AT THE NEWEST, WHICH IS WHAT #257 DID ─────────────────────
+//
+// Reported after #257: scroll down, then up, and the list will not go up; every swipe throws you back
+// to the newest message. Toggling `disabled` also turns the NATIVE ScrollView
+// `maintainVisibleContentPosition` off and on, and iOS keeps state across the gap.
+// RCTScrollViewComponentView (RN 0.81.5) remembers a weak pointer to the first visible subview and
+// its frame in `_prepareForMaintainVisibleScrollPosition`, which runs before each mount but returns
+// early while the prop is off. The first mount after it comes back on runs
+// `_adjustForMaintainVisibleContentPosition` against that stale pair: FlashList's anchor view from
+// before (placed at top ≈ 1,000,000), which Fabric has since recycled and given another frame.
+// contentOffset moved by the difference, up to about a million points, and UIScrollView bounced back
+// to the start of the content, which in this inverted list is the newest message. With the prop
+// never turned off, the pair is refreshed before every mount.
 /** Distance from the newest message (pt) past which the user counts as reading history. */
 const SCROLL_BTN_THRESHOLD = 120;
+/** Scroll offset (pt) at or below which the user is AT the newest message. */
+const AT_NEWEST_EPSILON = 4;
 
 /**
- * FlashList refreshes its remembered anchor row only while position maintenance is on
- * (`computeFirstVisibleIndexForOffsetCorrection` returns early when it is off). So when it comes back
- * on, the first correction measures against the row remembered from the previous time, and every
- * message that arrived in between turns into a jump of that height while the user is dragging.
- * `prepareForLayoutAnimationRender()` makes that one pass refresh the anchor without scrolling
- * (2.3.2: it sets `animationOptimizationsEnabled`, which only `applyOffsetCorrection` reads, and the
- * list clears it in the passive effect of its next internal render). Only called when the data did
- * change while maintenance was off, because until that internal render the flag also skips the next
- * genuine correction. Rendered before the list, so this layout effect runs before the list's
+ * Makes FlashList skip its position correction in the commit that delivers new data while the user is
+ * at the newest message, so a new message pushes the transcript up instead of being corrected out of
+ * view. `prepareForLayoutAnimationRender()` (2.3.2) only sets `animationOptimizationsEnabled`, which
+ * only `applyOffsetCorrection` reads; that pass still refreshes its anchor, and the list clears the
+ * flag in the passive effect of its next internal render. This covers the commit with the new data;
+ * `onListCommitLayout` covers the list's own follow-up renders (measuring the new row), which do not
+ * re-render this component. Rendered before the list, so this layout effect runs before the list's
  * correction pass in the same commit.
  */
-function MvcpResumeGuard({ on, data, listRef }: {
-  on: boolean;
+function SkipCorrectionAtNewest({ data, atNewest, listRef }: {
   data: unknown;
+  atNewest: () => boolean;
   listRef: React.RefObject<{ prepareForLayoutAnimationRender(): void } | null>;
 }) {
-  const prev = useRef({ on, data });
-  const changedWhileOff = useRef(false);
   useLayoutEffect(() => {
-    const was = prev.current;
-    prev.current = { on, data };
-    if (!on && data !== was.data) changedWhileOff.current = true;
-    if (!on) return;
-    if (!was.on && changedWhileOff.current) listRef.current?.prepareForLayoutAnimationRender();
-    changedWhileOff.current = false;
-  }, [on, data, listRef]);
+    if (atNewest()) listRef.current?.prepareForLayoutAnimationRender();
+  }, [data, atNewest, listRef]);
   return null;
 }
 const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 8 } as const;
@@ -198,7 +204,7 @@ const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 8 } as const;
  * prepend, and the prepends were the "BAM, thrown to the very top" report that survived six
  * attempts to compensate them.
  */
-const SEED_CAP = 60;
+const SEED_CAP = CHAT_TAIL_ROWS;
 
 /**
  * Does `m` answer to `candidate` under either of its two identities?
@@ -2470,29 +2476,14 @@ export default function ChatScreen() {
     const fromStore = useChatStore.getState().messages[conversationId];
     if (fromStore && fromStore.length > 0) return fromStore as ChatMessage[];
     try {
-      // Cheap first-paint path: read the bounded recent-tail cache (only the
-      // last ~SEED_CAP messages), NOT the full history blob. This keeps the
-      // open-frame parse O(SEED_CAP) regardless of how long the chat is.
-      const tail = perfSpan('chat.seed.tailRead', () => kvGetJSONSync<ChatMessage[]>(tailKey(conversationId), []));
-      if (tail.length > 0) {
-        return tail.map((m) => healLegacySender(m, currentUserId, participantId));
-      }
-      // Fallback (existing chats that predate the tail cache, or the very first
-      // open after this change before any write warms the tail): read the full
-      // blob ONCE so existing chats still seed with no blank flash. Still bound
-      // first paint to the SEED_CAP newest (the cache is oldest→newest, so the
-      // tail is newest). The tail key is then warmed off the critical path by
-      // hydrateFullHistory, so subsequent opens take the cheap path above. The
-      // FULL history is hydrated into the store off the critical path (see the
-      // deferred effect below), so scroll-up and reply-jump to older messages
-      // still work — we just don't parse/hold all of it on the open frame.
-      // The expensive branch: parses the WHOLE blob (up to MAX_PERSISTED_MESSAGES) during render.
-      // Marked separately from the tail read above so the panel distinguishes "cold chat, full blob
-      // parsed on the open frame" from "warm tail, cheap open".
-      const cached = perfSpan('chat.seed.fullBlobRead', () => kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []));
-      if (cached.length > 0) {
-        const tailFromFull = cached.length > SEED_CAP ? cached.slice(cached.length - SEED_CAP) : cached;
-        return tailFromFull.map((m) => healLegacySender(m, currentUserId, participantId));
+      // First paint reads the bounded recent-tail cache (the last ~SEED_CAP messages), not the full
+      // history blob, so the open-frame parse is O(SEED_CAP) however long the chat is. Only a tail
+      // shorter than SEED_CAP also reads the blob: that is a short chat (whose blob is as small), a
+      // chat that predates the tail cache, or a tail overwritten from a one-message bucket, which is
+      // what made chats opened from the in-app banner come up empty. See `readChatDiskSeed`.
+      const disk = perfSpan('chat.seed.diskRead', () => readChatDiskSeed<ChatMessage>(conversationId, SEED_CAP));
+      if (disk.length > 0) {
+        return filterTombstoned(conversationId, disk.map((m) => healLegacySender(m, currentUserId, participantId))) as ChatMessage[];
       }
       if (mockMessages[conversationId]) return mockMessages[conversationId] as ChatMessage[];
     } catch {}
@@ -2859,6 +2850,13 @@ export default function ChatScreen() {
           // genuine divergence that must trigger a safe full-history mirror.
           seededArrayRef.current = seedMessages;
           setMessages(conversationId, seedMessages as any);
+          // "Already on disk" is not true for a seed that `readChatDiskSeed` had to top up from the
+          // full blob, and the persist effect skips an untouched seed. Rewrite the tail here, or every
+          // later open would pay for the full-blob read again.
+          try {
+            const stored = kvGetJSONSync<ChatMessage[]>(tailKey(conversationId), []);
+            if (stored.length < seedMessages.length) writeTailCache(conversationId, seedMessages);
+          } catch {}
         }
       }
     });
@@ -3633,7 +3631,13 @@ export default function ChatScreen() {
           // The server-side half of this belongs in the Worker (`DESC` + reverse, plus a
           // `?since=` filter so an idle poll transfers nothing at all). That needs a Worker
           // deploy; this does not, and it is correct on its own.
-          const oldestLocal = local.length > 0 ? local[0].createdAt : null;
+          //
+          // Only for a FULL seed window, though. A local set shorter than SEED_CAP is either the whole
+          // chat as this device knows it or a transcript that lost its history (the one-message
+          // bucket behind "opened from the banner and the chat was empty"). Cutting the server's page
+          // at its oldest row is what kept such a transcript at one message, so the page fills it
+          // instead. In this inverted list older rows land at the far end, past what is on screen.
+          const oldestLocal = local.length >= SEED_CAP ? local[0].createdAt : null;
           const inRange = oldestLocal ? remote.filter((r) => r.createdAt >= oldestLocal) : remote;
 
           // Suppress anything the user deleted. Without this the poll re-adds it within six
@@ -4050,6 +4054,7 @@ export default function ChatScreen() {
   const peerProfile: any = profileData || cachedProfile;
   const displayName = chatLocalName || conversation?.participantName || peerProfile?.display_name || entityConv?.participantName || t('chat.fallback_name');
   const displayEmoji = (conversation as any)?.participantEmoji || peerProfile?.emoji || entityConv?.participantEmoji || '😊';
+  const displayUsername: string = peerProfile?.username || entityConv?.participantUsername || '';
   const displayVerified = profileData?.is_verified || cachedProfile?.is_verified || (entityConv as any)?.participantVerified || false;
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
   const profileId = participantId;
@@ -4160,7 +4165,9 @@ export default function ChatScreen() {
           id: convId,
           participantId: participantId || '',
           participantName: displayName || t('chat.fallback_name'),
-          participantUsername: '',
+          // The handle too: the chat list's search matches on it, and a row stamped with '' could
+          // not be found by the name the user had just searched for to start this chat.
+          participantUsername: displayUsername,
           participantEmoji: displayEmoji,
           lastMessage,
           lastMessageAt: new Date().toISOString(),
@@ -4196,7 +4203,7 @@ export default function ChatScreen() {
         } catch {}
       }
     },
-    [id, participantId, displayName, displayEmoji, setMessages, t, currentUserId],
+    [id, participantId, displayName, displayEmoji, displayUsername, setMessages, t, currentUserId],
   );
 
   // Open the full-screen viewer on a specific message. A route (not a modal) so
@@ -4237,18 +4244,18 @@ export default function ChatScreen() {
   const revealNewest = useCallback(() => {
     const m = scrollMetricsRef.current;
     // Unknown metrics (nothing scrolled yet) means we are at the newest message on a
-    // freshly-opened chat, where the new row simply pushes the transcript up (see `MVCP_AT_NEWEST`).
+    // freshly-opened chat, where the new row simply pushes the transcript up (see
+    // `SkipCorrectionAtNewest`).
     if (!m || m.layoutH <= 0) return;
     // INVERTED: `contentOffset.y` measures distance from the NEWEST end, because index 0 is at
     // the bottom and scrolling up increases y. So the old `contentH - (y + layoutH)` arithmetic
     // is not just wrong here, it is inverted — it would report "far from newest" precisely when
     // the user is sitting on the newest message.
     const distanceFromBottom = m.y;
-    // At the newest message the list is not holding its position, so the sent message is already
-    // in view. Past the threshold it is holding it (reading history), so scroll down to the message.
-    // This used to wait until a quarter of a screen, relying on an autoscroll that, in the inverted
-    // list, never followed new messages; between the two the sent message stayed out of view.
-    if (distanceFromBottom <= SCROLL_BTN_THRESHOLD) return;
+    // At the newest message the list skips its correction, so the sent message is already in view.
+    // Anywhere above it the list holds its position and the message lands out of view, so scroll
+    // down to it.
+    if (distanceFromBottom <= AT_NEWEST_EPSILON) return;
 
     // ── Serialise against any other in-flight scroll ────────────────────────
     //
@@ -4544,6 +4551,10 @@ export default function ChatScreen() {
       // by definition not ours, so a missing senderId still renders left.
       const incoming: ChatMessage = {
         id: payload.id,
+        // The sender publishes the server uuid once the message is stored. Recording it as
+        // `serverId` lets the history check remove this row later if the sender deletes it while
+        // this device is not listening (`pruneServerDeleted` ignores rows without one).
+        serverId: typeof payload.id === 'string' && !payload.id.startsWith('m-') ? payload.id : undefined,
         conversationId,
         senderId: String(payload.senderId || ''),
         text: payload.text || '',
@@ -5033,6 +5044,15 @@ export default function ChatScreen() {
             // rather than failing the send, so a missing pair costs the old behaviour and nothing else.
             { text: `::img::${url}::`, imgW: dims?.w, imgH: dims?.h },
           );
+          // Deleted while the POST was in flight; see the same check in `handleSend`.
+          if (sentGifData?.id && isTombstoned(conversationId, newMessage.id)) {
+            addTombstones(conversationId, [sentGifData.id]);
+            const { apiDelete } = await import('../../src/services/apiClient');
+            void apiDelete(`/v1/messages/${encodeURIComponent(sentGifData.id)}`);
+            return;
+          }
+          // Not stored: publishing would show the peer a GIF that does not exist.
+          if (!sentGifData?.id) return;
           // Record the server uuid alongside the stable local id so a later history
           // fetch dedupes instead of duplicating the GIF. Deliberately NOT an
           // overwrite of `id` — that would change a mounted row's key and remount the
@@ -5251,14 +5271,23 @@ export default function ChatScreen() {
             // it on purpose. Both identities are recorded: this device may hold the message
             // under a local `m-<ts>` id while the server (and therefore the poll response)
             // knows it by its uuid. See src/services/messageTombstones.ts.
-            addTombstones(conversationId, [message.id, message.serverId]);
             const current = useChatStore.getState().messages[conversationId] || [];
+            // ── THE SERVER ID COMES FROM THE STORE, NOT FROM `message` ────────────
+            //
+            // Reported: a deleted photo or GIF stays on the other person's phone, while text
+            // deletes fine. `message` is the copy taken when the menu opened, and a photo learns
+            // its server id only after its upload and POST finish (a GIF after the POST). Deleted
+            // before then, the copy had no server id: no server delete, and a `msg.delete` for a
+            // local id the peer never had. The row in the store has the id as soon as it exists.
+            const live = current.find((m) => matchesEitherId(m, message.id) || matchesEitherId(m, message.serverId));
+            const serverIdNow = live?.serverId || message.serverId;
+            addTombstones(conversationId, [message.id, message.serverId, live?.id, live?.serverId]);
             // Match on EITHER identity, like the realtime handler does. Filtering on `id`
             // alone left a row held under a server uuid in place when the tapped object
             // carried a local id.
             setMessages(
               conversationId,
-              current.filter((m) => !matchesEitherId(m, message.id) && !matchesEitherId(m, message.serverId)) as any,
+              current.filter((m) => !matchesEitherId(m, message.id) && !matchesEitherId(m, serverIdNow)) as any,
             );
             triggerHaptic('medium');
             // ── AND DELETE IT ON THE SERVER ───────────────────────────────────
@@ -5272,8 +5301,9 @@ export default function ChatScreen() {
             // and even a fresh install stops seeing the message.
             void (async () => {
               try {
-                const serverId = message.serverId || message.id;
-                // Local-only ids were never on the server; nothing to delete.
+                const serverId = serverIdNow || message.id;
+                // A local id means the send is still in flight. It checks the tombstone above once
+                // its POST returns and deletes what it created (see `handleSend` / `sendGif`).
                 if (serverId.startsWith('m-')) return;
                 const { apiDelete } = await import('../../src/services/apiClient');
                 await apiDelete(`/v1/messages/${encodeURIComponent(serverId)}`);
@@ -5292,7 +5322,7 @@ export default function ChatScreen() {
                 // Publish the SERVER id when we have one: that is the id the peer
                 // stored the message under (it is what `handleSend` published), so a
                 // local `m-<ts>` id would never match on their side.
-                void channel.publish('msg.delete', { id: message.serverId || message.id });
+                void channel.publish('msg.delete', { id: serverIdNow || message.id });
               }
             } catch {}
           },
@@ -5816,8 +5846,10 @@ export default function ChatScreen() {
       const { useAuthStore } = await import('../../src/store');
       const user = useAuthStore.getState().user;
       if (!user) return;
+      // Deleted while its photos were uploading: nothing is stored yet, so there is nothing to send.
+      if (isTombstoned(conversationId, newMessage.id)) return;
 
-      const { apiPost } = await import('../../src/services/apiClient');
+      const { apiPost, apiDelete } = await import('../../src/services/apiClient');
       // The create-or-get is only needed while the id is still the peer's user id. Once it is
       // canonical (opened from the list, a known row, or a resolved profile entry) the answer is
       // already in hand, and asking again was a second Worker request on every single send.
@@ -5874,6 +5906,13 @@ export default function ChatScreen() {
           `/v1/conversations/${encodeURIComponent(convId)}/messages`,
           { text: replyMarker + imageMarker + text, imgW: firstDims?.w, imgH: firstDims?.h },
         );
+        // Deleted while the POST was in flight. The delete had no server id to remove, so remove
+        // what the POST just created, and do not publish it or move the chat-list preview to it.
+        if (sentData?.id && isTombstoned(conversationId, newMessage.id)) {
+          addTombstones(conversationId, [sentData.id]);
+          void apiDelete(`/v1/messages/${encodeURIComponent(sentData.id)}`);
+          return;
+        }
         // Reconcile the optimistic row's id with the server's canonical id.
         // The optimistic message was added with a client id (`m-<ts>`), but
         // the Worker stores it under a fresh uuid. Without recording that uuid, a
@@ -5930,7 +5969,10 @@ export default function ChatScreen() {
               replyToImage: newMessage.replyToImage,
               replyPixelIconId: newMessage.replyPixelIconId,
             };
-            if (id) {
+            // Only once the server has stored it. A failed POST used to publish anyway, under the
+            // local `m-<ts>` id, so the peer showed a message that does not exist and that no
+            // delete or history check could ever remove.
+            if (id && sentData?.id) {
               const chatChan = realtime.channels.get(chatChannelName(convId));
               void chatChan.publish('msg', messageBody);
             }
@@ -6739,8 +6781,6 @@ export default function ChatScreen() {
   // native-driver opacity tween so the show/hide is free on the JS thread.
   // Per-chat toggle in `chatSettings.scrollToBottomButton` (default true)
   // gates rendering at the JSX level, so an opted-out user pays nothing.
-  // `SCROLL_BTN_THRESHOLD` (module scope) also decides whether the transcript holds its position
-  // when a message arrives; see `MVCP_AT_NEWEST`.
   const [scrollBtnVisible, setScrollBtnVisible] = useState(false);
   // Built the first time it is needed, not on every open: it is an interactive glass view sitting at
   // scale 0 until the user scrolls up, and most opens never scroll up.
@@ -6757,6 +6797,15 @@ export default function ChatScreen() {
   // on each scroll event. `onScrollBtnTap` reads these to decide whether to do
   // an instant pre-jump before the animated settle (see below).
   const scrollMetricsRef = useRef<{ y: number; layoutH: number; contentH: number } | null>(null);
+  // Whether the user is AT the newest message right now, from the latest scroll event. No event yet
+  // means a freshly opened chat, which opens at the newest message.
+  const isAtNewest = useCallback(() => (scrollMetricsRef.current?.y ?? 0) <= AT_NEWEST_EPSILON, []);
+  // FlashList's `onCommitLayoutEffect` runs in the layout phase of each of its internal renders,
+  // before its correction pass in the same commit. Paired with `SkipCorrectionAtNewest`, which
+  // covers the commit that brings the data.
+  const onListCommitLayout = useCallback(() => {
+    if (isAtNewest()) flatListRef.current?.prepareForLayoutAnimationRender();
+  }, [isAtNewest]);
   // Idle timer that releases the GIF-animation pause shortly after the last
   // scroll event (covers both drag and momentum/fling uniformly).
   const scrollIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -6821,10 +6870,15 @@ export default function ChatScreen() {
         loadOlderChunkRef.current();
         loadingOlderRef.current = false;
       }
+      // The throttle below can drop the gesture's last events, which are the ones that say where
+      // it stopped, so the button is settled here from the latest offset.
+      const settled = scrollMetricsRef.current;
+      if (settled) {
+        const show = settled.y > SCROLL_BTN_THRESHOLD;
+        setScrollBtnVisible((prev) => (prev === show ? prev : show));
+        if (show) setScrollBtnArmed(true);
+      }
     }, 180);
-    const now = Date.now();
-    if (now - lastScrollEventAt.current < 32) return;
-    lastScrollEventAt.current = now;
     const ne = e?.nativeEvent;
     const y = ne?.contentOffset?.y ?? 0;
     const layoutH = ne?.layoutMeasurement?.height ?? 0;
@@ -6833,7 +6887,12 @@ export default function ChatScreen() {
     // as the user scrolls UP into history. So y IS the distance from the newest message — no
     // arithmetic needed, and the old `contentH - (y + layoutH)` would now be backwards, hiding
     // the scroll-to-newest button exactly when it is needed and showing it when it is not.
+    // Recorded on EVERY event, above the throttle: it is a ref write, and `isAtNewest` and
+    // `revealNewest` need the position the list actually stopped at.
     scrollMetricsRef.current = { y, layoutH, contentH };
+    const now = Date.now();
+    if (now - lastScrollEventAt.current < 32) return;
+    lastScrollEventAt.current = now;
     const next = y > SCROLL_BTN_THRESHOLD;
     setScrollBtnVisible((prev) => (prev === next ? prev : next));
     // Same batch as the flag, so the button exists before its reveal animation starts.
@@ -6932,10 +6991,9 @@ export default function ChatScreen() {
   //   Every other prop in the block is already stable by construction: `chatKeyExtractor` and
   //   `chatGetItemType` are useCallback([]), `viewabilityConfig` and `onViewableItemsChanged` are
   //   useRef(...).current, `onStartReached` and `onChatScroll` are useCallback([]), the two spacer
-  //   elements are memoised, and LIST_CONTENT_CONTAINER_STYLE is a module constant. The position
-  //   config is one of two module constants chosen by `scrollBtnVisible`, which flips only when the
-  //   scroll-to-newest button does. They are listed anyway so a future change to any of them cannot
-  //   silently stale the memo.
+  //   elements are memoised, LIST_CONTENT_CONTAINER_STYLE is a module constant, and
+  //   `onListCommitLayout` is useCallback over a stable callback. They are listed anyway so a future
+  //   change to any of them cannot silently stale the memo.
   //
   // The dead `listReady` ternary went with this. `listReady` is a hardcoded `true` (its rAF gate was
   // removed earlier and the branch was left behind), so the `<View absoluteFill/>` fallback had been
@@ -6960,7 +7018,10 @@ export default function ChatScreen() {
           // note on `windowedMessages`. From the v2 prop docs: "Reverses the direction of the
           // list... Useful for chat-like interfaces where the newest content appears at the bottom."
           inverted
-          maintainVisibleContentPosition={scrollBtnVisible ? MVCP_READING_HISTORY : MVCP_AT_NEWEST}
+          // Position maintenance is left at its default (on, no thresholds) and never toggled; see
+          // the note at `SCROLL_BTN_THRESHOLD`. At the newest message its correction is skipped
+          // through this callback and `SkipCorrectionAtNewest`.
+          onCommitLayoutEffect={onListCommitLayout}
           // Bound how far ahead rows are built. Chat bubbles are expensive — each
           // carries gesture handlers and Reanimated layers — so an unbounded
           // pre-render window turns a fling through a media-heavy chat into a burst
@@ -7024,7 +7085,7 @@ export default function ChatScreen() {
     ),
     [windowedMessages, renderItem, chatBudget.drawDistance, transcriptDrawDistance, listHeaderEl, listFooterEl,
      chatKeyExtractor, chatGetItemType, onStartReached, onChatScroll, viewabilityConfig,
-     onViewableItemsChanged, scrollBtnVisible],
+     onViewableItemsChanged, onListCommitLayout],
   );
 
   return (
@@ -7041,7 +7102,7 @@ export default function ChatScreen() {
           rises every message rides up with it (last message stays visible
           above the input bar) without triggering FlatList layout. */}
       <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
-      <MvcpResumeGuard on={scrollBtnVisible} data={windowedMessages} listRef={flatListRef} />
+      <SkipCorrectionAtNewest data={windowedMessages} atNewest={isAtNewest} listRef={flatListRef} />
       <GestureDetector gesture={panelDismissTap}>
       {transcriptEl}
       </GestureDetector>
