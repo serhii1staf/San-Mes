@@ -13,6 +13,7 @@ import { MiniAppPreviewCard } from './MiniAppPreviewCard';
 import { PostPreviewCard } from './PostPreviewCard';
 import { ProfilePreviewCard } from './ProfilePreviewCard';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
+import { linkPreviewThumbUrl, linkPreviewThumbWidth } from '../../utils/linkPreviewThumb';
 import { extractMiniAppShareId } from '../../utils/miniAppShare';
 import { extractPostShareId, extractProfileShareId } from '../../utils/appLinks';
 import { perfMonitor } from '../../services/perfMonitor';
@@ -87,25 +88,16 @@ const THUMB_RADIUS = 14;
 // benefits immediately instead of waiting for the SWR refresh. Also
 // applied to image-prefetch URLs so we don't warm the old large variant
 // only to display the smaller one.
-function ytThumb(uri: string | undefined | null): string | undefined {
-  if (!uri) return undefined;
-  if (uri.indexOf('i.ytimg.com/vi/') === -1) return uri;
-  if (uri.indexOf('/hqdefault.') === -1) return uri;
-  return uri.replace('/hqdefault.', '/mqdefault.');
-}
+//
+// Both helpers live in src/utils/linkPreviewThumb.ts now, so the chat-list warm-up
+// (messagesPrefetch) requests the exact URL this card shows.
+const ytThumb = linkPreviewThumbUrl;
 
 /**
- * The proxy width the card requests for this preview's thumbnail: 200 for the 16:9 video layout, 60
- * for the thumbnail of the thin link row (see the two `CachedImage`s below). The warm-up prefetch must
- * ask for the same width, because the width is part of the cache key. It used `prefetchImages`'
- * default of 600, so every preview downloaded and decoded a large copy that nothing displayed, next
- * to the small one the card then fetched anyway.
+ * The proxy width the card requests for this preview's thumbnail (see the two `CachedImage`s below).
+ * Any warm-up must ask for the same width, because the width is part of the cache key.
  */
-function thumbWidthFor(d: LinkPreviewData | null | undefined): number {
-  if (!d) return 60;
-  const video = ((d.provider === 'youtube' || d.provider === 'vimeo') && !!d.videoId) || d.type === 'video';
-  return video ? 200 : 60;
-}
+const thumbWidthFor = linkPreviewThumbWidth;
 
 export const LinkPreview = React.memo(function LinkPreview(props: LinkPreviewProps) {
   // ── OUR OWN LINKS NEVER GET THE GENERIC OG TREATMENT ────────────────────────

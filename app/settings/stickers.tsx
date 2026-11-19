@@ -277,14 +277,16 @@ export default function ImportedStickersScreen() {
                   frame and the thumbnail replaces it silently. The re-fetch happens once, in the
                   background, behind a picture that is already on screen.
    
-                  `CELL * 3` covers the densest screens exactly rather than guessing high. */}
+                  `CELL * 1.5` covers the densest screens (3x) exactly rather than guessing high:
+                  `proxyWidth` is a DISPLAY width and `proxiedImageUrl` doubles it, so the `CELL * 3`
+                  this used to pass asked for 6x the cell, close to the full sticker again. */}
               <CachedImage
                 uri={it.stillUrl || it.previewUrl}
                 style={styles.cellImg}
                 resizeMode="contain"
                 priority="low"
                 autoplay={false}
-                proxyWidth={CELL * 3}
+                proxyWidth={Math.round(CELL * 1.5)}
                 progressive
                 paced
               />

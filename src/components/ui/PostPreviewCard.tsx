@@ -298,7 +298,8 @@ export const PostPreviewCard = React.memo(function PostPreviewCard({
             uri={images[0]}
             style={styles.thumb}
             resizeMode="cover"
-            proxyWidth={THUMB * 2}
+            // Display width; `proxiedImageUrl` applies the density factor, so `THUMB * 2` was 4x.
+            proxyWidth={THUMB}
             // Decorative chrome inside a message bubble, so it must not compete with the bubble's own
             // images for decode slots. `CachedImage` already sets expo-image's `recyclingKey` to the
             // uri internally, which is what stops a recycled chat cell painting the PREVIOUS card's
