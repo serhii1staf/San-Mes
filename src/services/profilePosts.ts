@@ -157,6 +157,17 @@ type DiskCache<T> = {
   write: (id: string, items: T[], at?: number) => void;
 };
 
+/** Same posts, same fields, same order. Both sides come from the same JSON shape (the API or its disk copy). */
+function sameJson(a: unknown[], b: unknown[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
 function useCachedList<T>(
   profileId: string | undefined,
   kind: 'posts' | 'replies',
@@ -213,9 +224,20 @@ function useCachedList<T>(
         .then((next) => {
           if (!alive) return;
           if (next) {
-            mem.set(profileId, { at: Date.now(), items: next });
-            disk?.write(profileId, next);
-            setItems(next);
+            // ── AN UNCHANGED PAGE KEEPS THE ARRAY ALREADY ON SCREEN ───────────────────
+            //
+            // Most refetches (opening someone's profile again after the freshness window) return
+            // exactly the page that is shown. A new array of equal posts still re-rendered the
+            // whole profile: the panes, the media grid's derived list and every grid image, whose
+            // inline style is a new object on each render. The fetch lands right after the push
+            // animation, which is when that work is most visible. Keeping the same reference lets
+            // React skip the update entirely. The timestamp is still refreshed, so the freshness
+            // window restarts as before. A page of 25 posts serialises in well under a millisecond.
+            const current = mem.get(profileId)?.items;
+            const items = current && sameJson(current, next) ? current : next;
+            mem.set(profileId, { at: Date.now(), items });
+            disk?.write(profileId, items);
+            setItems(items);
           }
           setLoading(false);
         })
