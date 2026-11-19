@@ -484,12 +484,23 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout, list.length, areaW, height]);
   const centers = useMemo(() => placed.map((p) => [p.cx, p.cy, p.size / 2]), [placed]);
+  // ── BUILT AFTER THE PUSH ANIMATION, THEN FADED IN ─────────────────────────
+  // Each drop is about a dozen views and three SVGs, and iOS rasterises an SVG on the main thread
+  // the first time it is drawn. Built in the opening commit, five drops put that on the frames of
+  // the slide-in, the moment the reported "open a profile, FPS drops by 20" is measured. They now
+  // mount once the transition has settled and fade in on the native driver (no glass inside them,
+  // so an opacity on this wrapper is safe).
+  const fade = useRef(new RNAnimated.Value(0)).current;
+  useEffect(() => {
+    if (!settled) return;
+    RNAnimated.timing(fade, { toValue: 1, duration: 260, easing: RNEasing.out(RNEasing.quad), useNativeDriver: true }).start();
+  }, [settled, fade]);
 
-  if (!layout || areaW < 80) return null;
-  const running = active && settled && !reduceMotion;
+  if (!layout || areaW < 80 || !settled) return null;
+  const running = active && !reduceMotion;
 
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', top, left, width: areaW, height }}>
+    <RNAnimated.View pointerEvents="box-none" style={{ position: 'absolute', top, left, width: areaW, height, opacity: fade }}>
       {list.map((l, i) => {
         const p = placed[i];
         return (
@@ -510,7 +521,7 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
           />
         );
       })}
-    </View>
+    </RNAnimated.View>
   );
 });
 
