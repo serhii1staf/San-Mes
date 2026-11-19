@@ -96,6 +96,17 @@ export const channels = {
    */
   chat: (conversationId: string) => `chat:${conversationId}`,
   post: (postId: string) => `post:${postId}`,
+  /**
+   * Everything a viewer of `userId`'s profile needs to see live: their posts appearing, changing and
+   * disappearing, and their profile edits. Subscribed only while that profile is on screen
+   * (src/services/realtime/authorChannel.ts). Inside the `post:` namespace on purpose: the Ably token
+   * grants every user subscribe-only on `post:*` (api/ably-token.ts), so only the Worker can publish
+   * here and no capability change or token redeploy is needed. Must match `authorChannelName`.
+   *
+   * It replaces the `feed:public` publishes, which nothing has subscribed to since the feed was
+   * removed, so a post costs the same number of Ably messages as before.
+   */
+  author: (userId: string) => `post:author:${userId}`,
   userNotifications: (userId: string) => `user:${userId}:notifications`,
   userProfile: (userId: string) => `user:${userId}:profile`,
   userFollows: (userId: string) => `user:${userId}:follows`,

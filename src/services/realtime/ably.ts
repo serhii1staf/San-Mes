@@ -290,3 +290,12 @@ export function postChannelName(postId: string): string {
 export function feedPublicChannelName(): string {
   return 'feed:public';
 }
+
+/**
+ * One person's posts and profile edits, for whoever has their profile open. Published only by the
+ * Worker (`channels.author` in workers/api/src/realtime.ts; must match), subscribe-only for the app
+ * through the `post:*` capability. See src/services/realtime/authorChannel.ts.
+ */
+export function authorChannelName(userId: string): string {
+  return `post:author:${userId}`;
+}
