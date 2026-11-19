@@ -44,7 +44,7 @@ import { usePinnedMessagesStore, selectPinnedIds, resolvePinned } from '../../sr
 import { openShareSheet } from '../../src/store/shareSheetStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
-import { useMessageGestures } from '../../src/hooks/useMessageGestures';
+import { useMessageGestures, useReplyIconStyle } from '../../src/hooks/useMessageGestures';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { useBrowserStore } from '../../src/store/browserStore';
@@ -1108,6 +1108,24 @@ function quotedLinePreview(
   return '';
 }
 
+/**
+ * The reply icon a left swipe reveals. Its own component so the opacity ramp (`useReplyIconStyle`)
+ * exists only after a swipe has armed it, instead of as a style mapper on every bubble.
+ */
+const SwipeReplyIcon = React.memo(function SwipeReplyIcon({ translateX, accent }: { translateX: SharedValue<number>; accent: string }) {
+  const opacityStyle = useReplyIconStyle(translateX);
+  return (
+    <Reanimated.View style={[bubbleStyles.swipeIcon, opacityStyle]}>
+      {/* Intentionally NOT a NativeGlassView: a glass view is a UIVisualEffectView, one of
+          the most expensive native views to instantiate. A flat tinted circle is visually
+          indistinguishable here. */}
+      <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: accent + '20' }]}>
+        <MaterialIcons name="reply" size={16} color={accent} />
+      </View>
+    </Reanimated.View>
+  );
+});
+
 function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, heldId, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; heldId?: SharedValue<string>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
   const theme = useTheme();
   const t = useT();
@@ -1190,7 +1208,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // Swipe-to-reply + press-drag-select gestures are wired by useMessageGestures (extracted for
   // maintainability + testing). The reply-jump glow used to be in there too and is now
   // `ReplyJumpGlow`, mounted below only while `highlighted` — see that file for why.
-  const { bubbleRef, composedGesture, bubbleAnimStyle: swipeTranslateStyle, replyIconAnimStyle, replyIconArmed, liftStyle } = useMessageGestures({
+  const { bubbleRef, composedGesture, bubbleAnimStyle: swipeTranslateStyle, translateX: swipeTranslateX, replyIconArmed, liftStyle } = useMessageGestures({
     message,
     onReply,
     onSwipeActive,
@@ -1517,16 +1535,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
           Third application of an argument already made and measured twice in this codebase —
           `ReplyJumpGlow` right below, and `buttonArmed` in `SwipeablePostCard`. See
           `replyIconArmed` in `useMessageGestures` for why arming on `onStart` is early enough. */}
-      {replyIconArmed ? (
-        <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
-          {/* Intentionally NOT a NativeGlassView: a glass view is a UIVisualEffectView, one of
-              the most expensive native views to instantiate. A flat tinted circle is visually
-              indistinguishable here. */}
-          <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
-            <MaterialIcons name="reply" size={16} color={theme.colors.accent.primary} />
-          </View>
-        </Reanimated.View>
-      ) : null}
+      {replyIconArmed ? <SwipeReplyIcon translateX={swipeTranslateX} accent={theme.colors.accent.primary} /> : null}
 
       {/* ── THE GESTURE TARGET IS THE ROW, NOT THE BUBBLE ─────────────────────────
           Reported as: a peer sends a message of a few characters and it is very hard to

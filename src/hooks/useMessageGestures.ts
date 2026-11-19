@@ -31,6 +31,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { triggerHaptic } from '../utils/haptics';
+import { UI_RUNTIME_MAPPERS } from '../utils/workletGuards';
 import type { ActionZone } from '../components/ui/MessageContextMenu';
 
 // Pixels of left-swipe (on release) that commit a reply. Matches the legacy
@@ -138,9 +139,20 @@ export function useMessageGestures<T extends { id: string }>({
   // on screen; a recycled cell is off screen while it changes message, so no gesture can be running
   // on it.
   const messageRef = useRef(message);
+  // The id `liftStyle` compares against `heldId`, kept in a shared value so the style's worklet does
+  // not capture `message.id`. Reanimated restarts a style mapper whenever a value its worklet captures
+  // changes, so a captured id meant a mapper teardown and a re-serialisation to the UI runtime on
+  // every recycle. Written from JS only when the id actually changes: the write is an async hop, and
+  // READING `.value` on the JS thread is a synchronous one, which is never done here.
+  const idSV = useSharedValue(message.id);
+  const lastIdRef = useRef(message.id);
   useLayoutEffect(() => {
     messageRef.current = message;
-  }, [message]);
+    if (lastIdRef.current !== message.id) {
+      lastIdRef.current = message.id;
+      idSV.value = message.id;
+    }
+  }, [message, idSV]);
   const fireReply = useCallback(() => onReply(messageRef.current), [onReply]);
   const fireLongPress = useCallback(() => onLongPress(messageRef.current), [onLongPress]);
   const fireMeasured = useCallback(
@@ -152,11 +164,12 @@ export function useMessageGestures<T extends { id: string }>({
 
   // ── Swipe-to-reply: UI-thread Pan ──────────────────────────────────────
   const translateXSV = useSharedValue(0);
-  // One-shot guard so the threshold haptic fires exactly once per gesture.
-  const gateFiredHapticSV = useSharedValue(false);
-  // Mirror of "is this gesture currently active?" — used by onFinalize to know
-  // whether to run the scroll-unlock cleanup (which fires on every pan end).
-  const swipeActiveSV = useSharedValue(false);
+  // The cell's flags in one shared value (every shared value is created on the UI runtime when a
+  // bubble mounts, so they used to cost one each). Two last one gesture: `SWIPE_HAPTIC_FIRED` makes
+  // the threshold haptic fire once, `SWIPE_ACTIVE` tells `onFinalize` to run the scroll unlock. Two
+  // stay set for the cell's lifetime, `SWIPE_MOVED` and `LIFTED`; see "A BUBBLE AT REST WRITES NO
+  // PROPS" below.
+  const swipeFlagsSV = useSharedValue(0);
 
   const pan = useMemo(
     () =>
@@ -169,7 +182,7 @@ export function useMessageGestures<T extends { id: string }>({
         .failOffsetY([-10, 10])
         .onStart(() => {
           'worklet';
-          swipeActiveSV.value = true;
+          swipeFlagsSV.value = (swipeFlagsSV.value & LIFTED) | SWIPE_MOVED | SWIPE_ACTIVE;
           // Mount the reply icon now — see the note on `replyIconArmed`. One hop per gesture, not
           // per frame, and it lands ~12 pt of travel before the icon's opacity ramp leaves zero.
           runOnJS(armReplyIcon)();
@@ -181,8 +194,9 @@ export function useMessageGestures<T extends { id: string }>({
           // for predictable rendering on Android.
           const dx = Math.max(Math.min(Math.round(e.translationX), 0), -80);
           translateXSV.value = dx;
-          if (!gateFiredHapticSV.value && dx <= -REPLY_THRESHOLD) {
-            gateFiredHapticSV.value = true;
+          const flags = swipeFlagsSV.value;
+          if ((flags & SWIPE_HAPTIC_FIRED) === 0 && dx <= -REPLY_THRESHOLD) {
+            swipeFlagsSV.value = flags | SWIPE_HAPTIC_FIRED;
             runOnJS(triggerHaptic)('light');
           }
         })
@@ -194,14 +208,18 @@ export function useMessageGestures<T extends { id: string }>({
         })
         .onFinalize(() => {
           'worklet';
-          translateXSV.value = withSpring(0, { damping: 20, stiffness: 220, mass: 0.8 });
-          gateFiredHapticSV.value = false;
-          if (swipeActiveSV.value) {
-            swipeActiveSV.value = false;
-            runOnJS(onSwipeActive)(false);
+          // `onFinalize` also runs for every pan that never activated, which is every vertical scroll
+          // that starts on a row. Those have nothing to settle, and the spring and the flag write used
+          // to wake both of this row's style mappers on each one.
+          if (translateXSV.value !== 0) {
+            translateXSV.value = withSpring(0, { damping: 20, stiffness: 220, mass: 0.8 });
           }
+          const flags = swipeFlagsSV.value;
+          const kept = flags & (SWIPE_MOVED | LIFTED);
+          if (kept !== flags) swipeFlagsSV.value = kept;
+          if ((flags & SWIPE_ACTIVE) !== 0) runOnJS(onSwipeActive)(false);
         }),
-    [fireReply, onSwipeActive, translateXSV, gateFiredHapticSV, swipeActiveSV, armReplyIcon],
+    [fireReply, onSwipeActive, translateXSV, swipeFlagsSV, armReplyIcon],
   );
 
   // ── Press-drag-release: UI-thread LongPress + drag-to-select ───────────
@@ -268,28 +286,87 @@ export function useMessageGestures<T extends { id: string }>({
   // can never both be active, so drag-select can't fight the swipe.
   const composedGesture = useMemo(() => Gesture.Race(pan, longPress), [pan, longPress]);
 
-  const bubbleAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateXSV.value }],
-  }));
+  // ── NO SHARED-VALUE READS IN THE FIRST RUN ──────────────────────────────────
+  //
+  // Reanimated runs a style worklet on the JS thread to get the first style (`initialUpdaterRun`):
+  // once when `useAnimatedStyle` first runs, and again when each animated view using it first renders
+  // (`PropsFilter`). In Reanimated 4.1 every `.value` read there is `executeOnUIRuntimeSync`: the JS
+  // thread stops until the UI thread has answered. A bubble mount did that five times, and during a
+  // fling the UI thread is the busy one, so the JS thread sat waiting on it. While scrolling, these
+  // and the skeleton's were the only synchronous JS-to-UI calls in the chat (`initialUpdaterRun` ->
+  // `get value`: 18 to 71 ms in emulator runs of one open and twenty flings).
+  //
+  // On the JS thread (`_WORKLET` is false there and true on the UI runtime) the worklets return the
+  // resting style, which is what a freshly mounted bubble shows anyway: not swiped, not held. The
+  // mapper Reanimated starts right after mount runs on the UI thread and applies the real values.
+  // `UI_RUNTIME_MAPPERS` keeps web and jest, where the mapper itself runs on the JS thread, out of it.
+  //
+  // ── A BUBBLE AT REST WRITES NO PROPS ───────────────────────────────────────
+  //
+  // The resting style is `{}`, not `translateX: 0` / `scale: 1`, and that is what makes it free.
+  // Reanimated 4.1 keeps every prop a mapper ever wrote in a registry, per view, until the view
+  // unmounts, and on EVERY React commit its commit hook copies that registry and re-clones each of
+  // those views with those props (`ReanimatedCommitHook::shadowTreeWillCommit` ->
+  // `cloneShadowTreeWithNewProps`). A mapper writes whenever its result is not shallow-equal to the
+  // previous one, and a `transform` array is a new object on every run, so both styles wrote on their
+  // first UI run: two registry entries for every mounted bubble, recycle pool included, re-applied in
+  // every commit of the transcript. In the emulator profile of opening the long chat and
+  // fast-scrolling it, returning `{}` at rest cut `completeRoot` from 5429 to 4251 ms.
+  //
+  // `{}` stays `{}` (shallow-equal), so nothing is written until a bubble actually moves. A bubble
+  // that has moved keeps returning its transform for the rest of the cell's life (`SWIPE_MOVED`,
+  // `LIFTED`): dropping the key would not reset the view on iOS, where Reanimated does not revert a
+  // prop that disappears from a style, so the last frame of a spring would stay applied.
+  const bubbleAnimStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return {};
+    if ((swipeFlagsSV.value & SWIPE_MOVED) === 0) return {};
+    return { transform: [{ translateX: translateXSV.value }] };
+  });
   // The held bubble lifts slightly while its menu is open, inside the menu's lit cut-out. UI thread
   // only: the screen flips one shared value, no bubble re-renders. Every mounted bubble's mapper
-  // runs once on open and once on close, which is a handful of comparisons.
-  const messageId = message.id;
+  // runs once on open and once on close, which is a handful of comparisons. Compares against `idSV`
+  // rather than a captured id; see the note there.
+  //
+  // `LIFTED` is set here, the first time the bubble is held, rather than by the long-press gesture:
+  // `heldId` follows the menu, and the menu decides whether a hold counts. Writing it re-runs the
+  // mappers once, and the second run returns the same spring.
   const liftStyle = useAnimatedStyle(() => {
-    const held = !!heldId && heldId.value === messageId;
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return {};
+    const held = !!heldId && heldId.value === idSV.value;
+    const flags = swipeFlagsSV.value;
+    if ((flags & LIFTED) === 0) {
+      if (!held) return {};
+      swipeFlagsSV.value = flags | LIFTED;
+    }
     return { transform: [{ scale: withSpring(held ? 1.04 : 1, { damping: 15, stiffness: 260, mass: 0.7 }) }] };
   });
-  // Reply-icon opacity ramp from -24 → -REPLY_THRESHOLD, on the UI thread.
-  const replyIconAnimStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(
-      translateXSV.value,
-      [-REPLY_THRESHOLD, -24, 0],
-      [1, 0, 0],
-      Extrapolation.CLAMP,
-    ),
-  }));
+  // The reply icon's opacity ramp is built by `useReplyIconStyle`, inside the icon, which is only
+  // mounted once a swipe has armed it (`replyIconArmed`). It used to be built here, so every bubble
+  // carried a third style mapper for an icon most bubbles never show.
 
-  return { bubbleRef, composedGesture, bubbleAnimStyle, replyIconAnimStyle, replyIconArmed, liftStyle };
+  return { bubbleRef, composedGesture, bubbleAnimStyle, translateX: translateXSV, replyIconArmed, liftStyle };
+}
+
+/** Bits of `swipeFlagsSV`. The first two are cleared when a swipe ends, the last two never. */
+const SWIPE_HAPTIC_FIRED = 1;
+const SWIPE_ACTIVE = 2;
+/** The row has been swiped, so its style writes `translateX` from now on. */
+const SWIPE_MOVED = 4;
+/** The bubble has been lifted by a held menu, so its style writes `scale` from now on. */
+const LIFTED = 8;
+
+/**
+ * The swipe-to-reply icon's opacity ramp: invisible until 24 px of travel, fully opaque at the commit
+ * threshold. For the icon component, which mounts only after a swipe started, so a bubble that is
+ * never swiped never builds it. `translateX` is the bubble's `translateX` from `useMessageGestures`.
+ */
+export function useReplyIconStyle(translateX: SharedValue<number>) {
+  return useAnimatedStyle(() => {
+    // The icon mounts at the start of a swipe, about 12 px in, where the ramp is still at 0. Same
+    // first-run guard as the bubble styles: no synchronous read while the finger is moving.
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { opacity: 0 };
+    return { opacity: interpolate(translateX.value, [-REPLY_THRESHOLD, -24, 0], [1, 0, 0], Extrapolation.CLAMP) };
+  });
 }
 
 /**

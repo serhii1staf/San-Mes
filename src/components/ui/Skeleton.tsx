@@ -43,6 +43,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../theme';
+import { UI_RUNTIME_MAPPERS } from '../../utils/workletGuards';
 
 export interface SkeletonProps {
   /** Width of the placeholder box. Default `'100%'`. */
@@ -274,7 +275,14 @@ function SkeletonBase({
   // When `boxW.value` is 0 (not measured yet) the offset is 0 — a safe
   // no-op for the first frame. Computed in a worklet — no JS thread
   // involvement per frame.
+  //
+  // The first runs of this worklet happen on the JS thread, where reading `.value` is a synchronous
+  // call to the UI thread (two reads, in each of two runs per skeleton mount). There it returns the value a
+  // just-mounted skeleton has anyway (`boxW` is still 0); the UI-thread mapper takes over from the
+  // next frame. Same treatment as the chat bubble styles in useMessageGestures.ts; see
+  // src/utils/workletGuards.ts for why the platform constant is part of the test.
   const sweepStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { transform: [{ translateX: 0 }] };
     return {
       transform: [{ translateX: (shimmerProgress.value * 2 - 1) * boxW.value }],
     };
