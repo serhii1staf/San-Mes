@@ -1860,10 +1860,19 @@ export default function MessagesScreen() {
   // restart + offline). The JSON.stringify is cheap for typical sizes, but we
   // still queue it after interactions so it never piles up on the same RAF as
   // a navigation transition or a sync-driven update burst.
+  //
+  // Only an array this effect has not written yet. `entityConversations` is a constant while a chat
+  // is open on top (see `chatStoreConversations`), so every return to this tab handed the effect the
+  // store's array again and the whole list was serialised and written to MMKV after each visit to a
+  // chat, unchanged. `setConversations` bails out on equal data, so the store's array identity
+  // changes exactly when the data does, and comparing identities is enough.
+  const persistedConversationsRef = useRef<unknown>(null);
   useEffect(() => {
     if (entityConversations.length === 0) return;
+    if (persistedConversationsRef.current === entityConversations) return;
     const handle = InteractionManager.runAfterInteractions(() => {
       kvSetJSON('conversations_list', entityConversations);
+      persistedConversationsRef.current = entityConversations;
     });
     return () => handle.cancel();
   }, [entityConversations]);
@@ -2389,7 +2398,16 @@ export default function MessagesScreen() {
     ({ item, index }: { item: Conversation; index: number }) => (
       <ConversationItem
         item={item}
-        index={index}
+        // ── THE ROW'S POSITION, ONLY WHILE IT CAN BE DRAGGED ──────────────────────
+        //
+        // `index` feeds only the reorder drag (the handle's gesture and the displacement worklet),
+        // and the row memo compares it. So any change of ORDER re-rendered every row whose
+        // position moved: a message arriving in the fifth chat moved it to the top and rebuilt
+        // the four rows above it, each with its drag gesture, although none of them showed
+        // anything different. Outside reorder mode the handle is not mounted and the drag
+        // cannot start, so a constant is enough. Entering edit mode re-renders every row anyway
+        // (`editMode` is compared), and that is when they receive their real positions.
+        index={reorderEnabled ? index : -1}
         tab={activeTab}
         editMode={editMode}
         selected={selectedIds.has(item.id)}
@@ -2405,7 +2423,11 @@ export default function MessagesScreen() {
         draggingThisRow={draggingIndex === index}
       />
     ),
-    [activeTab, editMode, selectedIds, editProgress, toggleSelected, pinnedSet, reorderEnabled, dragFrom, dragTo, dragOffsetY, handleDragStart, handleDragEnd],
+    // `draggingIndex` was missing here. The list has no `extraData`, so without it the cells were
+    // never re-rendered when a drag started and `draggingThisRow` stayed false: the lifted row's
+    // `zIndex` never applied and it slid underneath the rows it passed. Two renders per drag
+    // (start, end), each of which only the dragged row does not bail out of.
+    [activeTab, editMode, selectedIds, editProgress, toggleSelected, pinnedSet, reorderEnabled, dragFrom, dragTo, dragOffsetY, handleDragStart, handleDragEnd, draggingIndex],
   );
   // The separator is inset to line up with the start of the row's TEXT column
   // (past the avatar). In selection mode the rows shift right by the checkbox
