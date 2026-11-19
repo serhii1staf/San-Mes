@@ -17,13 +17,27 @@ export const CHAT_TAIL_ROWS = 60;
  * Rows come back as stored. Callers heal legacy sender ids and drop deleted rows themselves.
  */
 export function readChatDiskSeed<T extends MergeableItem>(conversationId: string, cap: number): T[] {
+  return readChatDiskSeedRows<T>(conversationId, cap).rows;
+}
+
+/**
+ * `readChatDiskSeed`, plus how many rows `chat_tail:<id>` itself held. The chat screen rewrites the
+ * tail when the seed had to be topped up from the blob, and it used to parse the tail a second time
+ * just to learn its length: 10.8 ms on the emulator for a 60-row tail of long messages, right after
+ * the open animation.
+ */
+export function readChatDiskSeedRows<T extends MergeableItem>(
+  conversationId: string,
+  cap: number,
+): { rows: T[]; tailRows: number } {
   const stored = kvGetJSONSync<T[]>(`chat_tail:${conversationId}`, []);
   const tail = Array.isArray(stored) ? stored : [];
-  if (tail.length >= cap) return tail;
+  const tailRows = tail.length;
+  if (tailRows >= cap) return { rows: tail, tailRows };
   const full = kvGetJSONSync<T[]>(`chat_messages:${conversationId}`, []);
-  if (!Array.isArray(full) || full.length <= tail.length) return tail;
+  if (!Array.isArray(full) || full.length <= tailRows) return { rows: tail, tailRows };
   const recent = full.length > cap ? full.slice(full.length - cap) : full;
   // The tail is written more often than the blob, so where both hold a row, the tail's copy wins.
   const merged = mergeHistory(tail, recent);
-  return merged.length > cap ? merged.slice(merged.length - cap) : merged;
+  return { rows: merged.length > cap ? merged.slice(merged.length - cap) : merged, tailRows };
 }
