@@ -16,6 +16,7 @@ import {
 import { apiGet } from './apiClient';
 import { useEntityStore } from './entityStore';
 import { syncWithThrottle } from './syncThrottle';
+import { useAuthStore } from '../store/authStore';
 
 import {
   cacheFeed,
@@ -98,9 +99,20 @@ export async function syncFeed(_userId?: string): Promise<void> {
   }
 }
 
+/**
+ * How long a profile fetch is trusted. Ten minutes for your own (your edits update the local copy
+ * directly), 20 seconds for anyone else's. Reported: someone changed their bio and it did not show
+ * when their profile was opened. Opening a profile reads the cache and then calls `syncProfile`,
+ * which the ten-minute window turned into a no-op. Now it refetches unless the profile was fetched
+ * moments ago: at most one request per open, no polling.
+ */
+function profileSyncWindow(profileId: string): number {
+  return useAuthStore.getState().user?.id === profileId ? 10 * 60 * 1000 : 20 * 1000;
+}
+
 export async function syncProfile(profileId: string): Promise<void> {
   try {
-    await syncWithThrottle(`profile:${profileId}`, 10 * 60 * 1000, async () => {
+    await syncWithThrottle(`profile:${profileId}`, profileSyncWindow(profileId), async () => {
       const { profile, error } = await getProfile(profileId);
       // ── A DELETED ACCOUNT HAS TO LEAVE THE CACHE ──────────────────────────
       //
