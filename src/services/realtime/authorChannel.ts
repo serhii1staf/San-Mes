@@ -17,12 +17,10 @@
  */
 import { useEffect } from 'react';
 import { authorChannelName, getRealtime } from './ably';
+import { leaseChannel } from './channelLease';
 import { invalidateProfilePosts } from '../profilePosts';
 import { useEntityStore } from '../entityStore';
 import { toSceneText } from '../syncService';
-
-/** How many mounted screens are showing each author's channel, so a stacked copy keeps it attached. */
-const holders = new Map<string, number>();
 
 function applyProfileEdit(profileId: string, payload: Record<string, unknown>): void {
   const entity = useEntityStore.getState();
@@ -57,9 +55,10 @@ export function useAuthorChannel(profileId: string | undefined, active: boolean)
     if (!profileId || !active) return;
     const realtime = getRealtime();
     if (!realtime) return;
-    const name = authorChannelName(profileId);
-    const channel = realtime.channels.get(name);
-    holders.set(name, (holders.get(name) || 0) + 1);
+    // Counted per channel, so a stacked copy of the same profile keeps it attached; detached
+    // shortly after the last one goes (channelLease.ts).
+    const lease = leaseChannel(realtime, authorChannelName(profileId));
+    const channel = lease.channel;
     const onMessage = (msg: { name?: string; data?: any }) => {
       try {
         if (msg?.name === 'author.profile.edit') {
@@ -76,14 +75,7 @@ export function useAuthorChannel(profileId: string | undefined, active: boolean)
     void channel.subscribe(onMessage);
     return () => {
       try { channel.unsubscribe(onMessage); } catch {}
-      const left = (holders.get(name) || 1) - 1;
-      if (left > 0) {
-        holders.set(name, left);
-        return;
-      }
-      holders.delete(name);
-      // Stop receiving this channel at all once nobody is looking at the profile.
-      try { void channel.detach(); } catch {}
+      lease.release();
     };
   }, [profileId, active]);
 }

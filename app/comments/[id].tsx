@@ -39,6 +39,7 @@ import { getRecentGif, pushRecentGif, removeRecentGif } from '../../src/services
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getRealtime, postChannelName } from '../../src/services/realtime/ably';
+import { leaseChannel } from '../../src/services/realtime/channelLease';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
 import { typingPostChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
 import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
@@ -1009,7 +1010,9 @@ export default function CommentsScreen() {
       if (cancelled) return;
       const realtime = getRealtime();
       if (!realtime) return;
-      const channel = realtime.channels.get(postChannelName(postId));
+      // Leased: detached once this thread is no longer on screen (see channelLease.ts).
+      const lease = leaseChannel(realtime, postChannelName(postId));
+      const channel = lease.channel;
 
       const onEvent = (msg: { name?: string; data?: any }) => {
         const payload = msg?.data;
@@ -1064,6 +1067,7 @@ export default function CommentsScreen() {
       void channel.subscribe(onEvent);
       cleanup = () => {
         try { channel.unsubscribe(onEvent); } catch {}
+        lease.release();
       };
     });
     return () => {
@@ -1209,7 +1213,8 @@ export default function CommentsScreen() {
     if (!postId) return;
     const realtime = getRealtime();
     if (!realtime) return;
-    const channel = realtime.channels.get(postChannelName(postId));
+    const lease = leaseChannel(realtime, postChannelName(postId));
+    const channel = lease.channel;
 
     const onNew = (msg: { data?: any }) => {
       const incoming = msg?.data?.comment;
@@ -1248,6 +1253,7 @@ export default function CommentsScreen() {
       try { channel.unsubscribe('comment.new', onNew); } catch {}
       try { channel.unsubscribe('comment.edit', onEdit); } catch {}
       try { channel.unsubscribe('comment.delete', onDelete); } catch {}
+      lease.release();
     };
   }, [postId]);
 

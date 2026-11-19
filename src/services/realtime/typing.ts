@@ -52,6 +52,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { getRealtime } from './ably';
+import { leaseChannel, type ChannelLease } from './channelLease';
 import { useAuthStore } from '../../store/authStore';
 
 /** Channel for a 1:1 (or, later, group) chat's typing events. */
@@ -318,10 +319,14 @@ export function useTypingPeers(channelName: string | null): TypingPeer[] {
     });
 
     let channel: ReturnType<NonNullable<ReturnType<typeof getRealtime>>['channels']['get']> | null = null;
+    // Leased so the channel detaches after the screen goes: an attached typing channel keeps
+    // delivering a peer's announcements every two seconds to a device that left the chat.
+    let lease: ChannelLease | null = null;
     try {
       const realtime = getRealtime();
       if (realtime) {
-        channel = realtime.channels.get(channelName);
+        lease = leaseChannel(realtime, channelName);
+        channel = lease.channel;
         // Failures are logged rather than swallowed, for the reason recorded at the chat
         // screen's subscribe site: a silently dead subscription is indistinguishable from
         // "nobody is typing", and that ambiguity has already cost this app one long outage.
@@ -353,6 +358,7 @@ export function useTypingPeers(channelName: string | null): TypingPeer[] {
         try { channel.unsubscribe(EV_TYPING, onTyping); } catch {}
         try { channel.unsubscribe(EV_STOP, onStop); } catch {}
       }
+      if (lease) lease.release();
     };
   }, [channelName]);
 
