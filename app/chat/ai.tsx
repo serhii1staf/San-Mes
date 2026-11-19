@@ -756,7 +756,16 @@ export default function AIChatScreen() {
   // native driver, but since this only animates on empty↔non-empty input
   // transitions (≈once per typing session) it's effectively free.
   const commandExpand = useRef(new Animated.Value(1)).current;
+  const commandExpandArmed = useRef(false);
   useEffect(() => {
+    // Not on mount. The value already starts expanded for the empty input, and the mount run animated
+    // 1 → 1 anyway: 220 ms of JS-driven width updates (each a layout commit) inside the push
+    // animation. A CPU profile of opening this chat put `setNativeProps` at 85 ms from this alone.
+    if (!commandExpandArmed.current) {
+      commandExpandArmed.current = true;
+      if (input.length > 0) commandExpand.setValue(0);
+      return;
+    }
     Animated.timing(commandExpand, {
       toValue: input.length === 0 ? 1 : 0,
       duration: 220,

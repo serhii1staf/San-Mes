@@ -144,7 +144,15 @@ export default function MusicChatScreen() {
   // finishes BEFORE the width fully shrinks — that prevents the icon from
   // briefly drifting toward the right edge as the pill collapses.
   const commandExpand = useRef(new Animated.Value(1)).current; // 1 = expanded, 0 = collapsed
+  const commandExpandArmed = useRef(false);
   useEffect(() => {
+    // Not on mount: the value starts expanded for the empty input, and animating 1 → 1 there was
+    // 220 ms of JS-driven layout commits inside the push animation. See the same note in chat/ai.tsx.
+    if (!commandExpandArmed.current) {
+      commandExpandArmed.current = true;
+      if (input.length > 0) commandExpand.setValue(0);
+      return;
+    }
     Animated.timing(commandExpand, {
       toValue: input.length === 0 ? 1 : 0,
       duration: 220,
