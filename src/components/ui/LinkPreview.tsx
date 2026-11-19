@@ -16,6 +16,7 @@ import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../ser
 import { linkPreviewThumbUrl, linkPreviewThumbWidth } from '../../utils/linkPreviewThumb';
 import { extractMiniAppShareId } from '../../utils/miniAppShare';
 import { extractPostShareId, extractProfileShareId } from '../../utils/appLinks';
+import { urlHostLabel } from '../../utils/urlParts';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 
@@ -219,9 +220,7 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
     const fetchStart = Date.now();
     const recordFetch = () => {
       if (!useSettingsStore.getState().perfMonitorEnabled) return;
-      let host = '';
-      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
-      perfMonitor.mark('linkPreview fetch ' + host, Date.now() - fetchStart);
+      perfMonitor.mark('linkPreview fetch ' + urlHostLabel(url), Date.now() - fetchStart);
     };
     getLinkPreview(url)
       .then((d) => {
@@ -314,13 +313,8 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
 
   if (!data) return null;
 
-  const host = (() => {
-    try {
-      return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-      return data.siteName || '';
-    }
-  })();
+  // Regex parse, not `new URL()`: this runs on every render of the card (see src/utils/urlParts.ts).
+  const host = urlHostLabel(url) || data.siteName || '';
 
   // ─── VIDEO layout: big 16:9 thumbnail, inline play, thin rounded container ──
   if (isVideo) {

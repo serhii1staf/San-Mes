@@ -116,6 +116,7 @@
  */
 
 import { useSettingsStore } from '../store/settingsStore';
+import { urlHostAndPath } from '../utils/urlParts';
 
 export type PerfEventType = 'nav' | 'slow' | 'mark' | 'error';
 /**
@@ -829,17 +830,20 @@ class PerfMonitor {
   markImageDecode(uri: string, durationMs: number) {
     if (!useSettingsStore.getState().perfMonitorEnabled) return;
     if (!uri) return;
+    // Normal remote images: group by hostname. Local/inline schemes
+    // (file:, data:, blob:) have no host — surface the scheme instead of a
+    // blank label so the panel reads "file: 82ms" (a local gallery preview
+    // decoding) rather than an unexplained empty row. Local full-res decodes
+    // are the usual reason a chat-open frame dips, so making them legible
+    // matters. Parsed with a regex, not `new URL()`: this runs on every image
+    // load while the monitor is on (see src/utils/urlParts.ts).
+    const parts = urlHostAndPath(uri);
     let host = uri;
-    try {
-      const u = new URL(uri);
-      // Normal remote images: group by hostname. Local/inline schemes
-      // (file:, data:, blob:, content:) have an empty hostname — surface
-      // the scheme instead of a blank label so the panel reads
-      // "file: 82ms" (a local gallery preview decoding) rather than an
-      // unexplained empty row. Local full-res decodes are the usual reason
-      // a chat-open frame dips, so making them legible matters.
-      host = u.hostname ? u.hostname.replace(/^www\./, '') : u.protocol.replace(/:$/, '');
-    } catch {}
+    if (parts) host = parts.host.replace(/^www\./, '');
+    else {
+      const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(uri);
+      if (scheme) host = scheme[1].toLowerCase();
+    }
     const now = Date.now();
     let seen = this._imgHostThrottle.get(host);
     if (!seen) {

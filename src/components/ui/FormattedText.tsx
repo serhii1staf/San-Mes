@@ -7,6 +7,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { openUrl } from '../../utils/openUrl';
+import { urlHostAndPath } from '../../utils/urlParts';
 import { triggerHaptic } from '../../utils/haptics';
 import { showToast } from '../../store/toastStore';
 
@@ -438,25 +439,29 @@ type BlockSegment =
 
 // Display links compactly: strip protocol/www and, for our own deep links,
 // show just the domain + section (e.g. "san-m-app.com/post") instead of the
-// long id. The full URL is still used for the tap action. Pure + cheap.
+// long id. The full URL is still used for the tap action.
+//
+// This runs on every render of a bubble that holds a link, so it parses with `urlHostAndPath` (one
+// regex) instead of `new URL()`, the whatwg-url polyfill: 23 to 45 ms of it per emulator run of
+// opening the long chat and fast-scrolling it. Same host and first segment for every `https?://` link
+// the parser above produces; a non-ASCII first segment now shows as typed instead of percent-encoded.
 function shortenUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace(/^www\./, '');
-    const seg = u.pathname.split('/').filter(Boolean);
-    if (seg.length === 0) return host;
-    // For known sections keep only the section name, drop the long id.
-    if (seg[0] === 'post' || seg[0] === 'profile' || seg[0] === 'comments') {
-      return `${host}/${seg[0]}`;
-    }
-    // Otherwise show host + first segment, truncated.
-    const tail = seg[0].length > 16 ? seg[0].slice(0, 15) + '…' : seg[0];
-    return `${host}/${tail}`;
-  } catch {
+  const u = urlHostAndPath(url);
+  if (!u) {
     // Not a parseable URL — strip protocol and clip length.
     const clean = url.replace(/^https?:\/\/(www\.)?/, '');
     return clean.length > 30 ? clean.slice(0, 29) + '…' : clean;
   }
+  const host = u.host.replace(/^www\./, '');
+  const seg = u.path.split('/').filter(Boolean);
+  if (seg.length === 0) return host;
+  // For known sections keep only the section name, drop the long id.
+  if (seg[0] === 'post' || seg[0] === 'profile' || seg[0] === 'comments') {
+    return `${host}/${seg[0]}`;
+  }
+  // Otherwise show host + first segment, truncated.
+  const tail = seg[0].length > 16 ? seg[0].slice(0, 15) + '…' : seg[0];
+  return `${host}/${tail}`;
 }
 
 // Module-level parse cache: the same text often renders many times (list
