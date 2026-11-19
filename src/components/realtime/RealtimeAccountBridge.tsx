@@ -14,6 +14,8 @@ import { isActiveThread } from '../../services/activeThread';
 import { useInAppAlert } from '../../store/inAppAlertStore';
 import { isAlertCategoryEnabled } from '../../store/settingsStore';
 import { isChatMuted } from '../../store/chatSettingsStore';
+import { filterTombstoned } from '../../services/messageTombstones';
+import { CHAT_TAIL_ROWS, readChatDiskSeed } from '../../utils/chatDiskSeed';
 
 /**
  * Is this URL an animated image, so the alert can say "sent you a GIF" rather than "a photo"?
@@ -252,7 +254,36 @@ export function RealtimeAccountBridge(): null {
           //    chat — no spinner, no fetch round-trip.
           try {
             const chatStore = useChatStore.getState();
-            const existing = chatStore.messages[conversationId] || [];
+            let existing = chatStore.messages[conversationId] || [];
+
+            // ── NEVER START A TRANSCRIPT FROM A PING ──────────────────────────
+            //
+            // Reported: opening a chat from the in-app banner showed it empty, the earlier
+            // conversation gone. The chat screen treats a non-empty store bucket as the whole
+            // transcript: it skips its disk seed, drops server history older than the bucket's
+            // oldest row, and writes the bucket over `chat_tail:<id>`, which makes the next open
+            // from anywhere read the same one message. A bucket created here from a single ping is
+            // exactly that. So when there is no bucket yet, start it from the same disk read the
+            // screen would have done (same sender heal, deleted rows dropped), then append.
+            if (existing.length === 0) {
+              try {
+                const tail = readChatDiskSeed<any>(conversationId, CHAT_TAIL_ROWS);
+                if (tail.length > 0) {
+                  const healed = tail.map((m) => {
+                    if (m?.senderId === 'current' && myId) return { ...m, senderId: myId };
+                    if (m?.senderId === 'peer' && senderId) return { ...m, senderId };
+                    return m;
+                  });
+                  const kept = filterTombstoned(conversationId, healed) as any[];
+                  if (kept.length > 0) {
+                    chatStore.setMessages(conversationId, kept as any);
+                    existing = kept;
+                  }
+                }
+              } catch {
+                // No cache to start from: the ping alone is all this device knows.
+              }
+            }
 
             // Three payload shapes, in priority order:
             //   1) Worker `notif.message` (current): snake_case full message
@@ -327,6 +358,9 @@ export function RealtimeAccountBridge(): null {
             if (!existing.some((m: any) => m.id === stableId)) {
               chatStore.addMessage(conversationId, {
                 id: stableId,
+                // The server's id, so the chat screen's history check can tell later that the
+                // sender deleted it (`pruneServerDeleted` only trusts rows that carry one).
+                serverId: dbMessageId || undefined,
                 conversationId,
                 senderId: senderId || 'peer',
                 text,
