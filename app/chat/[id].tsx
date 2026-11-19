@@ -37,6 +37,7 @@ import { useMediaPanelLabels } from '../../src/components/chat/useMediaPanelLabe
 import { encodeReplyMarker, decodeReplyMarker } from '../../src/utils/chatReplyMarker';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
+import { leaseChannel } from '../../src/services/realtime/channelLease';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
 import { usePinnedMessagesStore, selectPinnedIds, resolvePinned } from '../../src/store/pinnedMessagesStore';
@@ -398,10 +399,23 @@ const HISTORY_REOPEN_FRESH_MS = 60_000;
 function newestPeerMessageKey(convId: string): string | null {
   if (!convId) return null;
   const me = useAuthStore.getState().user?.id;
-  const list = (useChatStore.getState().messages[convId] || []) as ChatMessage[];
+  let list = (useChatStore.getState().messages[convId] || []) as ChatMessage[];
+  // ── THE FIRST OPEN IN A SESSION MARKS BEFORE THE STORE HAS ANY ROWS ──────────
+  //
+  // The disk seed is moved into the store after the push animation (`runAfterInteractions`), and the
+  // mount mark runs at mount, so it found an empty bucket and recorded no key. Leaving then always
+  // looked like "the peer wrote something since the last mark" and sent a second POST: 7 read POSTs
+  // for 4 chats opened and closed with nothing received, measured on the emulator. The screen is
+  // showing the disk tail at that moment, so that is what the mark covers. Only the tail key, never
+  // the full history blob: this needs the newest rows, and the tail is at most CHAT_TAIL_ROWS long.
+  if (list.length === 0) {
+    const tail = kvGetJSONSync<ChatMessage[]>(tailKey(convId), []);
+    list = Array.isArray(tail) ? tail : [];
+  }
   for (let i = list.length - 1; i >= 0; i--) {
     const m = list[i];
-    if (m && m.senderId && m.senderId !== me) return String(m.id);
+    // 'current' is the legacy on-disk sentinel for the signed-in user (see `healLegacySender`).
+    if (m && m.senderId && m.senderId !== me && m.senderId !== 'current') return String(m.id);
   }
   return null;
 }
@@ -4520,7 +4534,11 @@ export default function ChatScreen() {
     if (!conversationId) return;
     const realtime = getRealtime();
     if (!realtime) return; // No client yet — the poll above re-arms this effect.
-    const channel = realtime.channels.get(chatChannelName(conversationId));
+    // Leased, so the channel detaches once no chat screen for this conversation is mounted. New
+    // messages for a closed chat still arrive through the account's notification channel
+    // (`RealtimeAccountBridge`); this channel only feeds the open screen. See channelLease.ts.
+    const lease = leaseChannel(realtime, chatChannelName(conversationId));
+    const channel = lease.channel;
     const ownUserId = useAuthStore.getState().user?.id;
 
     const onNewMessage = (msg: { data?: any }) => {
@@ -4658,6 +4676,7 @@ export default function ChatScreen() {
       try { channel.unsubscribe('msg', onNewMessage); } catch {}
       try { channel.unsubscribe('msg.edit', onEdit); } catch {}
       try { channel.unsubscribe('msg.delete', onDelete); } catch {}
+      lease.release();
     };
   }, [conversationId, addMessage, setMessages, realtimeTick]);
 
