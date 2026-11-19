@@ -187,6 +187,17 @@ export function getRealtime(): Ably.Realtime | null {
       // Keep recent messages so a quick UI re-mount doesn't have to
       // re-fetch history from Ably's history API.
       transports: ['web_socket'],
+      // ── DO NOT DELIVER THIS CONNECTION'S OWN PUBLISHES BACK TO IT ─────────────
+      //
+      // Ably's default is to echo every message a connection publishes back to that same
+      // connection. Everything this client publishes (chat `msg` / `msg.edit` / `msg.delete`,
+      // typing every two seconds while typing) is already dropped on receipt by sender id, in
+      // the chat screen and in `useTypingPeers`, so the echo was inbound traffic, a JSON parse
+      // and a listener dispatch for nothing, and each one counted against the account's Ably
+      // message quota. Only this connection is affected: the same account on another device
+      // still receives everything, and messages the Worker publishes (`notif.message`,
+      // `post:*`, `post:author:*`) come from the Worker's own connection and are unaffected.
+      echoMessages: false,
     };
   } else if (fallbackKey) {
     // Read-only mode. Useful for dev devices that haven't completed the
