@@ -1900,6 +1900,8 @@ type VisibilityTracker = {
   // when the list settles (see the staggered-resume pump in ChatScreen).
   subscribeRow: (id: string, listener: () => void) => () => void;
   isVisible: (id: string) => boolean;
+  /** In the latest viewability report. Unlike `isVisible`, false until the first report lands. */
+  isOnScreen: (id: string) => boolean;
   update: (next: Set<string>) => void;
   // Pause/resume animation globally while the list is actively scrolling — a
   // screenful of animated GIFs decoding every frame DURING a scroll/fling is
@@ -1925,6 +1927,9 @@ type VisibilityTracker = {
 type VisibilityBubbleProps = Omit<React.ComponentProps<typeof MemoMessageBubble>, 'isVisible'> & {
   tracker: VisibilityTracker;
 };
+/** What a row whose rendering does not depend on visibility subscribes to: nothing ever changes. */
+const subscribeNothing = (_listener: () => void) => () => {};
+const alwaysVisible = () => true;
 const VisibilityBubble = React.memo(function VisibilityBubble({ tracker, ...rest }: VisibilityBubbleProps) {
   const id = rest.message.id;
   // Per-row subscription: bind this row's id to the tracker so scroll-pause /
@@ -1952,7 +1957,42 @@ const VisibilityBubble = React.memo(function VisibilityBubble({ tracker, ...rest
   // report) saw an empty set. `setHasGif` only adds to a set and notifies no one, so this is safe
   // during render; the effect keeps the cleanup.
   if (hasGif) tracker.setHasGif(id, true);
-  const isVisible = useSyncExternalStore(subscribeRow, () => tracker.isVisible(id));
+  // ── A ROW READS ONLY AS MUCH OF THE TRACKER AS IT USES ─────────────────────
+  //
+  // The bubble uses `isVisible` for two things: a GIF's `autoplay` (on a still photo it does
+  // nothing) and the link preview's `active`, which only holds back the FIRST fetch of a preview
+  // that is not cached yet. Every scroll past a row flipped its snapshot twice (visible, then not)
+  // and re-rendered it each time, together with its GestureDetector, which pushes both gesture
+  // handlers to native on every render; on a link row the flip also re-ran the preview's effect,
+  // which re-issues its thumbnail prefetch. Measured on the emulator, six swipes up and six down
+  // through a long chat: 44-57 renders of rows that were already on screen (22-29 text rows, 14
+  // link rows, 8-14 photo rows). With the modes below: 8-9 (GIF rows, and a link row's first
+  // appearance); 61-76 bubble renders in all became 25, and JS time while scrolling fell 18-21%.
+  //   'gif'  live, as before: off screen and while scrolling the animation pauses;
+  //   'link' live until the row is first reported on screen, then latched, since the fetch has
+  //          started and nothing else reads the value;
+  //   'none' text and still photos: a constant, and no subscription.
+  const visMode = useMemo<'gif' | 'link' | 'none'>(() => {
+    if (hasGif) return 'gif';
+    // Superset of the bubble's `previewLink`, which needs no images and an http(s) URL.
+    if ((rest.message.imageUrls?.length ?? 0) === 0 && /https?:\/\//i.test(rest.message.text || '')) return 'link';
+    return 'none';
+  }, [hasGif, rest.message.imageUrls, rest.message.text]);
+  // The id whose link row has been on screen. Compared by id, so a recycled cell starts over.
+  const seenOnScreenRef = useRef<string | null>(null);
+  const getSnapshot = () => {
+    if (visMode !== 'link') return tracker.isVisible(id);
+    if (seenOnScreenRef.current === id) return true;
+    if (tracker.isOnScreen(id)) {
+      seenOnScreenRef.current = id;
+      return true;
+    }
+    return tracker.isVisible(id);
+  };
+  const isVisible = useSyncExternalStore(
+    visMode === 'none' ? subscribeNothing : subscribeRow,
+    visMode === 'none' ? alwaysVisible : getSnapshot,
+  );
   useEffect(() => {
     tracker.setHasGif(id, hasGif);
     return () => tracker.setHasGif(id, false);
@@ -6554,6 +6594,9 @@ export default function ChatScreen() {
           if (rank >= GIF_ANIM_CAP) return false;
         }
         return true;
+      },
+      isOnScreen(itemId) {
+        return ready && visibleSet.has(itemId);
       },
       update(next) {
         // Skip the listener fan-out when the viewable set is unchanged —
