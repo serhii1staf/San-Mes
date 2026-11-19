@@ -21,11 +21,11 @@
  * hidden subtree, so every switch would rebuild them anyway.
  */
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator, type LayoutChangeEvent } from 'react-native';
+import { Animated, Easing as RNEasing, Pressable, StyleSheet, View, useWindowDimensions, ActivityIndicator, type LayoutChangeEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useIsFocused } from '@react-navigation/native';
-import Reanimated, { Easing, cancelAnimation, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming, type SharedValue } from 'react-native-reanimated';
+import Reanimated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 import type { ActionMenuAnchor } from '../ui/ActionMenu';
 import { ProfilePostMenu } from './ProfilePostMenu';
 import { router } from 'expo-router';
@@ -199,46 +199,80 @@ const ReplyRow = memo(function ReplyRow({ reply }: { reply: ProfileReply }) {
 
 // ── «Что нового?» emoji ticker ──────────────────────────────────────────────
 // Replaces the photo icon on the compose row: one emoji at a time, cross-fading into the next while
-// drifting up a little. One shared value drives every glyph on the UI thread, so React never
-// re-renders for it; it stops when the profile or its pane is not on screen, or Reduce Motion is on.
+// drifting up a little. It stops when the profile or its pane is not on screen, or Reduce Motion is on.
+//
+// ── ON THE NATIVE ANIMATED DRIVER, NOT A REANIMATED STYLE ────────────────────
+// This runs for as long as the own profile is open, so its per-frame cost is the profile's idle cost.
+// A Reanimated style is applied with a shadow-tree commit (layout pass and mount) on every frame;
+// Reanimated 4.1 has no faster path for it on iOS. The native driver sets the layer's opacity and
+// transform directly and never touches the JS thread or the shadow tree. Same curves as before,
+// expressed as interpolation ranges over one value that runs 0 → TICKER.length per cycle.
 const TICKER = ['🖼️', '✨', '📸', '🎧', '💭', '🌿', '😊'];
 const TICKER_STEP_MS = 2600;
 const FADE = 0.25;
+const TICKER_RISE = FADE * 24;
 
-const TickerGlyph = memo(function TickerGlyph({ glyph, index, t }: { glyph: string; index: number; t: SharedValue<number> }) {
-  const style = useAnimatedStyle(() => {
-    const n = TICKER.length;
-    // Where this glyph is in the cycle: [0, 1) is its turn; the FADE before it overlaps the
-    // previous glyph's fade-out, which makes it a cross-fade rather than a blink.
-    let u = (((t.value - index) % n) + n) % n;
-    if (u > n - FADE) u -= n;
-    let opacity = 0;
-    if (u < 0) opacity = (u + FADE) / FADE;
-    else if (u < 1 - FADE) opacity = 1;
-    else if (u < 1) opacity = (1 - u) / FADE;
-    const y = u < 0 ? -u * 24 : u > 1 - FADE ? -(u - (1 - FADE)) * 24 : 0;
-    const scale = 0.9 + 0.1 * opacity;
-    return { opacity, transform: [{ translateY: y }, { scale }] };
-  });
-  return <Reanimated.Text allowFontScaling={false} style={[styles.tickerGlyph, style]}>{glyph}</Reanimated.Text>;
+/** Interpolation ranges for glyph `index`: its turn is [index, index + 1), the fade-in starts FADE early. */
+function tickerRanges(index: number) {
+  const n = TICKER.length;
+  if (index === 0) {
+    // Its fade-in is the end of the previous cycle.
+    return {
+      input: [0, 1 - FADE, 1, n - FADE, n],
+      opacity: [1, 1, 0, 0, 1],
+      y: [0, 0, -TICKER_RISE, TICKER_RISE, 0],
+      scale: [1, 1, 0.9, 0.9, 1],
+    };
+  }
+  const input = [0, index - FADE, index, index + 1 - FADE, index + 1];
+  const opacity = [0, 0, 1, 1, 0];
+  const y = [TICKER_RISE, TICKER_RISE, 0, 0, -TICKER_RISE];
+  const scale = [0.9, 0.9, 1, 1, 0.9];
+  if (index + 1 < n) {
+    input.push(n);
+    opacity.push(0);
+    y.push(-TICKER_RISE);
+    scale.push(0.9);
+  }
+  return { input, opacity, y, scale };
+}
+
+const TickerGlyph = memo(function TickerGlyph({ glyph, index, v }: { glyph: string; index: number; v: Animated.Value }) {
+  const style = useMemo(() => {
+    const r = tickerRanges(index);
+    return {
+      opacity: v.interpolate({ inputRange: r.input, outputRange: r.opacity }),
+      transform: [
+        { translateY: v.interpolate({ inputRange: r.input, outputRange: r.y }) },
+        { scale: v.interpolate({ inputRange: r.input, outputRange: r.scale }) },
+      ],
+    };
+  }, [index, v]);
+  return <Animated.Text allowFontScaling={false} style={[styles.tickerGlyph, style]}>{glyph}</Animated.Text>;
 });
 
 function EmojiTicker({ visible }: { visible: boolean }) {
   const focused = useIsFocused();
   const reduceMotion = useReducedMotion();
-  const t = useSharedValue(0);
+  const v = useRef(new Animated.Value(0)).current;
   const running = focused && visible && !reduceMotion;
   useEffect(() => {
     if (!running) {
-      cancelAnimation(t);
+      v.stopAnimation();
       return;
     }
-    t.value = withRepeat(withTiming(t.value + TICKER.length, { duration: TICKER_STEP_MS * TICKER.length, easing: Easing.linear }), -1, false);
-    return () => cancelAnimation(t);
-  }, [running, t]);
+    // From the first glyph: `Animated.loop` resets to the value it started from on every iteration,
+    // so resuming mid-cycle would replay only the glyphs after that point.
+    v.setValue(0);
+    const loop = Animated.loop(
+      Animated.timing(v, { toValue: TICKER.length, duration: TICKER_STEP_MS * TICKER.length, easing: RNEasing.linear, useNativeDriver: true }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [running, v]);
   return (
     <View style={styles.ticker} pointerEvents="none" importantForAccessibility="no-hide-descendants">
-      {TICKER.map((g, i) => <TickerGlyph key={g} glyph={g} index={i} t={t} />)}
+      {TICKER.map((g, i) => <TickerGlyph key={g} glyph={g} index={i} v={v} />)}
     </View>
   );
 }

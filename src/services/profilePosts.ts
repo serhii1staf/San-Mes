@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { InteractionManager } from 'react-native';
 import { apiGet } from './apiClient';
 import { kvGetJSONSync, kvSetJSON } from './kvStore';
+import { useAuthStore } from '../store/authStore';
 
 export interface ProfilePostAuthor {
   id: string;
@@ -57,6 +58,18 @@ const PAGE = 30;
  * changes invalidate immediately and do not wait for this.
  */
 const FRESH_MS = 5 * 60_000;
+/**
+ * Someone else's page is trusted for 20 seconds instead. Reported: "she published, and it showed up
+ * for me two minutes later". Her page was still inside FRESH_MS on my device, so opening her profile
+ * showed the old one. Now opening it refetches unless it was fetched moments ago: at most one request
+ * per profile open, no polling, and the cached page stays on screen while the new one loads.
+ */
+const OTHERS_FRESH_MS = 20_000;
+
+/** How long `profileId`'s page is trusted on this device. */
+function freshFor(profileId: string): number {
+  return useAuthStore.getState().user?.id === profileId ? FRESH_MS : OTHERS_FRESH_MS;
+}
 
 type Entry<T> = { at: number; items: T[] };
 type InvalidationKind = 'all' | 'replies';
@@ -188,7 +201,7 @@ function useCachedList<T>(
     if (cached) {
       setItems(cached.items);
       setLoading(false);
-      if (Date.now() - cached.at < FRESH_MS) return;
+      if (Date.now() - cached.at < freshFor(profileId)) return;
     } else {
       // Nothing to show yet: say so, instead of letting an empty list read as "no posts".
       setLoading(true);

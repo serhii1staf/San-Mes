@@ -18,22 +18,33 @@
  *
  * The loop starts after the open transition and stops while the screen is not focused (the own
  * profile tab stays mounted behind the other tabs) or when Reduce Motion is on.
+ *
+ * ── THE IDLE LOOP IS ON THE NATIVE ANIMATED DRIVER ──────────────────────────
+ *
+ * The drift, turn and squash run for as long as a profile with links is open, so their per-frame cost
+ * is that profile's idle cost. As Reanimated styles they were three shadow-tree commits per drop per
+ * frame (each a layout pass and a mount); Reanimated 4.1 has no faster path for them on iOS. Measured
+ * on the Android emulator, a profile with three links rendered continuously at about 14 fps while
+ * nothing was touched. The native driver sets layer transforms directly, off the JS thread and outside
+ * the shadow tree. The curves are the same, sampled into interpolation ranges over one value that runs
+ * 0 → 1 per period. Dragging, popping and the hop stay on Reanimated: they only run while touched.
+ *
+ * The droplets a drop bursts into (seven animated views per drop) mount when any drop is first
+ * grabbed, which is the only way a burst can start, instead of on every profile open.
  */
-import React, { memo, useCallback, useEffect, useMemo } from 'react';
-import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated as RNAnimated, Easing as RNEasing, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { FontAwesome5 } from '@expo/vector-icons';
 import Svg, { Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
   Easing,
-  cancelAnimation,
   runOnJS,
   useAnimatedReaction,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withDelay,
-  withRepeat,
   withSequence,
   withSpring,
   withTiming,
@@ -99,6 +110,23 @@ function blobPath(cx: number, cy: number, R: number, seed: number, amp: number):
   return `${d}Z`;
 }
 
+/**
+ * `base + amp·sin(2π·k·u + phase)` for u in [0, 1], sampled for `Animated.Value.interpolate`. Eight
+ * samples per cycle: linear interpolation then stays within about 8 % of the amplitude, which at these
+ * amplitudes (3 pt, or 5 % of a scale) is below what can be seen.
+ */
+function sineRange(k: number, phase: number, amp: number, base = 0) {
+  const steps = Math.max(8, Math.ceil(k * 8));
+  const inputRange: number[] = [];
+  const outputRange: number[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps;
+    inputRange.push(u);
+    outputRange.push(base + amp * Math.sin(TAU * k * u + phase));
+  }
+  return { inputRange, outputRange };
+}
+
 const DROPLETS = 7;
 
 /** One of the droplets a popped drop bursts into: flies out, falls, fades. Idle = invisible. */
@@ -140,15 +168,17 @@ interface BubbleProps {
   centers: number[][];
   pops: SharedValue<number[]>;
   lastPop: SharedValue<number[]>;
+  /** Whether the burst droplets are mounted. Set once any drop has been grabbed. */
+  armed: boolean;
+  onGrab: () => void;
 }
 
-const Bubble = memo(function Bubble({ url, size, left, top, index, running, websiteLabel, centers, pops, lastPop }: BubbleProps) {
+const Bubble = memo(function Bubble({ url, size, left, top, index, running, websiteLabel, centers, pops, lastPop, armed, onGrab }: BubbleProps) {
   const kind = detectLinkKind(url);
   const brand = linkKindInfo(kind);
   const dx = useSharedValue(0);
   const dy = useSharedValue(0);
   const scale = useSharedValue(1);
-  const t = useSharedValue(index * 0.17);
   const pop = useSharedValue(1);
   const hop = useSharedValue(0);
   const burst = useSharedValue(0);
@@ -163,14 +193,58 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
   const cx = left + R;
   const cy = top + R;
 
+  // 0 → 1 per period, on the native driver. See the note at the top of the file.
+  const loop = useRef(new RNAnimated.Value(0)).current;
   useEffect(() => {
     if (!running) {
-      cancelAnimation(t);
+      loop.stopAnimation();
       return;
     }
-    t.value = withRepeat(withTiming(t.value + 1, { duration: period, easing: Easing.linear }), -1, false);
-    return () => cancelAnimation(t);
-  }, [running, t, period]);
+    const anim = RNAnimated.loop(
+      RNAnimated.timing(loop, { toValue: 1, duration: period, easing: RNEasing.linear, useNativeDriver: true }),
+    );
+    // From the start of a cycle: the loop resets to the value it started from on every iteration.
+    loop.setValue(0);
+    anim.start();
+    return () => anim.stop();
+  }, [running, loop, period]);
+
+  // The idle motion, as functions of the cycle. Each drop starts `index * 0.17` of a cycle in, so the
+  // cluster does not move in step; that offset is folded into each curve's phase.
+  const idle = useMemo(() => {
+    const start = index * 0.17;
+    const at = (k: number) => TAU * k * start + phase;
+    const fx = sineRange(2, at(2), 3);
+    const fy = sineRange(3, at(3) + Math.PI / 2, 3.5);
+    const sx = sineRange(4, at(4), 0.05, 1);
+    const sy = sineRange(4, at(4) + 2.1, 0.05, 1);
+    const sw = sineRange(3, at(3), 0.08, 1);
+    return {
+      drift: {
+        transform: [
+          { translateX: loop.interpolate(fx) },
+          { translateY: loop.interpolate(fy) },
+        ],
+      },
+      // The outline: an irregular blob, turned and squashed. The squash is in the blob's own (rotating)
+      // frame, so the silhouette keeps changing instead of just spinning.
+      body: {
+        transform: [
+          { rotate: loop.interpolate({ inputRange: [0, 1], outputRange: [`${dir * start * 360}deg`, `${dir * (start + 1) * 360}deg`] }) },
+          { scaleX: loop.interpolate(sx) },
+          { scaleY: loop.interpolate(sy) },
+        ],
+      },
+      // The lighter liquid inside orbits the other way, off-centre.
+      swirl: {
+        transform: [
+          { rotate: loop.interpolate({ inputRange: [0, 1], outputRange: [`${-dir * start * 720}deg`, `${-dir * (start + 1) * 720}deg`] }) },
+          { translateX: R * 0.14 },
+          { scale: loop.interpolate(sw) },
+        ],
+      },
+    };
+  }, [loop, index, phase, dir, R]);
 
   const open = useCallback(() => {
     triggerHaptic('light');
@@ -178,11 +252,12 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
   }, [url]);
   // The held drop rides above its neighbours (siblings paint in order otherwise). Set once per
   // grab and once per release, never per frame.
-  const [lifted, setLifted] = React.useState(false);
+  const [lifted, setLifted] = useState(false);
   const grabbed = useCallback(() => {
     triggerHaptic('selection');
     setLifted(true);
-  }, []);
+    onGrab();
+  }, [onGrab]);
   const released = useCallback(() => setLifted(false), []);
   const popped = useCallback(() => triggerHaptic('light'), []);
 
@@ -269,42 +344,17 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
     return Gesture.Race(pan, tap);
   }, [dx, dy, scale, open, grabbed, released, centers, index, cx, cy, R, pops, lastPop]);
 
+  // Only what a touch moves. The idle drift is on the native driver, on a view inside this one.
   const containerStyle = useAnimatedStyle(() => {
-    const th = t.value * TAU;
-    const fx = Math.sin(th * 2 + phase) * 3;
-    const fy = Math.cos(th * 3 + phase) * 3.5;
     // Stretch along the pull while it is held away from home.
     const pull = Math.min(1, Math.sqrt(dx.value * dx.value + dy.value * dy.value) / 140);
     const s = scale.value * pop.value;
     return {
       transform: [
-        { translateX: dx.value + fx },
-        { translateY: dy.value + fy + hop.value },
+        { translateX: dx.value },
+        { translateY: dy.value + hop.value },
         { scaleX: s * (1 + pull * 0.08) },
         { scaleY: s * (1 - pull * 0.08) },
-      ],
-    };
-  });
-  // The outline: an irregular blob, turned and squashed. Squash is in the blob's own (rotating)
-  // frame, so the silhouette keeps changing instead of just spinning.
-  const bodyStyle = useAnimatedStyle(() => {
-    const th = t.value * TAU;
-    return {
-      transform: [
-        { rotate: `${dir * t.value * 360}deg` },
-        { scaleX: 1 + 0.05 * Math.sin(th * 4 + phase) },
-        { scaleY: 1 + 0.05 * Math.sin(th * 4 + phase + 2.1) },
-      ],
-    };
-  });
-  // The lighter liquid inside orbits the other way, off-centre.
-  const swirlStyle = useAnimatedStyle(() => {
-    const th = t.value * TAU;
-    return {
-      transform: [
-        { rotate: `${-dir * t.value * 720}deg` },
-        { translateX: R * 0.14 },
-        { scale: 1 + 0.08 * Math.sin(th * 3 + phase) },
       ],
     };
   });
@@ -330,7 +380,8 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
           accessibilityLabel={brand.label || websiteLabel}
           style={[{ position: 'absolute', left, top, width: size, height: size, zIndex: lifted ? 10 : 0 }, containerStyle]}
         >
-          <Reanimated.View pointerEvents="none" style={[canvasBox, bodyStyle]}>
+          <RNAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, idle.drift]}>
+          <RNAnimated.View pointerEvents="none" style={[canvasBox, idle.body]}>
             <Svg width={canvas} height={canvas}>
               <Defs>
                 {/* Gel shading: lit from the top left, deeper colour toward the far edge. */}
@@ -342,12 +393,12 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
               </Defs>
               <Path d={outline} fill={`url(#b${id})`} fillOpacity={0.95} stroke="#FFFFFF" strokeOpacity={0.35} strokeWidth={1} />
             </Svg>
-          </Reanimated.View>
-          <Reanimated.View pointerEvents="none" style={[canvasBox, swirlStyle]}>
+          </RNAnimated.View>
+          <RNAnimated.View pointerEvents="none" style={[canvasBox, idle.swirl]}>
             <Svg width={canvas} height={canvas}>
               <Path d={inner} fill="#FFFFFF" fillOpacity={0.16} />
             </Svg>
-          </Reanimated.View>
+          </RNAnimated.View>
           {/* Specular highlight: does NOT turn with the blob, so the light stays put. */}
           <View pointerEvents="none" style={canvasBox}>
             <Svg width={canvas} height={canvas}>
@@ -374,14 +425,18 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
               <FontAwesome5 name={brand.icon} size={Math.round(iconSize * 0.9)} color="#FFFFFF" solid style={styles.iconShadow} />
             )}
           </View>
+          </RNAnimated.View>
         </Reanimated.View>
       </GestureDetector>
-      {/* Droplets live outside the drop, so they keep flying while the drop itself is gone. */}
-      <View pointerEvents="none" style={{ position: 'absolute', left, top, width: size, height: size }}>
-        {Array.from({ length: DROPLETS }, (_, i) => (
-          <Droplet key={i} burst={burst} index={i} size={size} color={i % 3 === 0 ? light : gel} />
-        ))}
-      </View>
+      {/* Droplets live outside the drop, so they keep flying while the drop itself is gone. Mounted
+          once a drop has been grabbed: a burst only happens when another drop is dragged into this one. */}
+      {armed ? (
+        <View pointerEvents="none" style={{ position: 'absolute', left, top, width: size, height: size }}>
+          {Array.from({ length: DROPLETS }, (_, i) => (
+            <Droplet key={i} burst={burst} index={i} size={size} color={i % 3 === 0 ? light : gel} />
+          ))}
+        </View>
+      ) : null}
     </>
   );
 });
@@ -410,6 +465,8 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
   const settled = useTransitionSettled();
   const pops = useSharedValue<number[]>([0, 0, 0, 0, 0]);
   const lastPop = useSharedValue<number[]>([0, 0, 0, 0, 0]);
+  const [armed, setArmed] = useState(false);
+  const arm = useCallback(() => setArmed(true), []);
 
   const list = links.slice(0, 5);
   const areaW = Math.max(0, width - left - 12);
@@ -448,6 +505,8 @@ export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
             centers={centers}
             pops={pops}
             lastPop={lastPop}
+            armed={armed}
+            onGrab={arm}
           />
         );
       })}
