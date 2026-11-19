@@ -32,6 +32,7 @@ import { bottomScrimColors, BOTTOM_CHROME_SCRIM_HEIGHT, SCRIM_LOCATIONS } from '
 import { BOTTOM_CHROME_SPRING } from '../../theme/motion';
 import { triggerHaptic } from '../../utils/haptics';
 import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
+import { GlassRim } from '../ui/GlassRim';
 import { useTabBarStore } from '../../store/tabBarStore';
 import { useAuthStore } from '../../store';
 import { useChatUnread, totalChatUnread } from '../../store/chatUnreadStore';
@@ -689,17 +690,21 @@ const GlassBackdrop = React.memo(function GlassBackdrop({ isDark, interactive, r
   // explicit borderRadius here the native glass would show as a SQUARE.
   const roundStyle = radius != null ? { borderRadius: radius } : null;
   const iosFallback = (
-    <BlurView
-      // System material tints render the real iOS Liquid-Glass look —
-      // they're processed by UIVisualEffectView and include the proper
-      // saturation boost + slight vibrancy that flat dark/light tints lack.
-      // `systemChromeMaterial` is the stock Apple chrome (tab bars,
-      // navigation bars) — the closest thing to "real" floating glass
-      // available without iOS 26 private APIs.
-      intensity={isDark ? 70 : 80}
-      tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
-      style={[StyleSheet.absoluteFill, roundStyle, radius != null ? { overflow: 'hidden' } : null]}
-    />
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <BlurView
+        // System material tints render the real iOS Liquid-Glass look —
+        // they're processed by UIVisualEffectView and include the proper
+        // saturation boost + slight vibrancy that flat dark/light tints lack.
+        // `systemChromeMaterial` is the stock Apple chrome (tab bars,
+        // navigation bars) — the closest thing to "real" floating glass
+        // available without iOS 26 private APIs.
+        intensity={isDark ? 70 : 80}
+        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
+        style={[StyleSheet.absoluteFill, roundStyle, radius != null ? { overflow: 'hidden' } : null]}
+      />
+      {/* The glass edge where native liquid glass is not available. See GlassRim. */}
+      <GlassRim radius={radius ?? BAR_BORDER_RADIUS} isDark={isDark} />
+    </View>
   );
   // ── THE ANDROID GRADIENT IS GONE; `BlurView` HANDLES BOTH PLATFORMS NOW ────
   //
@@ -729,19 +734,7 @@ const GlassBackdrop = React.memo(function GlassBackdrop({ isDark, interactive, r
   );
 });
 
-const TopReflection = React.memo(function TopReflection({ isDark }: { isDark: boolean }) {
-  return (
-    <LinearGradient
-      colors={
-        isDark
-          ? ['rgba(255,255,255,0.14)', 'rgba(255,255,255,0.0)']
-          : ['rgba(255,255,255,0.55)', 'rgba(255,255,255,0.0)']
-      }
-      style={styles.reflection}
-      pointerEvents="none"
-    />
-  );
-});
+
 
 // ─── Profile Capsule (detached, standalone glass button) ─────────────────────
 //
@@ -819,7 +812,6 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
             `interactive` makes the genuine glass morph OUTWARD on touch — only
             the detached Profile capsule opts in (the main bar never does). */}
         <GlassBackdrop isDark={isDark} interactive radius={(TAB_BUTTON_HEIGHT + 2 * TAB_ROW_PADDING_V) / 2} />
-        {!glassActive && <TopReflection isDark={isDark} />}
         {/* Active selection fill sits above the glass but below the icon. */}
         {activeBg !== 'transparent' && (
           <View
@@ -1658,7 +1650,6 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           {/* The extra reflection gradient only helps the FAKE glass read as
               curved. On real native glass it just dulls the genuine highlight,
               so we skip it entirely. */}
-          {!glassActive && <TopReflection isDark={isDark} />}
 
           {/* Lens sits between the backdrop and the tab row so the icons
               render on top. The lens itself no longer carries its own
@@ -1826,15 +1817,5 @@ const styles = StyleSheet.create({
     borderRadius: PILL_HEIGHT / 2,
     overflow: 'hidden',
     zIndex: 5,
-  },
-  reflection: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: '46%',
-    borderTopLeftRadius: BAR_BORDER_RADIUS,
-    borderTopRightRadius: BAR_BORDER_RADIUS,
-    zIndex: 2,
   },
 });
