@@ -986,4 +986,12 @@ const styles = StyleSheet.create({
 // Wrap with Sentry.wrap so the root component is included in the
 // performance + error reporting envelope. This is the recommended way to
 // register the entry component per Sentry React Native docs.
-export default Sentry.wrap(RootLayout);
+//
+// `maxComponentTreeSize: 0` turns off touch breadcrumbs. On every touch start, `TouchEventBoundary`
+// walks the fiber tree from the touched view toward the root looking for 20 named components, then
+// sends a breadcrumb to the native SDK. This app has no component-name annotation, so few fibers are
+// named and the walk runs most of the way up. In the emulator profile of fast-scrolling a long chat
+// that was 117 ms of JS time over about 20 flings, each one at the start of a gesture. Navigation and
+// console breadcrumbs, errors and traces are unaffected. Interaction spans were already off
+// (`enableUserInteractionTracing` is not set).
+export default Sentry.wrap(RootLayout, { touchEventBoundaryProps: { maxComponentTreeSize: 0 } });
