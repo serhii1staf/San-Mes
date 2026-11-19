@@ -16,7 +16,7 @@
 // values/worklets); `runOnJS` is used at most once per gesture phase (never per
 // frame) for haptics, the parent scroll-lock, and the reply/menu callbacks.
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -124,6 +124,32 @@ export function useMessageGestures<T extends { id: string }>({
   const [replyIconArmed, setReplyIconArmed] = useState(false);
   const armReplyIcon = useCallback(() => setReplyIconArmed(true), []);
 
+  // ── THE GESTURES DO NOT CLOSE OVER THE MESSAGE ─────────────────────────────
+  //
+  // Both gestures used to list `message` in their memo deps and capture it in their worklets. So any
+  // new message object — a recycled cell showing another message, an edit, a store write that rebuilt
+  // the row — built two new Gesture objects. GestureDetector then reattached them: a native
+  // `updateGestureHandler` per gesture plus a rewrite of the shared value holding the handlers, which
+  // serialises every worklet closure, the whole message included, to the UI runtime
+  // (`createSerializableObject`, 55-73 ms per chat open in the emulator profiles).
+  //
+  // The worklets now call stable JS callbacks, and those read the current message from a ref. The
+  // ref is updated in a layout effect, which runs in the same commit, before anything can be touched
+  // on screen; a recycled cell is off screen while it changes message, so no gesture can be running
+  // on it.
+  const messageRef = useRef(message);
+  useLayoutEffect(() => {
+    messageRef.current = message;
+  }, [message]);
+  const fireReply = useCallback(() => onReply(messageRef.current), [onReply]);
+  const fireLongPress = useCallback(() => onLongPress(messageRef.current), [onLongPress]);
+  const fireMeasured = useCallback(
+    (x: number, y: number, w: number, h: number) => onMeasured?.(messageRef.current.id, x, y, w, h),
+    [onMeasured],
+  );
+  const fireDragAction = useCallback((action: string) => onFireDragAction(messageRef.current, action), [onFireDragAction]);
+  const measures = !!onMeasured;
+
   // ── Swipe-to-reply: UI-thread Pan ──────────────────────────────────────
   const translateXSV = useSharedValue(0);
   // One-shot guard so the threshold haptic fires exactly once per gesture.
@@ -163,7 +189,7 @@ export function useMessageGestures<T extends { id: string }>({
         .onEnd((e) => {
           'worklet';
           if (e.translationX <= -REPLY_THRESHOLD) {
-            runOnJS(onReply)(message);
+            runOnJS(fireReply)();
           }
         })
         .onFinalize(() => {
@@ -175,7 +201,7 @@ export function useMessageGestures<T extends { id: string }>({
             runOnJS(onSwipeActive)(false);
           }
         }),
-    [message, onReply, onSwipeActive, translateXSV, gateFiredHapticSV, swipeActiveSV, armReplyIcon],
+    [fireReply, onSwipeActive, translateXSV, gateFiredHapticSV, swipeActiveSV, armReplyIcon],
   );
 
   // ── Press-drag-release: UI-thread LongPress + drag-to-select ───────────
@@ -193,12 +219,12 @@ export function useMessageGestures<T extends { id: string }>({
           dragActive.value = true;
           dragFingerY.value = -1;
           hoveredAction.value = '';
-          if (onMeasured) {
+          if (measures) {
             const m = measure(bubbleRef);
-            if (m) runOnJS(onMeasured)(message.id, m.pageX, m.pageY, m.width, m.height);
+            if (m) runOnJS(fireMeasured)(m.pageX, m.pageY, m.width, m.height);
           }
           runOnJS(triggerHaptic)('medium');
-          runOnJS(onLongPress)(message);
+          runOnJS(fireLongPress)();
         })
         .onTouchesMove((e) => {
           'worklet';
@@ -226,7 +252,7 @@ export function useMessageGestures<T extends { id: string }>({
         .onEnd(() => {
           'worklet';
           const action = hoveredAction.value;
-          if (action !== '') runOnJS(onFireDragAction)(message, action);
+          if (action !== '') runOnJS(fireDragAction)(action);
         })
         .onFinalize(() => {
           'worklet';
@@ -234,7 +260,7 @@ export function useMessageGestures<T extends { id: string }>({
           dragFingerY.value = -1;
           hoveredAction.value = '';
         }),
-    [message, onLongPress, onMeasured, bubbleRef, onFireDragAction, dragActive, dragFingerY, hoveredAction, actionZones],
+    [fireLongPress, fireMeasured, measures, bubbleRef, fireDragAction, dragActive, dragFingerY, hoveredAction, actionZones],
   );
 
   // Race: whichever activates FIRST wins and cancels the other. A clear
