@@ -14,14 +14,13 @@ import { useTheme } from '../../src/theme';
 import { stripBannerTransform } from '../../src/utils/bannerTransform';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { proxiedImageUrl } from '../../src/components/ui/CachedImage';
+import { proxiedImageUrl, wasShownAtWidth } from '../../src/components/ui/CachedImage';
 import Skeleton from '../../src/components/ui/Skeleton';
 import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../src/utils/appLinks';
 import { acquireDecodeSlot } from '../../src/utils/decodeGate';
-import { wasVariantLoaded } from '../../src/services/mediaVariants';
 import { CHAT_IMG_MAX_W as SHARED_CHAT_IMG_MAX_W, CHAT_MULTI_IMG_SIZE } from '../../src/utils/chatMediaSize';
 import { useTransitionSettled } from '../../src/hooks/useTransitionSettled';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
@@ -1384,9 +1383,12 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // `CachedImage` on load) is in the decoded-bitmap memory cache, which is the case
   // `singleImgKnown` wrongly assumed for anything with remembered dimensions. Only these skip the
   // gate; a cold photo still waits for a slot.
+  // `wasShownAtWidth`, not `wasVariantLoaded(url, width)`: a Giphy GIF loads straight from Giphy and
+  // is recorded under width 0, so asking with the bubble width found nothing and every GIF bubble
+  // went back through the gate and its skeleton on each reopen. See the helper in CachedImage.
   const imgsWarm = hasImages && (message.imageUrls!.length === 1
-    ? wasVariantLoaded(message.imageUrls![0], CHAT_IMG_MAX_W)
-    : message.imageUrls!.every((u) => wasVariantLoaded(u, MULTI_IMG_SIZE)));
+    ? wasShownAtWidth(message.imageUrls![0], CHAT_IMG_MAX_W)
+    : message.imageUrls!.every((u) => wasShownAtWidth(u, MULTI_IMG_SIZE)));
   useEffect(() => {
     if (!firstImgUrl || imgsWarm) return;
     setImgSlotGranted(false);

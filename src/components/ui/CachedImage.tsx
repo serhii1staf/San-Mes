@@ -145,6 +145,24 @@ function variantWidth(uri: string, finalUri: string, displayWidth: number | unde
 }
 
 /**
+ * Whether `uri`, shown by a `CachedImage` with `proxyWidth={displayWidth}`, has already finished
+ * loading this session, i.e. is almost certainly in the decoded-bitmap memory cache.
+ *
+ * Asks `mediaVariants` under the width `CachedImage` records the load with (`variantWidth`), not
+ * under `displayWidth` itself. They differ for a URL the proxy passes through: a Giphy rendition is
+ * recorded under 0. The chat asked with the display width, so after Giphy GIFs started loading
+ * directly every GIF bubble looked cold for the rest of the session and went back through the decode
+ * gate and its skeleton on every reopen. A Giphy rendition that fell back to the proxy (a network that
+ * blocks giphy.com) is recorded under the display width, so that is checked as well.
+ */
+export function wasShownAtWidth(uri: string, displayWidth: number): boolean {
+  if (!uri) return false;
+  const recorded = variantWidth(uri, proxiedImageUrl(uri, displayWidth), displayWidth);
+  if (wasVariantLoaded(uri, recorded)) return true;
+  return recorded === 0 && isGiphySizedRendition(uri) && wasVariantLoaded(uri, displayWidth);
+}
+
+/**
  * Prefetch a batch of remote images into expo-image's disk+memory cache so they
  * appear instantly when the user scrolls to them (Telegram-style). Cheap, fire-
  * and-forget, deduped by expo-image internally.
