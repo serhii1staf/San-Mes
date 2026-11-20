@@ -192,7 +192,10 @@ function png({ columns, rows, data }) {
 // 30). The capsule (60 x 60) and the dial buttons (50 x 50) have fixed sizes, so they lose 1 pt each
 // way. glisse's rim shine is 0.13 on a dark page and 0.3 on a light one; its edge line is left out
 // because those views already draw a hairline border.
-const SHINE = { dark: 0.13, light: 0.3 };
+//
+// The rims use the settings of glisse's clear `<Glass>` that was asked for (bend 1, dispersion 2,
+// frost 0.5px, rim 1): `--lg-rim-shine: 1`, set on the element, so it is the same on both themes.
+const RIM_SHINE = 1;
 const rims = {
   'rim-bar': { width: 171, height: 60, radius: 30 },
   'rim-capsule': { width: 59, height: 59, radius: 29.5 },
@@ -210,7 +213,7 @@ const save = (name, scale, map) => {
 };
 for (const scale of [1, 2, 3]) {
   for (const [name, { width, height, radius }] of Object.entries(rims)) {
-    for (const theme of ['dark', 'light']) save(`${name}-${theme}`, scale, rimMap(width, height, radius, SHINE[theme], scale));
+    save(name, scale, rimMap(width, height, radius, RIM_SHINE, scale));
   }
   save('lens-shine-dark', scale, lensShineMap(LENS.width, LENS.height, LENS.radius, scale, false));
   save('lens-shine-light', scale, lensShineMap(LENS.width, LENS.height, LENS.radius, scale, true));

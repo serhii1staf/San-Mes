@@ -3,7 +3,6 @@ import { View, Pressable, StyleSheet, Platform, LayoutChangeEvent, Text as RNTex
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from '../../components/ui/AppBlurView';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, FontAwesome5, Ionicons } from '@expo/vector-icons';
 import {
@@ -172,6 +171,10 @@ const GLOW_RADIUS = 260;
 // How long a press on a tab that did not end in a switch (a long press) keeps the lens on that tab
 // before it goes back to the selected one. Longer than a tap's press-out → navigation round trip.
 const LENS_RETURN_MS = 450;
+// Without native glass the bar, the profile capsule and the dial buttons are clear (see
+// GlassBackdrop), and a drop shadow would show THROUGH them as a dark smudge: Android draws an
+// elevation shadow under a translucent view. glisse's glass has none on a dark page either.
+const CLEAR_GLASS_NO_SHADOW = { shadowOpacity: 0, elevation: 0 } as const;
 
 // Module-scoped cache of the last measured slot width. The tab bar can remount
 // when returning from a root-stack screen pushed OVER the tabs (e.g. Profile →
@@ -481,19 +484,9 @@ const tabIconStyles = StyleSheet.create({
 // user reported. Same cost during profile scroll: every render pass for the
 // list contents had to also re-composite both BlurViews underneath.
 //
-// We now render the lens as a translucent fill, brighter than the bar's
-// tint. The bar's own BlurView still provides the actual blur of the
-// content behind, so the lens area still reads as glass — just one
-// composition pass per frame instead of two. Top reflection / bottom dim /
-// hairline border are unchanged, which is what gives the pill its rounded
-// optical volume; combined with the icon-magnify worklet that lives on the
-// UI thread, the "magnifying lens" cue is preserved without the GPU cost.
-//
-// Visual delta: the lens is very slightly less "frosted" than before — the
-// magnification cue now comes mainly from the icon-scale worklet plus the
-// brighter pill tint over the bar's blurred backdrop. The user explicitly
-// signed off on the lens look as "fine, not bad", so we trade a sliver of
-// frostiness for a buttery transition.
+// The lens is a translucent fill instead: one composition pass per frame instead of two. Since the
+// clear-glass change the bar itself has no blur at all (see GlassBackdrop), and the lens is glisse's:
+// a flat selection fill at rest and clear glass with a lit rim when lifted (see below).
 
 const SlidingLens = React.memo(function SlidingLens({
   pillX,
@@ -696,8 +689,8 @@ const GlassBackdrop = React.memo(function GlassBackdrop({
   /** Which prerendered glisse rim this surface wears (see GlassRim). */
   rim: GlassRimShape;
 }) {
-  // Native iOS-26 liquid glass when the user has it enabled and the device
-  // supports it; otherwise the existing BlurView (iOS) / gradient (Android).
+  // Native iOS-26 liquid glass (`clear`) when the user has it enabled and the device
+  // supports it; otherwise clear glass with glisse's lit rim (below).
   // The GlassView fully replaces the backdrop — when the toggle is off it is
   // never mounted, so there's zero residual cost.
   //
@@ -706,47 +699,35 @@ const GlassBackdrop = React.memo(function GlassBackdrop({
   // clipped), which means the parent no longer rounds the glass — without an
   // explicit borderRadius here the native glass would show as a SQUARE.
   const roundStyle = radius != null ? { borderRadius: radius } : null;
-  const iosFallback = (
+  // ── CLEAR GLASS: glisse's `<Glass>` at bend 1, dispersion 2, frost 0.5px, rim 1 ─────────────
+  //
+  // Asked for, with that code and a screenshot of it: this degree of transparency. That glass has no
+  // tint (`background: none`) and a 0.5 px frost, i.e. the content behind shows through unchanged
+  // except at the rim, which is lit white (rim 1). So the opaque body this used to have is gone:
+  // `systemChromeMaterial` on iOS (a heavy frost; nothing behind could be made out) and the tonal
+  // surface on Android. The bar's own bottom scrim still darkens what passes behind it.
+  //
+  // What that glass also does and this cannot: bend the content at the rim and split its colours
+  // (bend 1, dispersion 2). glisse repaints a marked backdrop in WebGL to do that; React Native in this
+  // binary has no way to read the pixels behind a view. On iOS 26 the native glass below is `clear`,
+  // Apple's own transparent variant, and that does refract.
+  const fallback = (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <BlurView
-        // System material tints render the real iOS Liquid-Glass look —
-        // they're processed by UIVisualEffectView and include the proper
-        // saturation boost + slight vibrancy that flat dark/light tints lack.
-        // `systemChromeMaterial` is the stock Apple chrome (tab bars,
-        // navigation bars) — the closest thing to "real" floating glass
-        // available without iOS 26 private APIs.
-        intensity={isDark ? 70 : 80}
-        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
-        style={[StyleSheet.absoluteFill, roundStyle, radius != null ? { overflow: 'hidden' } : null]}
-      />
-      {/* The glass edge where native liquid glass is not available: glisse's rim. See GlassRim. */}
-      <GlassRim shape={rim} isDark={isDark} />
+      <GlassRim shape={rim} />
     </View>
   );
-  // ── THE ANDROID GRADIENT IS GONE; `BlurView` HANDLES BOTH PLATFORMS NOW ────
-  //
-  // Reported: the blur reaches most surfaces on Android now, but the bottom navigation is still just
-  // transparent. This was why — the bar never used the `BlurView` path on Android at all. It had its own
-  // hand-written fallback: a two-stop gradient at `rgba(255,255,255,0.6)` in light mode, which over a
-  // light background is very nearly invisible, and which is a flat wash rather than any kind of blur.
-  //
-  // `BlurView` here is the app's own wrapper, which already branches per platform: a real
-  // `UIVisualEffectView` on iOS, and on Android the shared tonal surface (or genuine `dimezisBlurView`
-  // when the user opts in). So this component no longer needs to know what platform it is on, and the
-  // bar can no longer be the one surface that missed a platform fix.
-  //
-  // `Platform` is still imported for other uses in this file; only this branch is gone.
   return (
     <GlassSurface
       style={[StyleSheet.absoluteFill, roundStyle]}
-      glassStyle="regular"
+      // `clear`, not `regular`: the transparent variant, matching the glass that was asked for.
+      glassStyle="clear"
       // Only the detached Profile capsule passes `interactive` — it makes the
       // genuine liquid glass morph OUTWARD on touch. The main bar never passes
       // it (its lens/gesture system owns the touch feel). When glass is OFF,
       // GlassSurface renders the fallback and this flag is ignored.
       isInteractive={interactive}
       colorScheme={isDark ? 'dark' : 'light'}
-      fallback={iosFallback}
+      fallback={fallback}
     />
   );
 });
@@ -808,7 +789,7 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
         },
         // When real glass is active, DON'T clip the capsule — clipping would
         // kill the outward liquid morph of the interactive glass below.
-        glassActive ? { overflow: 'visible' } : null,
+        glassActive ? { overflow: 'visible' } : CLEAR_GLASS_NO_SHADOW,
         pressStyle,
       ]}
     >
@@ -1024,7 +1005,7 @@ const DialButton = memo(function DialButton({
           borderColor: glassActive ? 'transparent' : isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)',
           shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.18)',
         },
-        glassActive ? { overflow: 'visible' } : null,
+        glassActive ? { overflow: 'visible' } : CLEAR_GLASS_NO_SHADOW,
         style,
       ]}
     >
@@ -1723,7 +1704,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
             // properly rounded" the user sees. Instead let the glass round
             // ITSELF via the `radius` prop below (same fix that cleaned up the
             // detached Profile capsule edges).
-            glassActive ? { overflow: 'visible' } : null,
+            glassActive ? { overflow: 'visible' } : CLEAR_GLASS_NO_SHADOW,
           ]}
           onLayout={onBarLayout}
         >
