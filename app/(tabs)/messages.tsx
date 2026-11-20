@@ -13,6 +13,7 @@ import Reanimated, {
   interpolate,
   Extrapolation,
   Easing as REasing,
+  makeMutable,
   type SharedValue,
 } from 'react-native-reanimated';
 import { router, useFocusEffect } from 'expo-router';
@@ -302,9 +303,10 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
   //
   // 120 is comfortably wider than the chip (~74 pt), so it is fully clipped at editProgress === 1.
   // Over-translating costs nothing; under-translating would leave a visible sliver.
-  const editFade = useAnimatedStyle(() => ({
-    transform: [{ translateX: editProgress.value * 120 }],
-  }));
+  const editFade = useAnimatedStyle(() => {
+    if (!EDIT_MODE_USED.value) return {};
+    return { transform: [{ translateX: editProgress.value * 120 }] };
+  });
 
   // Genuine empty state lives HERE so the Apps tab has a single source of
   // truth. The screen's generic empty-state block skips the Apps tab, which
@@ -692,6 +694,9 @@ function ConversationItemBase({
   // What remains here is transform-only: the dragged row follows the finger, and rows
   // between its origin and its target shift by exactly one row pitch.
   const dragStyle = useAnimatedStyle(() => {
+    // Reordering exists only in selection mode, and until that has been opened this row has nothing
+    // to write; see `EDIT_MODE_USED`.
+    if (!EDIT_MODE_USED.value) return {};
     const from = dragFrom.value;
     if (from < 0) return { transform: [{ translateY: 0 }] };
     if (from === index) {
@@ -951,10 +956,15 @@ const ReorderHandle = React.memo(function ReorderHandle({
   gesture: ReturnType<typeof Gesture.Pan>;
   color: string;
 }) {
-  const iconStyle = useAnimatedStyle(() => ({
-    opacity: editProgress.value,
-    transform: [{ translateX: interpolate(editProgress.value, [0, 1], [8, 0]) }],
-  }));
+  const iconStyle = useAnimatedStyle(() => {
+    // Hidden, and no transform written, until selection mode has been used; see `EDIT_MODE_USED`.
+    // An opacity alone is a primitive, so it is shallow-equal from run to run and never written.
+    if (!EDIT_MODE_USED.value) return { opacity: 0 };
+    return {
+      opacity: editProgress.value,
+      transform: [{ translateX: interpolate(editProgress.value, [0, 1], [8, 0]) }],
+    };
+  });
   // No early return. `if (!visible) return <View/>` swapped a plain View for a
   // GestureDetector subtree on every toggle -- another change of element type at a fixed
   // position, so the handle's views, and the pan gesture attached to them, were destroyed
@@ -1046,9 +1056,11 @@ const RowSeparator = React.memo(function RowSeparator({
   //
   // The formula matches the row shift at every value of `editProgress`, which is what keeps
   // the hairline aligned with the text column it belongs to throughout the transition.
-  const shiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: editProgress.value * SELECT_COLUMN_WIDTH }],
-  }));
+  // `{}` until selection mode has been used; see `EDIT_MODE_USED`.
+  const shiftStyle = useAnimatedStyle(() => {
+    if (!EDIT_MODE_USED.value) return {};
+    return { transform: [{ translateX: editProgress.value * SELECT_COLUMN_WIDTH }] };
+  });
   return (
     <Reanimated.View
       style={[{ height: 0.5, backgroundColor: color, marginLeft: 68 }, shiftStyle]}
@@ -1085,10 +1097,34 @@ const RowSeparator = React.memo(function RowSeparator({
  * entries and is expected to get long.
  */
 function useEditShift(editProgress: SharedValue<number>) {
-  return useAnimatedStyle(() => ({
-    transform: [{ translateX: editProgress.value * SELECT_COLUMN_WIDTH }],
-  }));
+  return useAnimatedStyle(() => {
+    if (!EDIT_MODE_USED.value) return {};
+    return { transform: [{ translateX: editProgress.value * SELECT_COLUMN_WIDTH }] };
+  });
 }
+
+/**
+ * Whether selection mode has been opened at least once this session. Until it has, every style that
+ * only moves things for selection mode returns `{}`.
+ *
+ * ── WHY THE RESTING STYLE MATTERS ────────────────────────────────────────────────
+ *
+ * Reanimated 4.1 keeps every prop a style mapper has written, per view, until the view unmounts, and
+ * re-applies all of them on EVERY React commit of the app, on any screen
+ * (`ReanimatedCommitHook::shadowTreeWillCommit`). A mapper writes whenever its result is not
+ * shallow-equal to the last one, and a `transform` array never is. So each row's resting
+ * `translateX: 0` (edit shift), `translateY: 0` (reorder drag), the handle's offset and each
+ * separator's shift were registry entries from the row's first frame: several per row, re-cloned in
+ * every commit while this tab is mounted, including every commit of a chat opened over it. The same
+ * mechanism, fixed for the chat bubbles in #273, cut `completeRoot` there by a fifth.
+ *
+ * `{}` stays `{}`, so nothing is written at rest. The flag never goes back to false: once the rows
+ * have been moved they keep writing their transform (identity again after Done), because on iOS a
+ * prop that disappears from a style is not reverted and the last frame of the spring would stay.
+ * Module-level and created once, so every worklet captures the same reference and no mapper is
+ * restarted when it flips.
+ */
+const EDIT_MODE_USED = makeMutable(false);
 
 /**
  * Header chrome buttons. Both follow the same rule the rest of the app uses for
@@ -1429,6 +1465,9 @@ export default function MessagesScreen() {
     // `BOTTOM_CHROME_SPRING` is the same spring the action bar uses, and that motion was
     // the one part of this transition the user said felt right. A spring starts from REST:
     // zero initial velocity, so the slide begins where the eye expects it to.
+    // The rows start writing their transforms from here on; see `EDIT_MODE_USED`. Set before the
+    // spring so every mapper runs once with the flag on and progress still at 0, then animates.
+    if (editMode) EDIT_MODE_USED.value = true;
     editProgress.value = withSpring(editMode ? 1 : 0, BOTTOM_CHROME_SPRING);
   }, [editMode, editProgress]);
 
