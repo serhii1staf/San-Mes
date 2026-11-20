@@ -414,9 +414,32 @@ export function useSwipeToReply<T extends { id: string }>({
   /** Optional: lets the screen lock list scrolling for the duration, as the chat does. */
   onSwipeActive?: (active: boolean) => void;
 }) {
+  // ── THE SAME COSTS THE CHAT BUBBLES HAD, AND THE SAME FIXES ─────────────────
+  //
+  // Every comment row paid, on mount: three shared values, two style mappers with four synchronous
+  // JS-to-UI reads between them (`initialUpdaterRun`, run again per view by `PropsFilter`), and an
+  // always-mounted reply icon. In the emulator profile of opening a 31-comment thread, those reads
+  // were 33 ms of `executeOnUIRuntimeSync` inside one 314 ms task. Each row's resting `translateX: 0`
+  // also went into Reanimated's prop registry, which every React commit re-applies, and the gesture
+  // captured `item`, so a FlashList cell recycled onto another comment rebuilt and re-serialised it.
+  // See `useMessageGestures` for the measured account of each; this is the same treatment:
+  //
+  //   - the gesture calls a stable callback that reads the item from a ref;
+  //   - one flags shared value instead of two booleans;
+  //   - the resting style is `{}` until the row has been swiped (`SWIPE_MOVED`), and the first run
+  //     on the JS thread reads nothing;
+  //   - the reply icon is mounted when a swipe starts (`replyIconArmed`), with its style built by
+  //     `useReplyIconStyle` inside it, and stays for the cell's life.
+  const itemRef = useRef(item);
+  useLayoutEffect(() => {
+    itemRef.current = item;
+  }, [item]);
+  const fireReply = useCallback(() => onReply(itemRef.current), [onReply]);
+  const [replyIconArmed, setReplyIconArmed] = useState(false);
+  const armReplyIcon = useCallback(() => setReplyIconArmed(true), []);
+
   const translateXSV = useSharedValue(0);
-  const gateFiredHapticSV = useSharedValue(false);
-  const activeSV = useSharedValue(false);
+  const swipeFlagsSV = useSharedValue(0);
 
   const gesture = useMemo(
     () =>
@@ -425,50 +448,45 @@ export function useSwipeToReply<T extends { id: string }>({
         .failOffsetY([-10, 10])
         .onStart(() => {
           'worklet';
-          activeSV.value = true;
+          swipeFlagsSV.value = SWIPE_MOVED | SWIPE_ACTIVE;
+          runOnJS(armReplyIcon)();
           if (onSwipeActive) runOnJS(onSwipeActive)(true);
         })
         .onUpdate((e) => {
           'worklet';
           const dx = Math.max(Math.min(Math.round(e.translationX), 0), -80);
           translateXSV.value = dx;
-          if (!gateFiredHapticSV.value && dx <= -REPLY_THRESHOLD) {
-            gateFiredHapticSV.value = true;
+          const flags = swipeFlagsSV.value;
+          if ((flags & SWIPE_HAPTIC_FIRED) === 0 && dx <= -REPLY_THRESHOLD) {
+            swipeFlagsSV.value = flags | SWIPE_HAPTIC_FIRED;
             runOnJS(triggerHaptic)('light');
           }
         })
         .onEnd((e) => {
           'worklet';
           if (e.translationX <= -REPLY_THRESHOLD) {
-            runOnJS(onReply)(item);
+            runOnJS(fireReply)();
           }
         })
         .onFinalize(() => {
           'worklet';
-          translateXSV.value = withSpring(0, { damping: 20, stiffness: 220, mass: 0.8 });
-          gateFiredHapticSV.value = false;
-          if (activeSV.value) {
-            activeSV.value = false;
-            if (onSwipeActive) runOnJS(onSwipeActive)(false);
+          // A pan that never activated (every vertical scroll starting on a row) has nothing to settle.
+          if (translateXSV.value !== 0) {
+            translateXSV.value = withSpring(0, { damping: 20, stiffness: 220, mass: 0.8 });
           }
+          const flags = swipeFlagsSV.value;
+          const kept = flags & SWIPE_MOVED;
+          if (kept !== flags) swipeFlagsSV.value = kept;
+          if ((flags & SWIPE_ACTIVE) !== 0 && onSwipeActive) runOnJS(onSwipeActive)(false);
         }),
-    [item, onReply, onSwipeActive, translateXSV, gateFiredHapticSV, activeSV],
+    [fireReply, onSwipeActive, translateXSV, swipeFlagsSV, armReplyIcon],
   );
 
-  const rowAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateXSV.value }],
-  }));
+  const rowAnimStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return {};
+    if ((swipeFlagsSV.value & SWIPE_MOVED) === 0) return {};
+    return { transform: [{ translateX: translateXSV.value }] };
+  });
 
-  // Reply-icon opacity ramp, identical to the chat's: invisible until 24 px, fully opaque at the
-  // commit threshold, so the icon appearing IS the signal that releasing will reply.
-  const replyIconAnimStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(
-      translateXSV.value,
-      [-REPLY_THRESHOLD, -24, 0],
-      [1, 0, 0],
-      Extrapolation.CLAMP,
-    ),
-  }));
-
-  return { gesture, rowAnimStyle, replyIconAnimStyle };
+  return { gesture, rowAnimStyle, translateX: translateXSV, replyIconArmed };
 }
