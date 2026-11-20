@@ -294,9 +294,30 @@ export async function syncUserPosts(userId: string): Promise<void> {
   }
 }
 
+/**
+ * How often the chat list may be re-fetched (`GET /v1/conversations`), by throttle window.
+ *
+ * The fetch is a backstop. While the realtime socket is connected, every new message, including the
+ * first one of a new chat, already reaches the list live through `RealtimeAccountBridge`
+ * (`user:<id>:notifications`), so re-fetching the whole list every time it regains focus three
+ * minutes after the last fetch was a Worker request for rows that were already current. With the
+ * socket down the fetch is the only source, and the short window stays. Resume and pull-to-refresh
+ * reset the throttle and always fetch (see `refreshChatUnreadOnResume`).
+ */
+const CONVERSATIONS_SYNC_MS = 3 * 60 * 1000;
+const CONVERSATIONS_SYNC_LIVE_MS = 10 * 60 * 1000;
+
 export async function syncConversations(userId: string): Promise<void> {
   try {
-    await syncWithThrottle(`conversations:${userId}`, 3 * 60 * 1000, async () => {
+    let live = false;
+    try {
+      // Lazy, so loading this module never loads the realtime client and the Ably SDK with it.
+      const { isRealtimeConnected } = await import('./realtime/ably');
+      live = isRealtimeConnected();
+    } catch {
+      // Unknown means not live: the short window is the safe one.
+    }
+    await syncWithThrottle(`conversations:${userId}`, live ? CONVERSATIONS_SYNC_LIVE_MS : CONVERSATIONS_SYNC_MS, async () => {
       const { conversations, error } = await getConversations(userId);
       if (error) throw error; // transport/fetch failure → don't stamp, allow retry
       if (!conversations.length) return; // fetch succeeded but empty → legitimate success

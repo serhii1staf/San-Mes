@@ -126,6 +126,15 @@ function buildAuthCallback(): Ably.AuthOptions['authCallback'] {
 }
 
 /**
+ * Whether this user's realtime connection exists and is connected. Unlike `getRealtime`, never
+ * creates a client: for code that only wants to know whether live delivery is working right now.
+ */
+export function isRealtimeConnected(): boolean {
+  const uid = useAuthStore.getState().user?.id;
+  return !!uid && !!cachedClient && cachedClientUserId === uid && cachedClient.connection.state === 'connected';
+}
+
+/**
  * Lazily get-or-create the Ably realtime client for the currently logged-in
  * user. Returns null if the user isn't authenticated yet (e.g. the first
  * paint of the app before login completes).

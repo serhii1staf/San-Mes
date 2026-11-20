@@ -1934,7 +1934,8 @@ export default function MessagesScreen() {
   // by an incoming message while we were on another tab) shows up without a
   // manual pull-to-refresh. Cache-first: `syncConversations` reconciles into
   // the entity store and only repaints changed rows, so there's no flash.
-  // `syncConversations` is gated by a 3-minute `shouldSync` throttle, so
+  // `syncConversations` is gated by a `shouldSync` throttle (3 minutes, 10 while
+  // the realtime socket is connected; see `CONVERSATIONS_SYNC_LIVE_MS`), so
   // rapid tab-switching collapses to at most one network round-trip — the
   // bridge's live `notif.message` upsert is the instant path, this is the
   // backstop. Deferred past the focus transition so the throttle read +
