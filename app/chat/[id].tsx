@@ -3558,6 +3558,12 @@ export default function ChatScreen() {
     if (!useConnectivityStore.getState().isOnline) return;
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
+    // Closing the chat (or switching it to another conversation) cancels a page still in flight.
+    // `cancelled` alone only discarded the answer: the request kept its connection, and its body,
+    // up to 200 rows, was still JSON-parsed on the JS thread when it arrived, which on a slow network
+    // is while the next chat is opening. Quickly going through several chats used to leave one such
+    // page in flight per chat.
+    const pageAbort = new AbortController();
     // Off the open frame: this is a network round trip plus a store write, and first paint is
     // already served from cache.
     const handle = InteractionManager.runAfterInteractions(() => {
@@ -3581,6 +3587,7 @@ export default function ChatScreen() {
           const { messages, error } = await getMessages(conversationId, {
             limit: POLL_PAGE_LIMIT,
             ...(sinceCursor ? { since: sinceCursor } : {}),
+            signal: pageAbort.signal,
           });
           if (cancelled || error) return;
           historyFetchedAtByConv.set(conversationId, Date.now());
@@ -3796,6 +3803,7 @@ export default function ChatScreen() {
     });
     return () => {
       cancelled = true;
+      pageAbort.abort();
       handle.cancel();
       if (timer) clearInterval(timer);
     };

@@ -52,7 +52,16 @@ export interface ApiOptions {
   skipAuth?: boolean;
   /** Extra headers merged on top of the defaults. */
   headers?: Record<string, string>;
+  /**
+   * Cancels the request, for a caller that no longer wants the answer (a screen that closed). The
+   * call then resolves to `{ data: null, error: 'aborted' }` without parsing the body. That is not a
+   * failure: it is not logged, and it never counts against the host (see `request`).
+   */
+  signal?: AbortSignal;
 }
+
+/** The error a call cancelled through `ApiOptions.signal` resolves with. */
+export const ABORTED = 'aborted';
 
 /**
  * Lazy-import the connectivity store so this module doesn't pull the
@@ -231,9 +240,19 @@ async function requestAgainst<T>(
     if (auth) headers['Authorization'] = auth;
   }
 
+  // One controller for both reasons to stop: our timeout, and the caller's `signal`. `timedOut` tells
+  // them apart afterwards, because only a timeout says anything about the host.
+  const external = opts.signal;
+  if (external?.aborted) return { data: null, error: ABORTED };
   const controller = new AbortController();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const onExternalAbort = () => controller.abort();
+  external?.addEventListener('abort', onExternalAbort);
 
   try {
     const res = await fetch(url, {
@@ -243,6 +262,9 @@ async function requestAgainst<T>(
       signal: controller.signal,
     });
     clearTimeout(timer);
+    // The caller left while the response was on its way: skip the parse. A 200-row message page is
+    // a sizeable `JSON.parse` on the JS thread, and it used to land while the next screen was opening.
+    if (external?.aborted) return { data: null, error: ABORTED };
 
     // Try to parse the body as JSON regardless of status — the Worker
     // emits the `{ data, error }` shape on every response, including
@@ -284,9 +306,12 @@ async function requestAgainst<T>(
   } catch (e: any) {
     clearTimeout(timer);
     const aborted = e?.name === 'AbortError';
+    if (aborted && !timedOut) return { data: null, error: ABORTED };
     const msg = aborted ? 'timeout' : (e?.message || 'network error');
     perfMonitor.recordError(`apiClient ${opts.method} ${path}: ${msg}`, e?.stack);
     return { data: null, error: msg };
+  } finally {
+    external?.removeEventListener('abort', onExternalAbort);
   }
 }
 
