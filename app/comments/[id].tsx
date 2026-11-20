@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExtern
 import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, InteractionManager, ScrollView, Dimensions, Keyboard, AppState, type LayoutChangeEvent } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useSwipeToReply } from '../../src/hooks/useMessageGestures';
+import { useReplyIconStyle, useSwipeToReply } from '../../src/hooks/useMessageGestures';
 import { useTheme } from '../../src/theme';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { Text, Avatar } from '../../src/components/ui';
@@ -253,6 +253,21 @@ const commentSwipeStyles = StyleSheet.create({
   replyIconCircle: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
 });
 
+/** The reply icon a left swipe on a comment reveals; see `useSwipeToReply` for why it mounts late. */
+const CommentSwipeReplyIcon = React.memo(function CommentSwipeReplyIcon({ translateX, accent }: { translateX: SharedValue<number>; accent: string }) {
+  const opacityStyle = useReplyIconStyle(translateX);
+  return (
+    <Reanimated.View style={[commentSwipeStyles.replyIcon, opacityStyle]} pointerEvents="none">
+      {/* A flat tinted circle, deliberately not a glass view — the same decision the chat's
+          swipe icon documents: a UIVisualEffectView is one of the most expensive native views
+          to instantiate. */}
+      <View style={[commentSwipeStyles.replyIconCircle, { backgroundColor: accent + '20' }]}>
+        <MaterialIcons name="reply" size={15} color={accent} />
+      </View>
+    </Reanimated.View>
+  );
+});
+
 const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, onImagePress, gifTracker }: CommentRowProps) {
   const theme = useTheme();
   const t = useT();
@@ -264,7 +279,7 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
   const isAuthorBlocked = useIsBlocked(authorId);
   // Swipe-left-to-reply. Declared before any early return so the hook order is stable — the
   // blocked-author branch below returns a placeholder, and hooks cannot be skipped.
-  const { gesture: swipeGesture, rowAnimStyle, replyIconAnimStyle } = useSwipeToReply({
+  const { gesture: swipeGesture, rowAnimStyle, translateX: swipeTranslateX, replyIconArmed } = useSwipeToReply({
     item,
     onReply,
   });
@@ -352,14 +367,9 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
     // it adds no layout and cannot change row height mid-gesture.
     <GestureDetector gesture={swipeGesture}>
       <View ref={rowRef} style={{ marginBottom: 16 }} collapsable={false}>
-        <Reanimated.View style={[commentSwipeStyles.replyIcon, replyIconAnimStyle]} pointerEvents="none">
-          {/* A flat tinted circle, deliberately not a glass view — the same decision the chat's
-              swipe icon documents: a UIVisualEffectView per row is one of the most expensive
-              native views to instantiate, and this icon exists on every comment. */}
-          <View style={[commentSwipeStyles.replyIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
-            <MaterialIcons name="reply" size={15} color={theme.colors.accent.primary} />
-          </View>
-        </Reanimated.View>
+        {/* Mounted once a swipe has started on this row, and kept for the cell's life. It used to
+            be on every comment, invisible, with its own style mapper. See `useSwipeToReply`. */}
+        {replyIconArmed ? <CommentSwipeReplyIcon translateX={swipeTranslateX} accent={theme.colors.accent.primary} /> : null}
         <Reanimated.View style={rowAnimStyle}>
     <Pressable onLongPress={openMenuHere} delayLongPress={300} style={{ flexDirection: 'row' }}>
       <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })} onLongPress={openMenuHere} delayLongPress={300}>
