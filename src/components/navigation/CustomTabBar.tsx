@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Pressable, StyleSheet, Platform, LayoutChangeEvent, Text as RNText } from 'react-native';
+import { View, Pressable, StyleSheet, Platform, LayoutChangeEvent, Text as RNText, Image } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,7 +32,7 @@ import { bottomScrimColors, BOTTOM_CHROME_SCRIM_HEIGHT, SCRIM_LOCATIONS } from '
 import { BOTTOM_CHROME_SPRING } from '../../theme/motion';
 import { triggerHaptic } from '../../utils/haptics';
 import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
-import { GlassRim } from '../ui/GlassRim';
+import { GlassRim, type GlassRimShape } from '../ui/GlassRim';
 import { useTabBarStore } from '../../store/tabBarStore';
 import { useAuthStore } from '../../store';
 import { useChatUnread, totalChatUnread } from '../../store/chatUnreadStore';
@@ -142,6 +142,36 @@ const ICON_MAGNIFY_MAX = 0.18;
 
 const PILL_SPRING = { damping: 18, stiffness: 280, mass: 0.8 };
 const PRESS_SPRING = { damping: 20, stiffness: 350, mass: 0.6 };
+
+// ── glisse's tab bar (https://glisse.kelvinzhang.ca, MIT) ─────────────────────
+//
+// A finger on the bar LIFTS the selection into a glass lens: it moves to the tab under the finger,
+// grows, its fill clears and its rim lights up, and the bar glows under the finger. Releasing drops it
+// back. The springs are glisse's own (`segments.tsx`: REST is [x stiffness, x damping, lift stiffness,
+// lift damping] = [1024, 58.9, 676, 47.8], mass 1), so the lens settles like its demo: fast and
+// barely overshooting. This replaces the press squish (the lens used to shrink to 90 % on touch).
+const LENS_X_SPRING = { stiffness: 1024, damping: 58.9, mass: 1 };
+const LIFT_SPRING = { stiffness: 676, damping: 47.8, mass: 1 };
+// glisse grows its icon tab-bar lens by 24 x 16 pt. Its lens sits 4 pt inside its bar and so has room
+// to overflow it; ours fills its slot (2 pt inset) in a bar that clips, so the growth is scaled to stay
+// inside: 76 x 46 lifts to 92 x 58 in the 172 x 60 bar.
+const LENS_GROW_X = 16;
+const LENS_GROW_Y = 12;
+// `--lg-selection` (rest) and `--lg-lens` (lifted): white on a dark page, black on a light one.
+const LENS_REST_ALPHA = { dark: 0x25 / 255, light: 0x1a / 255 };
+const LENS_LIFTED_ALPHA = { dark: 0x0e / 255, light: 0x08 / 255 };
+// The lifted lens's rim (glisse `selectionMaps`, prerendered by scripts/gen-glass-maps.mjs for a
+// 76 x 46 lens) and the bar's glow under the finger.
+const LENS_SHINE = {
+  dark: require('../../../assets/glass/lens-shine-dark.png'),
+  light: require('../../../assets/glass/lens-shine-light.png'),
+};
+const GLOW = require('../../../assets/glass/glow.png');
+// glisse's glow is a 260 px circle around the finger.
+const GLOW_RADIUS = 260;
+// How long a press on a tab that did not end in a switch (a long press) keeps the lens on that tab
+// before it goes back to the selected one. Longer than a tap's press-out → navigation round trip.
+const LENS_RETURN_MS = 450;
 
 // Module-scoped cache of the last measured slot width. The tab bar can remount
 // when returning from a root-stack screen pushed OVER the tabs (e.g. Profile →
@@ -470,6 +500,8 @@ const SlidingLens = React.memo(function SlidingLens({
   pillY,
   pillScale,
   pillStretchW,
+  pillLift,
+  everLifted,
   baseWidth,
   isDark,
   glassActive,
@@ -478,6 +510,10 @@ const SlidingLens = React.memo(function SlidingLens({
   pillY: SharedValue<number>;
   pillScale: SharedValue<number>;
   pillStretchW: SharedValue<number>;
+  /** 0 at rest, 1 while a finger is on the bar: glisse's "lift" (see LENS_GROW_X). */
+  pillLift: SharedValue<number>;
+  /** Sticky: false until the bar is first touched, so the lift layers write nothing before that. */
+  everLifted: SharedValue<boolean>;
   baseWidth: number;
   isDark: boolean;
   glassActive: boolean;
@@ -506,19 +542,50 @@ const SlidingLens = React.memo(function SlidingLens({
   //   `pillStretchW` is 0, which is every state except an active drag, `scaleX` is exactly
   //   1 and this style is mathematically identical to the previous one.
   //   `width` IS NOT IN THIS STYLE — see the note below.
+  //
+  //   The LIFT (glisse) is two more factors about the same centre: while a finger is on the bar the
+  //   lens grows by LENS_GROW_X x LENS_GROW_Y. Both are exactly 1 at rest (`pillLift` 0).
   const animStyle = useAnimatedStyle(() => {
     const stretch = pillStretchW.value;
+    const lift = pillLift.value;
     // Guard the divide: `baseWidth` is 0 until the bar has been measured, and the pill is
     // gated on `slotWidth > 0` at the call site anyway.
     const stretchScaleX = baseWidth > 0 ? (baseWidth + stretch) / baseWidth : 1;
+    const liftX = baseWidth > 0 ? 1 + (LENS_GROW_X / baseWidth) * lift : 1;
     return {
       transform: [
         { translateX: pillX.value + stretch / 2 },
         { translateY: pillY.value },
         { scale: pillScale.value },
-        { scaleX: stretchScaleX },
+        { scaleX: stretchScaleX * liftX },
+        { scaleY: 1 + (LENS_GROW_Y / PILL_HEIGHT) * lift },
       ],
     };
+  });
+
+  // ── The lifted lens (glisse's tab bar, non-native path) ─────────────────────
+  //
+  // At rest the lens is glisse's selection: a flat fill (`--lg-selection`, white 0.145 on a dark
+  // page, black 0.10 on a light one). Lifted it turns into clear glass: the fill fades to
+  // `--lg-lens` (0.055 / 0.03) by half lift, and the lens's own rim lights up — glisse's
+  // `selectionMaps` highlight, prerendered (assets/glass/lens-shine-*), whose red, green and blue
+  // bands peak at slightly different depths, so the edge reads as glass catching light.
+  //
+  // Both styles return `{}` until the bar has been touched once (`everLifted`). Reanimated keeps
+  // every prop a mapper has written and re-applies it on every commit of the app (the measured
+  // account is in src/hooks/useMessageGestures.ts), so two always-writing layers would cost every
+  // commit for a lens nobody has pressed. The static styles below hold the rest values. Once lifted
+  // they keep writing: iOS does not revert a prop that a style stops sending.
+  const restAlpha = isDark ? LENS_REST_ALPHA.dark : LENS_REST_ALPHA.light;
+  const liftedAlpha = isDark ? LENS_LIFTED_ALPHA.dark : LENS_LIFTED_ALPHA.light;
+  const fillStyle = useAnimatedStyle(() => {
+    if (!everLifted.value) return {};
+    const toLifted = Math.min(1, pillLift.value / 0.5);
+    return { opacity: restAlpha + (liftedAlpha - restAlpha) * toLifted };
+  });
+  const shineStyle = useAnimatedStyle(() => {
+    if (!everLifted.value) return {};
+    return { opacity: Math.min(1, pillLift.value / 0.35) };
   });
 
   // ── `width` IS STATIC, SO IT MUST NOT LIVE IN THE WORKLET ────────────────────
@@ -566,30 +633,6 @@ const SlidingLens = React.memo(function SlidingLens({
   //
   // Nothing visual is lost: a hard 0↔1 alpha flip looked identical to appearing.
 
-  // Tint values picked so the lens stays clearly visible against the bar's
-  // own blurred tint without going opaque. iOS dark mode is darker than
-  // Android dark mode (the systemChromeMaterial bar already absorbs a lot
-  // of light), so we lift the alpha a touch on iOS dark.
-  //
-  // When the REAL native glass backdrop is active we deliberately go much
-  // subtler: a faint selection capsule over genuine liquid glass — no heavy
-  // white fill, no stacked gradients, no contour. Real glass already supplies
-  // the highlight + refraction, so piling our fake-glass layers on top is what
-  // made the bar read as "combined with my own nav". The stretch / magnify
-  // animation (driven by animStyle above) is untouched — only the painted
-  // decoration changes.
-  const lensFill = glassActive
-    ? isDark
-      ? 'rgba(255,255,255,0.12)'
-      : 'rgba(255,255,255,0.28)'
-    : Platform.OS === 'ios'
-      ? isDark
-        ? 'rgba(255,255,255,0.20)'
-        : 'rgba(255,255,255,0.55)'
-      : isDark
-        ? 'rgba(255,255,255,0.16)'
-        : 'rgba(255,255,255,0.85)';
-
   return (
     <Animated.View style={[styles.pill, staticWidthStyle, animStyle]} pointerEvents="none">
       {glassActive ? (
@@ -609,67 +652,30 @@ const SlidingLens = React.memo(function SlidingLens({
           ]}
         />
       ) : (
-        <View
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              borderRadius: PILL_HEIGHT / 2,
-              backgroundColor: lensFill,
-            },
-          ]}
-        />
-      )}
-
-      {/* The fake-glass decoration (top reflection crescent, bottom dim,
-          hairline contour) only renders when we DON'T have real native glass.
-          On real glass it would fight the genuine highlights and is exactly
-          what made the bar look "combined". */}
-      {!glassActive && (
+        // glisse's lens, where native glass is not available. It replaces the earlier fake glass
+        // (a top-reflection gradient, a bottom dim and a hairline contour), which glisse does not
+        // have: at rest its selection is a flat fill, and the light is on the rim, only when lifted.
         <>
-          {/* Top reflection — the bright crescent that sells the curved-glass
-              look. A linear gradient is enough; an arc would require SVG and
-              we deliberately avoid that for perf. */}
-          <LinearGradient
-            colors={
-              isDark
-                ? ['rgba(255,255,255,0.25)', 'rgba(255,255,255,0)']
-                : ['rgba(255,255,255,0.7)', 'rgba(255,255,255,0)']
-            }
+          <Animated.View
             style={[
               StyleSheet.absoluteFill,
-              { borderRadius: PILL_HEIGHT / 2, height: '55%' },
+              {
+                borderRadius: PILL_HEIGHT / 2,
+                backgroundColor: isDark ? '#FFFFFF' : '#000000',
+                opacity: restAlpha,
+              },
+              fillStyle,
             ]}
-            pointerEvents="none"
           />
-
-          {/* Bottom dim — the thin shadow under the lens edge. Together with
-              the top highlight this is what reads as "rounded" rather than "flat". */}
-          <View
-            style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: '40%',
-              borderBottomLeftRadius: PILL_HEIGHT / 2,
-              borderBottomRightRadius: PILL_HEIGHT / 2,
-              backgroundColor: isDark ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.04)',
-            }}
-            pointerEvents="none"
-          />
-
-          {/* Hairline border — Apple's glass surfaces always have a faint
-              contour. Drawn on top of all layers so it isn't washed out by
-              the blur or the gradients. */}
-          <View
-            style={{
-              ...StyleSheet.absoluteFillObject,
-              borderRadius: PILL_HEIGHT / 2,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.9)',
-            }}
-            pointerEvents="none"
-          />
+          <Animated.View style={[StyleSheet.absoluteFill, styles.lensShine, shineStyle]}>
+            <Image
+              source={isDark ? LENS_SHINE.dark : LENS_SHINE.light}
+              style={StyleSheet.absoluteFill}
+              resizeMode="stretch"
+              fadeDuration={0}
+              accessible={false}
+            />
+          </Animated.View>
         </>
       )}
     </Animated.View>
@@ -678,7 +684,18 @@ const SlidingLens = React.memo(function SlidingLens({
 
 // ─── Glass Backdrop & Reflection ─────────────────────────────────────────────
 
-const GlassBackdrop = React.memo(function GlassBackdrop({ isDark, interactive, radius }: { isDark: boolean; interactive?: boolean; radius?: number }) {
+const GlassBackdrop = React.memo(function GlassBackdrop({
+  isDark,
+  interactive,
+  radius,
+  rim,
+}: {
+  isDark: boolean;
+  interactive?: boolean;
+  radius?: number;
+  /** Which prerendered glisse rim this surface wears (see GlassRim). */
+  rim: GlassRimShape;
+}) {
   // Native iOS-26 liquid glass when the user has it enabled and the device
   // supports it; otherwise the existing BlurView (iOS) / gradient (Android).
   // The GlassView fully replaces the backdrop — when the toggle is off it is
@@ -702,8 +719,8 @@ const GlassBackdrop = React.memo(function GlassBackdrop({ isDark, interactive, r
         tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
         style={[StyleSheet.absoluteFill, roundStyle, radius != null ? { overflow: 'hidden' } : null]}
       />
-      {/* The glass edge where native liquid glass is not available. See GlassRim. */}
-      <GlassRim radius={radius ?? BAR_BORDER_RADIUS} isDark={isDark} />
+      {/* The glass edge where native liquid glass is not available: glisse's rim. See GlassRim. */}
+      <GlassRim shape={rim} isDark={isDark} />
     </View>
   );
   // ── THE ANDROID GRADIENT IS GONE; `BlurView` HANDLES BOTH PLATFORMS NOW ────
@@ -811,7 +828,7 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
             liquid glass when enabled, BlurView/gradient fallback otherwise.
             `interactive` makes the genuine glass morph OUTWARD on touch — only
             the detached Profile capsule opts in (the main bar never does). */}
-        <GlassBackdrop isDark={isDark} interactive radius={(TAB_BUTTON_HEIGHT + 2 * TAB_ROW_PADDING_V) / 2} />
+        <GlassBackdrop isDark={isDark} interactive radius={(TAB_BUTTON_HEIGHT + 2 * TAB_ROW_PADDING_V) / 2} rim="capsule" />
         {/* Active selection fill sits above the glass but below the icon. */}
         {activeBg !== 'transparent' && (
           <View
@@ -1012,7 +1029,7 @@ const DialButton = memo(function DialButton({
       ]}
     >
       <Pressable onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={label} style={dialStyles.inner}>
-        <GlassBackdrop isDark={isDark} interactive radius={DIAL_BUTTON / 2} />
+        <GlassBackdrop isDark={isDark} interactive radius={DIAL_BUTTON / 2} rim="dial" />
         {children}
       </Pressable>
     </Animated.View>
@@ -1197,6 +1214,14 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const pillY = useSharedValue(0);
   const pillScale = useSharedValue(1);
   const pillStretchW = useSharedValue(0);
+  // glisse's lift (see LIFT_SPRING): 1 while a finger is on the bar.
+  const pillLift = useSharedValue(0);
+  // Sticky, set by the first touch: until then the lift layers write nothing (see SlidingLens).
+  const everLifted = useSharedValue(false);
+  // Where the finger is along the bar, for the glow.
+  const touchX = useSharedValue(0);
+  // Whether the current touch became a drag (the pan activated). A tap is left to the Pressable.
+  const dragged = useSharedValue(false);
 
   // SharedValue mirrors of JS state — safe to read inside worklets without TDZ surprises.
   // `activeSlotSV` holds the active MAIN-bar slot (0..3) or -1 when profile is
@@ -1265,7 +1290,9 @@ export const CustomTabBar = React.memo(function CustomTabBar({
       pillX.value = target;
       hasMounted.current = true;
     } else {
-      pillX.value = withSpring(target, PILL_SPRING);
+      // glisse's settle spring, the same one the press and the drag release use, so a tap that is
+      // already gliding the lens to this tab is not restarted on a bouncier curve.
+      pillX.value = withSpring(target, LENS_X_SPRING);
     }
     pillY.value = withSpring(0, PILL_SPRING);
     pillStretchW.value = withSpring(0, PILL_SPRING);
@@ -1301,28 +1328,52 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   useFocusEffect(
     useCallback(() => {
       if (slotWidth > 0 && activeMainSlot >= 0) {
-        pillX.value = withSpring(slotToX(activeMainSlot), PILL_SPRING);
+        pillX.value = withSpring(slotToX(activeMainSlot), LENS_X_SPRING);
         pillY.value = withSpring(0, PILL_SPRING);
         pillStretchW.value = withSpring(0, PILL_SPRING);
         pillScale.value = withSpring(1, PRESS_SPRING);
+        pillLift.value = withSpring(0, LIFT_SPRING);
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [slotWidth, activeMainSlot, slotToX])
   );
 
-  // Squish on press — no expanding ring, just a clean compress. `slot` is the
-  // main-bar slot index (0..3); only squish when pressing the already-active tab.
-  const onTabPressIn = useCallback(
-    (slot: number) => {
-      if (slot === activeMainSlot) {
-        pillScale.value = withSpring(PRESS_SCALE, PRESS_SPRING);
-      }
+  // ── The press itself is the pan's: it lifts the lens onto the touched tab (glisse) ─────────
+  //
+  // The pan's `onBegin` runs on the UI thread on touch-down, for taps as well as drags, and moves the
+  // lens to the tab under the finger. A tap then switches tabs through the Pressable, and the lens is
+  // already there. A press that does NOT switch (a long press on another tab) would leave the lens on
+  // the wrong tab, so after every press-out the lens is sent back to the selected tab once the switch
+  // has had time to happen. After a tap that switched, that is where it already is; during a drag
+  // (the Pressable is cancelled when the pan activates) it is skipped.
+  const activeSlotRef = useRef(activeMainSlot);
+  const draggingRef = useRef(false);
+  const returnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    activeSlotRef.current = activeMainSlot;
+  }, [activeMainSlot]);
+  useEffect(
+    () => () => {
+      if (returnTimer.current) clearTimeout(returnTimer.current);
     },
-    [activeMainSlot, pillScale]
+    []
   );
+  const setDragging = useCallback((on: boolean) => {
+    draggingRef.current = on;
+  }, []);
+  const onTabPressIn = useCallback((_slot: number) => {
+    if (returnTimer.current) clearTimeout(returnTimer.current);
+    returnTimer.current = null;
+  }, []);
   const onTabPressOut = useCallback(() => {
-    pillScale.value = withSpring(1, PRESS_SPRING);
-  }, [pillScale]);
+    if (returnTimer.current) clearTimeout(returnTimer.current);
+    returnTimer.current = setTimeout(() => {
+      returnTimer.current = null;
+      const active = activeSlotRef.current;
+      if (draggingRef.current || active < 0 || slotWidth <= 0) return;
+      pillX.value = withSpring(slotToX(active), LENS_X_SPRING);
+    }, LENS_RETURN_MS);
+  }, [pillX, slotToX, slotWidth]);
 
   const handleTabPress = useCallback(
     (route: { key: string; name: string }, isFocused: boolean) => {
@@ -1433,16 +1484,26 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const pan = useMemo(() => {
     return Gesture.Pan()
       .minDistance(PAN_MIN_DISTANCE)
-      .onBegin(() => {
+      .onBegin((e) => {
         'worklet';
-        if (slotWidthSV.value <= 0) return;
-        // Clamp the anchor to a valid slot — when profile is focused
-        // (activeSlotSV === -1) start the drag from slot 0 so anchor math
-        // stays in range. The pill is hidden in that case anyway.
-        const startSlot = activeSlotSV.value < 0 ? 0 : activeSlotSV.value;
-        dragAnchorSlot.value = startSlot;
-        releaseSlot.value = startSlot;
-        pillScale.value = withSpring(PRESS_SCALE, PRESS_SPRING);
+        const sw = slotWidthSV.value;
+        if (sw <= 0) return;
+        // glisse: touch-down lifts the lens onto the tab under the finger, and a drag then starts
+        // from there. (It used to start from the selected tab wherever the finger was, and the
+        // lens shrank to PRESS_SCALE.) Clamped, so a touch on the row's padding picks the end slot.
+        const touched = Math.max(0, Math.min(TAB_COUNT - 1, Math.floor((e.x - TAB_ROW_PADDING_H) / sw)));
+        dragAnchorSlot.value = touched;
+        releaseSlot.value = touched;
+        dragged.value = false;
+        touchX.value = e.x;
+        everLifted.value = true;
+        pillX.value = withSpring(TAB_ROW_PADDING_H + touched * sw + PILL_INSET_X, LENS_X_SPRING);
+        pillLift.value = withSpring(1, LIFT_SPRING);
+      })
+      .onStart(() => {
+        'worklet';
+        dragged.value = true;
+        runOnJS(setDragging)(true);
       })
       .onUpdate((e) => {
         'worklet';
@@ -1452,6 +1513,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         // 1) Pill follows finger horizontally 1:1, anchored at the slot the drag started from
         const anchorX = TAB_ROW_PADDING_H + dragAnchorSlot.value * sw + PILL_INSET_X;
         pillX.value = anchorX + e.translationX;
+        touchX.value = e.x;
 
         // 2) Vertical wobble — small, capped, so pill never leaves the bar
         const dy = e.translationY * TRANSLATE_Y_FACTOR;
@@ -1475,8 +1537,11 @@ export const CustomTabBar = React.memo(function CustomTabBar({
       .onFinalize(() => {
         'worklet';
         const sw = slotWidthSV.value;
+        const wasDrag = dragged.value;
+        dragged.value = false;
+        if (wasDrag) runOnJS(setDragging)(false);
 
-        pillScale.value = withSpring(1, PRESS_SPRING);
+        pillLift.value = withSpring(0, LIFT_SPRING);
         pillStretchW.value = withSpring(0, PILL_SPRING);
         pillY.value = withSpring(0, PILL_SPRING);
 
@@ -1484,26 +1549,44 @@ export const CustomTabBar = React.memo(function CustomTabBar({
 
         const target = releaseSlot.value;
         const targetX = TAB_ROW_PADDING_H + target * sw + PILL_INSET_X;
-        pillX.value = withSpring(targetX, PILL_SPRING);
+        pillX.value = withSpring(targetX, LENS_X_SPRING);
 
-        // Navigate only if the finger ended over a DIFFERENT main slot. When
-        // profile is focused (activeSlotSV === -1) any 0..3 target differs, so
-        // a drag correctly pulls focus back into the main bar.
-        if (target !== activeSlotSV.value) {
+        // Navigate only after a DRAG that ended over a different main slot. A tap is the
+        // Pressable's to handle (its onPress switches tabs): since touch-down now puts the lens on
+        // the touched tab, `target` differs from the selected slot on every tap of another tab,
+        // and navigating here as well would send that tab a second tabPress. When profile is
+        // focused (activeSlotSV === -1) any 0..3 target differs, so a drag correctly pulls focus
+        // back into the main bar.
+        if (wasDrag && target !== activeSlotSV.value) {
           runOnJS(navigateOnRelease)(target);
         }
       });
   }, [
     pillX,
     pillY,
-    pillScale,
     pillStretchW,
+    pillLift,
+    everLifted,
+    touchX,
+    dragged,
     dragAnchorSlot,
     releaseSlot,
     slotWidthSV,
     activeSlotSV,
     navigateOnRelease,
+    setDragging,
   ]);
+
+  // The bar's glow under the finger follows the lift in and out (glisse fades it in over 0.12 s and
+  // out over 0.16 s; the lift spring takes about that long to half-lift and to settle). `{}` until the
+  // bar is first touched, like the lens layers.
+  const glowStyle = useAnimatedStyle(() => {
+    if (!everLifted.value) return {};
+    return {
+      opacity: Math.min(1, pillLift.value / 0.5),
+      transform: [{ translateX: touchX.value - GLOW_RADIUS }],
+    };
+  });
 
   // Pill is shown only when an ACTUAL main tab is focused — hidden on profile
   // (activeMainSlot === -1, profile lives in its own capsule).
@@ -1646,7 +1729,17 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         >
           {/* Glass layers — pass BAR_BORDER_RADIUS so the native glass rounds
               itself instead of relying on the parent's (now-removed) clip. */}
-          <GlassBackdrop isDark={isDark} radius={BAR_BORDER_RADIUS} />
+          <GlassBackdrop isDark={isDark} radius={BAR_BORDER_RADIUS} rim="bar" />
+          {/* glisse's lifted bar: a soft white glow that follows the finger while it is on the bar
+              (`radial-gradient(circle 260px, #ffffff17, #ffffff0b 60%, transparent)`). Its own
+              rounded clip, so it works whether or not the bar clips (it does not with native glass),
+              and a sibling of the glass, never its parent: an alpha on an ancestor of a GlassView
+              discards the glass. */}
+          <View pointerEvents="none" style={styles.glowClip}>
+            <Animated.View style={[styles.glow, glowStyle]}>
+              <Image source={GLOW} style={StyleSheet.absoluteFill} resizeMode="stretch" fadeDuration={0} accessible={false} />
+            </Animated.View>
+          </View>
           {/* The extra reflection gradient only helps the FAKE glass read as
               curved. On real native glass it just dulls the genuine highlight,
               so we skip it entirely. */}
@@ -1666,6 +1759,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
               pillY={pillY}
               pillScale={pillScale}
               pillStretchW={pillStretchW}
+              pillLift={pillLift}
+              everLifted={everLifted}
               baseWidth={pillBaseWidth}
               isDark={isDark}
               glassActive={glassActive}
@@ -1817,5 +1912,21 @@ const styles = StyleSheet.create({
     borderRadius: PILL_HEIGHT / 2,
     overflow: 'hidden',
     zIndex: 5,
+  },
+  // Rest value of the lifted lens's rim (shown only while lifted).
+  lensShine: { opacity: 0 },
+  glowClip: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: BAR_BORDER_RADIUS,
+    overflow: 'hidden',
+  },
+  // A GLOW_RADIUS circle centred on the bar's vertical middle; `glowStyle` moves it to the finger.
+  glow: {
+    position: 'absolute',
+    left: 0,
+    top: TAB_BAR_INNER_HEIGHT / 2 - GLOW_RADIUS,
+    width: GLOW_RADIUS * 2,
+    height: GLOW_RADIUS * 2,
+    opacity: 0,
   },
 });
