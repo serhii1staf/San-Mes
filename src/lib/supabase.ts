@@ -326,12 +326,13 @@ export async function getConversations(_userId: string): Promise<{ conversations
  */
 export async function getMessages(
   conversationId: string,
-  opts: { limit?: number; since?: string } = {},
+  opts: { limit?: number; since?: string; signal?: AbortSignal } = {},
 ): Promise<{ messages: any[]; error: string | null }> {
   const limit = Math.max(1, Math.min(opts.limit ?? 50, 200));
   let path = `/v1/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`;
   if (opts.since) path += `&since=${encodeURIComponent(opts.since)}`;
-  const { data, error } = await apiGet<any[]>(path);
+  // `signal`: the chat screen cancels its page when it closes; see `ApiOptions.signal`.
+  const { data, error } = await apiGet<any[]>(path, { signal: opts.signal });
   if (error) return { messages: [], error };
   return { messages: data || [], error: null };
 }
