@@ -324,9 +324,9 @@ export const useChatUnread = create<ChatUnreadState>((set, get) => {
       //   server higher — the app was killed, or the socket dropped, and the device never saw those
       //                   messages. This is the reported bug.
       //   local higher  — messages just arrived over the socket and bumped the count, but the
-      //                   conversations sync is throttled at 3 minutes, so the server's number is up
-      //                   to 3 minutes old. Preferring the server here would visibly ERASE counts
-      //                   the user is watching arrive.
+      //                   conversations sync is throttled (3 minutes, 10 while the socket is
+      //                   connected), so the server's number can be that old. Preferring the server
+      //                   here would visibly ERASE counts the user is watching arrive.
       //
       // The `|| 1` floor keeps the old behaviour as the fallback rather than a special case: we have
       // already established above that `last > seen`, i.e. something newer than our watermark exists

@@ -133,7 +133,7 @@ export interface Conversation {
    *
    *   `unreadCount`  — what the row DISPLAYS. Owned by `chatUnreadStore`, which is authoritative
    *                    while the app runs because a realtime message increments it immediately,
-   *                    long before the next 3-minute conversations sync.
+   *                    long before the next throttled conversations sync.
    *   `serverUnread` — what happened while this device was NOT looking. Authoritative for the
    *                    app-was-killed case, which the device cannot observe at all.
    *

@@ -243,7 +243,7 @@ async function refreshChatUnreadOnResume(): Promise<void> {
         import('./chatUnreadStore'),
         import('../services/entityStore'),
       ]);
-    // Resume is exactly the moment the 3-minute window is wrong: the app was away, so "recently
+    // Resume is exactly the moment the throttle window is wrong: the app was away, so "recently
     // synced" says nothing about whether anything arrived.
     resetThrottle(`conversations:${uid}`);
     await syncConversations(uid);
