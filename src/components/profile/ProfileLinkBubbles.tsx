@@ -52,6 +52,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { triggerHaptic } from '../../utils/haptics';
 import { openUrl } from '../../utils/openUrl';
+import { UI_RUNTIME_MAPPERS } from '../../utils/workletGuards';
 import { useT } from '../../i18n/store';
 // Detection by HOST, shared with the editor. The local copy here matched substrings, which is how a
 // Roblox link (`roblox.com` contains `x.com`) came out as Twitter. Icon and gel colour per kind live
@@ -195,6 +196,7 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
 
   // 0 → 1 per period, on the native driver. See the note at the top of the file.
   const loop = useRef(new RNAnimated.Value(0)).current;
+  const loopStartedRef = useRef(false);
   useEffect(() => {
     if (!running) {
       loop.stopAnimation();
@@ -204,7 +206,12 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
       RNAnimated.timing(loop, { toValue: 1, duration: period, easing: RNEasing.linear, useNativeDriver: true }),
     );
     // From the start of a cycle: the loop resets to the value it started from on every iteration.
-    loop.setValue(0);
+    // Only a RESTART needs the reset; a new value is already 0. `setValue` on a value bound to views
+    // pushes it through JS `setNativeProps` to every one of them (seven interpolations over three
+    // views per drop), and on the first start that was 117 ms of JS for one profile's drops in the
+    // emulator profile, landing just after the push animation.
+    if (loopStartedRef.current) loop.setValue(0);
+    loopStartedRef.current = true;
     anim.start();
     return () => anim.stop();
   }, [running, loop, period]);
@@ -346,6 +353,12 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
 
   // Only what a touch moves. The idle drift is on the native driver, on a view inside this one.
   const containerStyle = useAnimatedStyle(() => {
+    // The first runs happen on the JS thread when the drop mounts, where each of the five reads
+    // below is a synchronous call into the UI thread (see src/utils/workletGuards.ts). Nothing has
+    // moved yet then, so the resting transform is the answer; the UI-thread mapper takes over.
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) {
+      return { transform: [{ translateX: 0 }, { translateY: 0 }, { scaleX: 1 }, { scaleY: 1 }] };
+    }
     // Stretch along the pull while it is held away from home.
     const pull = Math.min(1, Math.sqrt(dx.value * dx.value + dy.value * dy.value) / 140);
     const s = scale.value * pop.value;
