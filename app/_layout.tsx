@@ -155,7 +155,22 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 // The DSN is a public ingestion URL: it identifies the project but cannot be
 // used to read events or modify settings, so it's safe to commit.
 const navigationIntegration = Sentry.reactNavigationIntegration({
-  enableTimeToInitialDisplay: true,
+  // ── TIME TO INITIAL DISPLAY IS iOS-ONLY: ON ANDROID IT KEPT EVERY SCREEN ALIVE ────────────────
+  //
+  // With this on, the SDK calls `initNativeReactNavigationNewFrameTracking`, which on Android
+  // registers a fragment-lifecycle tracer that puts sentry-android's `FirstDrawDoneListener` on every
+  // pushed screen. In sentry-android 8.21.1 (the version this binary has, via @sentry/react-native
+  // 7.2.0) that listener removes itself from a global-layout listener that is never removed in
+  // turn, and that lambda holds the screen's root view. The root window's ViewTreeObserver therefore
+  // kept every chat, profile and settings screen ever opened, with its whole view tree.
+  //
+  // Measured on the emulator (heap dump after a forced GC, open/close the long chat 4 times, no
+  // scrolling): live Views 293 -> 393 -> 493 -> 593, exactly 100 more per visit, and 400 of the 411
+  // detached ones held through that listener. sentry-java fixed it upstream (#5567, #6152), which
+  // needs a new native build; turning the feature off on Android is the over-the-air fix. iOS
+  // measures the same thing by swizzling `viewDidAppear` and keeps it. Android navigation spans are
+  // still recorded, without the time-to-initial-display measurement.
+  enableTimeToInitialDisplay: Platform.OS !== 'android',
 });
 
 // Wrap init in try/catch so that if anything goes wrong (e.g. the native
