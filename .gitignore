@@ -9,6 +9,13 @@ web-build/
 # Native builds
 ios/
 android/
+# ...except the native sources of our own Expo modules (modules/<name>/ios, modules/<name>/android),
+# which ARE source. Their Gradle output stays out.
+!modules/*/ios/
+!modules/*/android/
+modules/*/android/build/
+modules/*/android/.cxx/
+modules/*/android/.gradle/
 
 # Environment
 .env
