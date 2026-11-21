@@ -5,11 +5,21 @@ on:
 jobs:
   probe:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Run probe
+      - name: Build and run probe
         run: |
           sw_vers
           sysctl -n machdep.cpu.brand_string
-          swift scripts/ca-probe.swift
+          mkdir -p build out
+          cp scripts/ca-probe.swift build/main.swift
+          cp modules/san-glass/ios/SanGlassCapture.swift modules/san-glass/ios/SanGlassShader.swift build/
+          swiftc -O build/main.swift build/SanGlassCapture.swift build/SanGlassShader.swift -o build/probe \
+            -framework Metal -framework MetalPerformanceShaders -framework QuartzCore -framework CoreText -framework ImageIO
+          ./build/probe out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-out
+          path: out
