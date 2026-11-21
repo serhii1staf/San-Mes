@@ -1,9 +1,9 @@
 /**
  * Settings → Внешний вид.
  *
- * Rebuilt around a live chat preview, the way Telegram's Appearance screen works: everything here
- * applies the moment it is tapped and the preview at the top shows the result. There is no Save
- * button — a carousel you had to save (and that discarded the choice on Back) was the old design.
+ * Everything here applies the moment it is tapped and the preview at the top (the app in miniature,
+ * AppPreview) shows the result. There is no Save button — a carousel you had to save (and that
+ * discarded the choice on Back) was the old design.
  *
  * The theme thumbnails are tiny chats drawn in each theme's own colours. They are plain Views with
  * no text and no icons, so a row of thirty costs almost nothing to mount — the old cards drew a fake
@@ -18,7 +18,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
-import { ChatPreviewBubbles } from '../../src/components/ui/ChatPreviewBubbles';
+import { AppPreview } from '../../src/components/settings/AppPreview';
 import { SettingsRow, SettingsSection } from '../../src/components/settings/SettingsList';
 import { useThemeStore, ACCENT_COLORS, type ThemeMode } from '../../src/store/themeStore';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -27,7 +27,6 @@ import {
   GLOBAL_CHAT_SETTINGS_KEY,
   DEFAULT_CHAT_SETTINGS,
 } from '../../src/store/chatSettingsStore';
-import { readableTextOn } from '../../src/constants/bubbleColors';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
@@ -130,10 +129,8 @@ export default function AppearanceScreen() {
   const isDark = mode === 'dark';
 
   const chatBubble = useSettingsStore((s) => s.chatBubble);
-  const chatBubbleIn = useSettingsStore((s) => s.chatBubbleIn);
   const globalChat = useChatSettingsStore((s) => s.settings[GLOBAL_CHAT_SETTINGS_KEY]);
   const chat = useMemo(() => ({ ...DEFAULT_CHAT_SETTINGS, ...globalChat }), [globalChat]);
-  const previewFont = chat.fontFamily === 'mono' ? 'monospace' : chat.fontFamily === 'serif' ? 'serif' : undefined;
 
   const themes = useMemo(() => [...ACCENT_COLORS, ...aiThemes], [aiThemes]);
   const initialIndex = Math.max(0, themes.findIndex((c) => c.key === accent));
@@ -193,8 +190,6 @@ export default function AppearanceScreen() {
   );
 
   const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
-  const outText = chatBubble && chatBubble.colors.length > 0 ? readableTextOn(chatBubble.colors) : undefined;
-  const inText = chatBubbleIn && chatBubbleIn.colors.length > 0 ? readableTextOn(chatBubbleIn.colors) : undefined;
   const openChatModal = (pathname: string) => {
     triggerHaptic('selection');
     router.push({ pathname, params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any);
@@ -222,23 +217,10 @@ export default function AppearanceScreen() {
         contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Live preview — the same component the chat look modals use, so it shows exactly what
-            a chat will look like with the current theme, bubble colours, corners and wallpaper. */}
+        {/* Live preview of the app itself: the theme, the mode and the interface font change every
+            screen, not one chat. The chat look has its own previews in the chat settings modals. */}
         <View style={[styles.preview, { borderColor: theme.colors.border.light }]}>
-          <ChatPreviewBubbles
-            height={268}
-            fontSize={chat.fontSize}
-            fontFamily={previewFont}
-            bubbleRadius={chat.bubbleRadius}
-            backgroundImage={chat.backgroundImage}
-            topPadding={14}
-            bubbleColors={chatBubble?.colors}
-            bubbleOpacity={chatBubble?.opacity}
-            bubbleTextColor={outText}
-            inColors={chatBubbleIn?.colors}
-            inOpacity={chatBubbleIn?.opacity}
-            inTextColor={inText}
-          />
+          <AppPreview height={268} />
         </View>
 
         <View style={{ paddingHorizontal: 16 }}>

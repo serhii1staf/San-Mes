@@ -19,6 +19,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View, Alert } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { resetSanGlassStats, sanGlassStats, type SanGlassStats } from '../../../modules/san-glass/index';
 
 import { useTheme } from '../../theme';
 import { perfMonitor, type PerfEvent, type PerfEventKind, type PerfSnapshot, type RouteHotspot } from '../../services/perfMonitor';
@@ -131,13 +132,22 @@ export function PerfMonitorPanel({ onClose }: Props) {
   // faster cadence. A diagnostic table updating once a second is not a
   // regression; a diagnostic table that generates the freezes it is reporting
   // is.
+  // ── THE GLASS'S OWN COST ───────────────────────────────────────────────────
+  //
+  // Our glass (modules/san-glass) captures what is beneath it on the main thread (iOS) or re-records
+  // it on the UI thread (Android), so it can lower the UI frame rate without any JS long task. Its
+  // counters are read with each panel update and then reset, so the line shows the last second.
+  const [glass, setGlass] = useState<SanGlassStats | null>(() => sanGlassStats());
   useEffect(() => {
     let last = 0;
+    resetSanGlassStats();
     const unsub = perfMonitor.subscribe((s) => {
       const now = Date.now();
       if (now - last < 900) return;
       last = now;
       setSnap(s);
+      setGlass(sanGlassStats());
+      resetSanGlassStats();
     });
     return unsub;
   }, []);
@@ -208,6 +218,8 @@ export function PerfMonitorPanel({ onClose }: Props) {
         // Kept nested because it reads better in a pasted snapshot, and `uiSampleCount` sits beside
         // it in `rest` as the thing to check before believing `ui`.
         fps: { js: jsFps, ui: uiFps, jsP1Min, uiP1Min },
+        // The last second of the glass's counters (null on binaries without them).
+        glass,
         recentEvents: events,
       };
       await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
@@ -328,6 +340,22 @@ export function PerfMonitorPanel({ onClose }: Props) {
           {snap.currentRoute ? (
             <Text style={{ color: theme.colors.text.tertiary, fontSize: 11, marginTop: 6, paddingHorizontal: 4 }}>
               {t('perf.current_route', 'Route')}: {snap.currentRoute}
+            </Text>
+          ) : null}
+          {glass ? (
+            <Text
+              style={{
+                color: glass.captureMsPerSecond > 80 ? '#ef4444' : glass.captureMsPerSecond > 30 ? '#f59e0b' : theme.colors.text.tertiary,
+                fontSize: 11,
+                marginTop: 4,
+                paddingHorizontal: 4,
+              }}
+            >
+              {t('perf.glass', 'Glass')}: {glass.instances} · {Math.round(glass.capturesPerSecond)}/s ·{' '}
+              {glass.captureMsPerSecond.toFixed(1)} {t('perf.ms_per_s', 'ms/s')} ({t('perf.avg', 'avg')}{' '}
+              {glass.captureMsAverage.toFixed(2)}, {t('perf.max', 'max')} {glass.captureMsMax.toFixed(1)} {t('perf.ms_label', 'ms')})
+              {glass.layersVisitedPerCapture != null ? ` · ${t('perf.layers', 'layers')} ${Math.round(glass.layersVisitedPerCapture)}` : ''}
+              {glass.levelsRecordedPerCapture != null ? ` · ${t('perf.rerecorded', 'rerecorded')} ${glass.levelsRecordedPerCapture.toFixed(1)}` : ''}
             </Text>
           ) : null}
         </View>

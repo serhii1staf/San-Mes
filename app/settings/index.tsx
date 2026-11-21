@@ -40,6 +40,7 @@ import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { isNativeGlassCapable } from '../../src/components/ui/LiquidGlass';
+import { GLASS_SURFACES_CAPABLE } from '../../src/components/ui/SanGlassSurface';
 import { isSanGlassAvailable } from '../../modules/san-glass/index';
 import { useT } from '../../src/i18n/store';
 import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
@@ -216,6 +217,9 @@ export default function SettingsScreen() {
   // or our own (modules/san-glass: any iPhone and Android 13+, in binaries that include it). Hidden
   // everywhere else — a toggle that does nothing is worse than no toggle. Both are static per session.
   const glassCapable = isNativeGlassCapable() || isSanGlassAvailable;
+  // With our glass on, every blur surface IS our glass, so Android's blur switch (what those surfaces
+  // show when the glass is off) would do nothing; it is offered only while it can matter.
+  const showAndroidBlur = Platform.OS === 'android' && !(GLASS_SURFACES_CAPABLE && liquidGlassEnabled);
   // App version is read past the navigation transition: `expo-constants` is settings-only here and
   // reading `Constants.expoConfig?.version` the first time can warm a sizeable JSON.
   const [appVersion, setAppVersion] = useState('1.0.0');
@@ -500,8 +504,8 @@ export default function SettingsScreen() {
                   thumbColor="#FFFFFF"
                 />
               }
-              // On Android the blur row below follows it now, so it no longer ends the list there.
-              isLast={!IS_ANDROID}
+              // On Android the blur row below may follow it, and then it no longer ends the list.
+              isLast={!showAndroidBlur}
             />
           )}
           {/* ── THE ANDROID BLUR SWITCH, WHICH ANDROID NEVER HAD ──────────────────
@@ -518,7 +522,7 @@ export default function SettingsScreen() {
               The default is now OFF and the switch lives here, on Android, so the effect is both
               reversible and discoverable. Android's default surface is the tonal fill, which is what
               Material specifies for an elevated surface — not a compromise. */}
-          {IS_ANDROID && (
+          {showAndroidBlur && (
             <SettingsRow
               icon="blur-on"
               iconTint="cyan"

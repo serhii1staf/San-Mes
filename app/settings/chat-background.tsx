@@ -2,17 +2,18 @@
  * Telegram-style fullscreen "Chat background" preview modal.
  *
  * Live preview at the top against the candidate background, then a
- * horizontally-scrolling list of choices: "no background", a handful of
- * bundled gradient presets, and a "from gallery" tile that uses
- * expo-image-picker (ALREADY in the bundle, no new native module).
+ * horizontally-scrolling list of choices: "no background" first, the bundled
+ * wallpapers (assets/chat-backgrounds, see BUNDLED_CHAT_BACKGROUNDS), and a
+ * "from gallery" tile that uses expo-image-picker (ALREADY in the bundle, no
+ * new native module).
  *
- * Pending state lives locally — Apply commits it to chatSettingsStore;
- * Cancel / X exits with no change.
+ * Pending state lives locally — Apply (the footer button) commits it to
+ * chatSettingsStore; Cancel / X exits with no change. There is one Apply, in
+ * the footer: the header used to have a second one.
  *
- * Why solid-gradient presets instead of bundled image assets: the spec
- * forbids new packages and zip packs are gitignored. Synthesising the
- * presets at render time keeps the bundle size flat and gives us full
- * theme-aware control. Choose-from-gallery still lets users pick anything.
+ * The bundled wallpapers replaced six generated gradients. A chat that still
+ * has one of those keeps it (ChatBackgroundLayer renders both); it just is no
+ * longer offered here.
  */
 
 import React, { useState, useMemo } from 'react';
@@ -33,8 +34,9 @@ import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { ShrinkingModalTitle } from '../../src/components/ui';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
+import { Image } from 'expo-image';
 import { ChatPreviewBubbles } from '../../src/components/ui/ChatPreviewBubbles';
-import { buildPresetGradientUri } from '../../src/components/ui/ChatBackgroundLayer';
+import { BUNDLED_CHAT_BACKGROUNDS, buildPresetImageUri } from '../../src/components/ui/ChatBackgroundLayer';
 import {
   useChatSettingsStore,
   GLOBAL_CHAT_SETTINGS_KEY,
@@ -46,20 +48,12 @@ import { useT } from '../../src/i18n/store';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PREVIEW_HEIGHT = Math.round(SCREEN_HEIGHT * 0.55);
 
-// Bundled gradient presets. Each preset gets a stable `preset:gradient:`
-// pseudo-URI so we can persist them in chatSettingsStore.backgroundImage
-// (a string URI) without changing the store schema. ChatBackgroundLayer
-// detects the prefix and renders LinearGradient instead of an Image — both
-// the preview here and the live chat screen use that helper, so what you
-// see in this modal is exactly what the chat will look like.
-const PRESETS: { id: string; from: string; to: string }[] = [
-  { id: 'sunrise', from: '#FFD194', to: '#D1913C' },
-  { id: 'lavender', from: '#A18CD1', to: '#FBC2EB' },
-  { id: 'mint', from: '#84FAB0', to: '#8FD3F4' },
-  { id: 'ocean', from: '#5EE7DF', to: '#B490CA' },
-  { id: 'sunset', from: '#FF9A8B', to: '#FF6A88' },
-  { id: 'graphite', from: '#434343', to: '#000000' },
-];
+// The bundled wallpapers, each persisted as its stable `preset:image:<id>`
+// pseudo-URI in chatSettingsStore.backgroundImage (a string URI), so the
+// store schema is unchanged. ChatBackgroundLayer resolves the URI for both the
+// preview here and the live chat screen, so what you see in this modal is
+// exactly what the chat will look like.
+const PRESETS = BUNDLED_CHAT_BACKGROUNDS.map((b) => ({ ...b, uri: buildPresetImageUri(b.id) }));
 
 export default function ChatBackgroundScreen() {
   const theme = useTheme();
@@ -171,21 +165,6 @@ export default function ChatBackgroundScreen() {
             </View>
           </ShrinkingModalTitle>
         </View>
-        <Pressable onPress={onApply} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
-          {glassActive ? (
-            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18 }]}>
-              <RNText style={styles.headerApplyText} allowFontScaling={false}>
-                {t('common.apply')}
-              </RNText>
-            </NativeGlassView>
-          ) : (
-            <BlurView intensity={80} role="scrim" tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
-              <RNText style={styles.headerApplyText} allowFontScaling={false}>
-                {t('common.apply')}
-              </RNText>
-            </BlurView>
-          )}
-        </Pressable>
       </View>
 
       {/* ── Controls + footer ───────────────────────────────────────── */}
@@ -215,27 +194,21 @@ export default function ChatBackgroundScreen() {
             </View>
           </BgTile>
 
-          {/* Bundled gradient presets */}
+          {/* Bundled wallpapers */}
           {PRESETS.map((p, i) => {
-            const uri = buildPresetGradientUri(p.from, p.to);
-            const active = pending === uri;
+            const active = pending === p.uri;
             return (
               <BgTile
                 key={p.id}
                 label={t('chat_settings.bg_preset', undefined, { n: String(i + 1) })}
                 active={active}
-                onPress={() => onPickPreset(uri)}
+                onPress={() => onPickPreset(p.uri)}
                 accent={accent}
                 borderLight={borderLight}
                 bgElevated={bgElevated}
                 textPrimary={textPrimary}
               >
-                <LinearGradient
-                  colors={[p.from, p.to]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.tileFill}
-                />
+                <Image source={p.source} style={styles.tileFill} contentFit="cover" transition={0} accessible={false} />
               </BgTile>
             );
           })}
@@ -401,7 +374,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerTitleText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  headerApplyText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
 
   controlsWrap: {
     flex: 1,

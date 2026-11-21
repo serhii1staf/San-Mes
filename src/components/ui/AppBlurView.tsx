@@ -3,6 +3,7 @@ import { Platform, View, StyleSheet, type ViewStyle, type StyleProp } from 'reac
 import { BlurView as ExpoBlurView } from 'expo-blur';
 import { useTheme } from '../../theme';
 import { useSettingsStore } from '../../store/settingsStore';
+import { SanGlassBox, useGlassSurfacesActive } from './SanGlassSurface';
 
 /**
  * The app's blur surface. Import this instead of `expo-blur`'s `BlurView`.
@@ -194,6 +195,29 @@ function AppBlurViewComponent({ intensity = 50, tint = 'default', role = 'chrome
   // settings row is hidden off iOS, which is how every Android install ended up running dimezis blur
   // with no way to stop it. See the note above.
   const blurOptIn = useSettingsStore((s) => s.androidBlurEnabled);
+  const glass = useGlassSurfacesActive();
+
+  // ── OUR GLASS, WHEN IT IS ON ───────────────────────────────────────────────
+  //
+  // Asked for: our glass on every blur the app has, with the blur kept for when the glass is switched
+  // off. So with the glass on (a binary whose glass can be a surface, the setting on, no Reduce
+  // Transparency) this is our frosted glass on both platforms, and everything below is the fallback.
+  // `intensity` thickens the tint the way a higher blur intensity reads as a heavier material; `tint`
+  // and `role` pick the family exactly as they pick the fallback's.
+  if (glass) {
+    const dark = tint === 'dark' ? true : tint === 'light' ? false : theme.isDark;
+    return (
+      <SanGlassBox
+        style={style}
+        kind={role === 'scrim' ? 'scrim' : 'frosted'}
+        dark={dark}
+        strength={Math.max(0, Math.min(100, intensity)) / 100}
+        {...rest}
+      >
+        {children}
+      </SanGlassBox>
+    );
+  }
 
   if (Platform.OS !== 'android') {
     return (
