@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.frameworks = 'Metal', 'QuartzCore', 'CoreVideo', 'UIKit'
+  s.frameworks = 'Metal', 'MetalPerformanceShaders', 'QuartzCore', 'CoreVideo', 'UIKit'
 
   s.source_files = '**/*.{h,m,swift}'
 end

@@ -7,11 +7,13 @@
  *   - A regular image URI (file://, https://, content://, ph://) — rendered
  *     via expo-image (CachedImage) so we get caching + WebP optimisation.
  *
- *   - A "preset" pseudo-URI of the form `preset:gradient:<from>:<to>` where
- *     <from> and <to> are 6-digit hex colours WITHOUT the leading `#` — so
- *     they don't collide with URL fragment parsing. Rendered as a
- *     LinearGradient. This lets us ship "bundled patterns" without bundling
- *     image assets.
+ *   - `preset:image:<id>`: one of the bundled wallpapers (BUNDLED_CHAT_BACKGROUNDS), the
+ *     presets offered in Settings → Chat background.
+ *
+ *   - `preset:gradient:<from>:<to>` where <from> and <to> are 6-digit hex
+ *     colours WITHOUT the leading `#` — so they don't collide with URL
+ *     fragment parsing. Rendered as a LinearGradient. The previous presets;
+ *     no longer offered, still rendered for chats that have one set.
  *
  * The chat screen previously read `backgroundImage` directly into an
  * <ImageBackground/>; centralising the lookup here means we only need to
@@ -22,6 +24,7 @@
 import React from 'react';
 import { ViewStyle, StyleProp, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { CachedImage } from './CachedImage';
 
 interface ChatBackgroundLayerProps {
@@ -31,7 +34,31 @@ interface ChatBackgroundLayerProps {
   proxyWidth?: number;
 }
 
-/** True iff the URI follows the `preset:gradient:<from>:<to>` shape. */
+/**
+ * The bundled wallpapers offered in Settings → Chat background, in the order shown there. Each is
+ * stored as `preset:image:<id>`, so the id must never change once shipped: it is what a chat's
+ * saved setting points at. Files in assets/chat-backgrounds/ (the owner's own images, unchanged).
+ */
+export const BUNDLED_CHAT_BACKGROUNDS: readonly { id: string; source: number }[] = [
+  { id: 'doodle-1', source: require('../../../assets/chat-backgrounds/doodle-1.webp') },
+  { id: 'doodle-2', source: require('../../../assets/chat-backgrounds/doodle-2.webp') },
+  { id: 'doodle-3', source: require('../../../assets/chat-backgrounds/doodle-3.webp') },
+  { id: 'doodle-4', source: require('../../../assets/chat-backgrounds/doodle-4.webp') },
+  { id: 'doodle-5', source: require('../../../assets/chat-backgrounds/doodle-5.webp') },
+];
+
+export function buildPresetImageUri(id: string): string {
+  return `preset:image:${id}`;
+}
+
+/** The bundled image a `preset:image:<id>` URI points at, or null. */
+export function parsePresetImageUri(uri: string): number | null {
+  if (!uri.startsWith('preset:image:')) return null;
+  const id = uri.slice('preset:image:'.length);
+  return BUNDLED_CHAT_BACKGROUNDS.find((b) => b.id === id)?.source ?? null;
+}
+
+/** True iff the URI is one of the `preset:` pseudo-URIs (a gradient or a bundled image). */
 export function isPresetUri(uri: string): boolean {
   return uri.startsWith('preset:');
 }
@@ -58,6 +85,25 @@ export function parsePresetUri(uri: string): { from: string; to: string } | null
 export function ChatBackgroundLayer({ uri, style, proxyWidth }: ChatBackgroundLayerProps) {
   if (!uri) return null;
 
+  // A bundled wallpaper: read from the app itself, no network, no proxy.
+  const bundled = parsePresetImageUri(uri);
+  if (bundled != null) {
+    return (
+      <Image
+        source={bundled}
+        style={[StyleSheet.absoluteFill, style as any]}
+        contentFit="cover"
+        transition={0}
+        pointerEvents="none"
+        accessible={false}
+      />
+    );
+  }
+  // A wallpaper that is no longer offered (an id removed from the list): show none rather than
+  // sending a `preset:` string to the image loader.
+  if (uri.startsWith('preset:image:')) return null;
+
+  // Gradients are no longer offered, but a chat that already has one keeps it.
   const preset = parsePresetUri(uri);
   if (preset) {
     return (

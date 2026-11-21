@@ -979,6 +979,11 @@ const ru: Record<string, string> = {
   'appearance.delete_theme': 'Удалить эту тему?',
   'appearance.preview_message': 'Привет! Как дела сегодня? 🌟',
   'appearance.preview_user': 'Мария',
+  'appearance.preview.name2': 'Алексей',
+  'appearance.preview.msg2': 'Фото',
+  'appearance.preview.name3': 'Команда San',
+  'appearance.preview.msg3': 'Добро пожаловать в San!',
+  'appearance.preview.yesterday': 'Вчера',
 
   // AI-applied theme → matching pixel-icon picker carousel that appears
   // under the action bubble in the AI chat. Keys live in the appearance

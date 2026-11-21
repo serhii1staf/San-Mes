@@ -965,6 +965,11 @@ const en: Record<string, string> = {
   'appearance.delete_theme': 'Delete this theme?',
   'appearance.preview_message': 'Hi! How are you today? 🌟',
   'appearance.preview_user': 'Maria',
+  'appearance.preview.name2': 'Alex',
+  'appearance.preview.msg2': 'Photo',
+  'appearance.preview.name3': 'San Team',
+  'appearance.preview.msg3': 'Welcome to San!',
+  'appearance.preview.yesterday': 'Yesterday',
 
   // AI-applied theme → matching pixel-icon picker carousel that appears
   // under the action bubble in the AI chat. Keys live in the appearance

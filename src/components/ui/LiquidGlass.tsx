@@ -1,6 +1,7 @@
 import React from 'react';
 import {
-  AccessibilityInfo,
+  Animated,
+  Easing,
   Platform,
   View,
   StyleSheet,
@@ -12,6 +13,25 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { useTheme } from '../../theme';
 import { androidSurfaceStyle, type AppSurfaceRole } from './AppBlurView';
 import { isSanGlassAvailable } from '../../../modules/san-glass/index';
+import {
+  GLASS_SURFACES_CAPABLE,
+  SanGlassBox,
+  SanGlassLayer,
+  isReduceTransparencyEnabled,
+  useGlassSurfacesActive,
+  useReduceTransparency,
+} from './SanGlassSurface';
+
+export { isReduceTransparencyEnabled };
+
+// ── OUR GLASS EVERYWHERE, THE SYSTEM'S NOWHERE (feature level 2 binaries) ──
+//
+// Asked for: our own glass, slightly darkened, on by default, with the system's liquid glass switched
+// off, and on every blur surface. On binaries whose native glass can be a surface
+// (`GLASS_SURFACES_CAPABLE`), every component below renders our glass (see SanGlassSurface.tsx) and
+// `useLiquidGlassActive()` means "our glass is on", on iOS and Android 13+ alike. Nothing from
+// expo-glass-effect is mounted there. Older binaries running this bundle over the air keep exactly
+// what they shipped with: the system glass on iOS 26, the fallbacks elsewhere.
 
 // ── Native liquid glass (iOS 26+) — single integration point ───────────────
 //
@@ -70,55 +90,21 @@ export function isNativeGlassCapable(): boolean {
 
 // ── Reduce Transparency (accessibility) ────────────────────────────────────
 //
-// Expo's own docs are explicit about this: `isLiquidGlassAvailable()` only tells
-// you the components are compiled in, and "may also be true if the user has
-// enabled accessibility settings that limit the Liquid Glass effect. To check if
-// the user has disabled the Liquid Glass effect via accessibility settings, use
-// AccessibilityInfo.isReduceTransparencyEnabled()."
-//
-// Without this check we mount full liquid-glass surfaces for users who asked the
-// system for LESS transparency — an accessibility regression, and pure wasted
-// GPU work since iOS then degrades the material anyway. Tracked in a module-level
-// store (not a hook-local state) so the value is shared by every consumer and
-// read synchronously by non-React callers.
-let reduceTransparency = false;
-const reduceTransparencyListeners = new Set<() => void>();
-
-function setReduceTransparency(next: boolean): void {
-  if (next === reduceTransparency) return;
-  reduceTransparency = next;
-  reduceTransparencyListeners.forEach((fn) => {
-    try { fn(); } catch { /* a torn-down subscriber must not break the others */ }
-  });
-}
-
-if (Platform.OS === 'ios') {
-  AccessibilityInfo.isReduceTransparencyEnabled()
-    .then(setReduceTransparency)
-    .catch(() => { /* keep the default (glass allowed) */ });
-  // Respect a mid-session toggle — the user can flip this in Settings while the
-  // app is backgrounded and come straight back.
-  AccessibilityInfo.addEventListener('reduceTransparencyChanged', setReduceTransparency);
-}
-
-/** Whether the OS "Reduce Transparency" accessibility setting is currently on. */
-export function isReduceTransparencyEnabled(): boolean {
-  return reduceTransparency;
-}
+// Expo's docs: `isLiquidGlassAvailable()` "may also be true if the user has enabled accessibility
+// settings that limit the Liquid Glass effect"; check `AccessibilityInfo.isReduceTransparencyEnabled()`.
+// Without it we would mount glass for users who asked the system for LESS transparency. The store now
+// lives in SanGlassSurface.tsx (our glass honours it too) and is re-exported above.
 
 /**
- * True when the device can render native glass, the user has it enabled in
- * settings, AND the OS is not asking us to reduce transparency. Subscribes to
- * the settings toggle and to the accessibility flag, so consumers re-render
- * (mount/unmount the GlassView) the instant either one flips.
+ * True when glass surfaces should render: the user has the glass enabled in settings, the OS is not
+ * asking us to reduce transparency, and either our glass can be a surface (level 2 binaries, any iPhone
+ * and Android 13+) or, on older binaries, the device has the system's (iOS 26+). Subscribes to the
+ * setting and to the accessibility flag, so consumers re-render the instant either one flips.
  */
 export function useLiquidGlassActive(): boolean {
   const enabled = useSettingsStore((s) => s.liquidGlassEnabled);
-  const reduced = React.useSyncExternalStore(
-    subscribeReduceTransparency,
-    isReduceTransparencyEnabled,
-    isReduceTransparencyEnabled,
-  );
+  const reduced = useReduceTransparency();
+  if (GLASS_SURFACES_CAPABLE) return enabled && !reduced;
   // ── GLASS IS NOT PERFORMANCE-GATED. DO NOT REINTRODUCE THAT. ────────────────
   //
   // This briefly also required `glassAllowed` from `renderBudget`, which switched
@@ -148,19 +134,37 @@ export function useLiquidGlassActive(): boolean {
  */
 export function useCustomGlassActive(): boolean {
   const enabled = useSettingsStore((s) => s.liquidGlassEnabled);
-  const reduced = React.useSyncExternalStore(
-    subscribeReduceTransparency,
-    isReduceTransparencyEnabled,
-    isReduceTransparencyEnabled,
-  );
+  const reduced = useReduceTransparency();
   return isSanGlassAvailable && enabled && !reduced;
 }
 
-function subscribeReduceTransparency(onStoreChange: () => void): () => void {
-  reduceTransparencyListeners.add(onStoreChange);
-  return () => {
-    reduceTransparencyListeners.delete(onStoreChange);
-  };
+/** The style name of a `glassStyle` prop, whichever form it was given in. */
+function glassStyleName(glassStyle: GlassStyle | GlassStyleConfig | undefined, fallback: GlassStyle): GlassStyle {
+  if (!glassStyle) return fallback;
+  return typeof glassStyle === 'string' ? glassStyle : glassStyle.style;
+}
+
+/**
+ * `{ style: 'none', animate: true }` is how callers dissolve the system glass (an alpha on it would stop
+ * it rendering). Our glass takes an alpha fine, so it simply fades out over the same duration.
+ */
+function OurGlassDissolve({ dissolving, durationS, children }: { dissolving: boolean; durationS: number; children: React.ReactNode }) {
+  const opacity = React.useRef(new Animated.Value(1)).current;
+  React.useEffect(() => {
+    const anim = Animated.timing(opacity, {
+      toValue: dissolving ? 0 : 1,
+      duration: Math.round(durationS * 1000),
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [dissolving, durationS, opacity]);
+  return (
+    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity }]}>
+      {children}
+    </Animated.View>
+  );
 }
 
 export type GlassStyle = 'clear' | 'regular' | 'none';
@@ -222,6 +226,20 @@ export function NativeGlassView({
   children,
   ...rest
 }: NativeGlassViewProps) {
+  const ours = useGlassSurfacesActive();
+  const theme = useTheme();
+  if (ours) {
+    // `clear` stays clear glass (darkened a little, the live content in the middle); `regular` is the
+    // frosted body. The content is a sibling on top of the glass, so it is never bent.
+    const name = glassStyleName(glassStyle, 'regular');
+    if (name === 'none') return <View style={style} {...rest}>{children}</View>;
+    const dark = colorScheme === 'dark' ? true : colorScheme === 'light' ? false : theme.isDark;
+    return (
+      <SanGlassBox style={style} kind={name === 'clear' ? 'clear' : 'frosted'} dark={dark} tintColor={tintColor} {...rest}>
+        {children}
+      </SanGlassBox>
+    );
+  }
   if (!GlassViewComp) {
     return <View style={style} {...rest}>{children}</View>;
   }
@@ -263,6 +281,9 @@ interface GlassContainerViewProps {
  */
 export function GlassContainerView({ spacing, style, fallback, children }: GlassContainerViewProps) {
   const active = useLiquidGlassActive();
+  const ours = useGlassSurfacesActive();
+  // Our glass has no merging container: the surfaces inside simply sit side by side.
+  if (ours) return <View style={style}>{children}</View>;
   if (active && GlassContainerComp) {
     return (
       <GlassContainerComp spacing={spacing} style={style}>
@@ -294,6 +315,30 @@ export function GlassSurface({ fallback, ...glassProps }: GlassSurfaceProps) {
   const active = useLiquidGlassActive();
   if (active) return <NativeGlassView {...glassProps} />;
   return <>{fallback}</>;
+}
+
+/** The look of our glass for a `GlassBg`, mapped from its system-glass props. */
+function OurGlassBg({ borderRadius, glassStyle, colorScheme, tintColor }: Pick<GlassBgProps, 'borderRadius' | 'glassStyle' | 'colorScheme' | 'tintColor'>) {
+  const theme = useTheme();
+  const dark = colorScheme === 'dark' ? true : colorScheme === 'light' ? false : theme.isDark;
+  const dissolving = typeof glassStyle === 'object' && glassStyle.style === 'none';
+  const name = glassStyleName(glassStyle, 'clear');
+  if (name === 'none' && !(typeof glassStyle === 'object' && glassStyle.animate)) return null;
+  // While dissolving, keep the look it had (the menus dissolve from `regular`).
+  const kind = name === 'clear' ? 'clear' : 'frosted';
+  const layer = <SanGlassLayer kind={kind} dark={dark} tintColor={tintColor} cornerRadius={borderRadius ?? 0} />;
+  if (typeof glassStyle === 'object' && glassStyle.animate) {
+    return (
+      <OurGlassDissolve dissolving={dissolving} durationS={glassStyle.animationDuration ?? 0.25}>
+        {layer}
+      </OurGlassDissolve>
+    );
+  }
+  return (
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, borderRadius != null ? { borderRadius } : null]}>
+      {layer}
+    </View>
+  );
 }
 
 interface GlassBgProps {
@@ -349,9 +394,13 @@ interface GlassBgProps {
  */
 export function GlassBg({ borderRadius, glassStyle = 'clear', colorScheme, interactive = true, tintColor, role }: GlassBgProps) {
   const active = useLiquidGlassActive();
+  const ours = useGlassSurfacesActive();
   // Called unconditionally, before the branch below — the Android surface needs to know which way to go
   // when the caller has not pinned a `colorScheme`, and a hook cannot live inside a conditional.
   const theme = useTheme();
+  if (ours) {
+    return <OurGlassBg borderRadius={borderRadius} glassStyle={glassStyle} colorScheme={colorScheme} tintColor={tintColor} />;
+  }
   // ── ON ANDROID THIS RENDERED NOTHING, AND THAT LEFT CHROME TRANSPARENT ────
   //
   // Reported after the previous round: the blur now shows up in most places, but the bottom navigation

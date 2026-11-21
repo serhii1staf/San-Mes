@@ -32,6 +32,7 @@ import { BOTTOM_CHROME_SPRING } from '../../theme/motion';
 import { triggerHaptic } from '../../utils/haptics';
 import { GlassSurface, NativeGlassView, useCustomGlassActive, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { SanGlassView } from '../../../modules/san-glass/index';
+import { GLASS_SURFACES_CAPABLE, glassLook } from '../ui/SanGlassSurface';
 import { GlassRim, type GlassRimShape } from '../ui/GlassRim';
 import { useTabBarStore } from '../../store/tabBarStore';
 import { useAuthStore } from '../../store';
@@ -734,6 +735,9 @@ const GlassBackdrop = React.memo(function GlassBackdrop({
           dispersion={GLASS_DISPERSION}
           frost={GLASS_FROST}
           saturation={GLASS_SATURATION}
+          // "Slightly darkened", as every other surface of our glass now is (SanGlassSurface.tsx). Only
+          // binaries whose glass takes a tint get it; the rim stays the prerendered GlassRim on top.
+          tintColor={GLASS_SURFACES_CAPABLE ? glassLook('clear', isDark).tintColor : undefined}
         />
       ) : null}
       <GlassRim shape={rim} />
