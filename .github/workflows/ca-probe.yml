@@ -8,6 +8,22 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Typecheck the iOS glass view against the iOS SDK
+        run: |
+          mkdir -p tc
+          sed '/^import ExpoModulesCore/d' modules/san-glass/ios/SanGlassView.swift > tc/SanGlassView.swift
+          cat > tc/Stub.swift <<'EOF'
+          import UIKit
+          public class AppContext {}
+          open class ExpoView: UIView {
+            public required init(appContext: AppContext? = nil) { super.init(frame: .zero) }
+            public required init?(coder: NSCoder) { fatalError() }
+          }
+          EOF
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun swiftc -typecheck -sdk "$SDK" -target arm64-apple-ios15.1 \
+            tc/Stub.swift tc/SanGlassView.swift modules/san-glass/ios/SanGlassCapture.swift modules/san-glass/ios/SanGlassShader.swift
+          echo "typecheck: ok"
       - name: Build and run probe
         run: |
           sw_vers

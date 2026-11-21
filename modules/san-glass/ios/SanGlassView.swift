@@ -1,122 +1,9 @@
 import CoreVideo
 import ExpoModulesCore
 import Metal
+import MetalPerformanceShaders
 import QuartzCore
 import UIKit
-
-// MARK: - Shader
-
-/// glisse's lens (`lens.ts` puller with `bezel: true`, the BEND and FINISH shaders of `drawn.ts`),
-/// evaluated per pixel. Kept identical to the AGSL version in SanGlassView.kt. Compiled at run time, so
-/// a shader problem disables the glass instead of failing the build.
-let sanGlassShaderSource = """
-#include <metal_stdlib>
-using namespace metal;
-
-struct SanGlassOut {
-  float4 position [[position]];
-  float2 uv;
-};
-
-vertex SanGlassOut san_glass_vertex(uint vid [[vertex_id]]) {
-  float2 corner = float2(vid == 1 ? 3.0 : -1.0, vid == 2 ? 3.0 : -1.0);
-  SanGlassOut o;
-  o.position = float4(corner, 0.0, 1.0);
-  o.uv = float2((corner.x + 1.0) * 0.5, (1.0 - corner.y) * 0.5);
-  return o;
-}
-
-struct SanGlassUniforms {
-  float2 size;
-  float radius;
-  float depth;
-  float reach;
-  float split;
-  float frost;
-  float saturation;
-  float unit;
-  float most;
-};
-
-static float san_sd_round_rect(float2 p, float2 hs, float r) {
-  float2 q = abs(p) - hs + float2(r);
-  return length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - r;
-}
-
-static float san_bezel_raw(float t) {
-  t = max(0.004, t);
-  float a = 1.0 - t;
-  float s = pow(1.0 - a * a * a * a, 0.25);
-  float inc = atan((a * a * a) / (s * s * s));
-  float refr = asin(sin(inc) / 1.5);
-  return tan(inc - refr) * (0.6 + s);
-}
-
-static float4 san_tap(texture2d<float> tex, sampler smp, float2 p, float2 size) {
-  float2 q = clamp(p, float2(0.5), size - float2(0.5));
-  return tex.sample(smp, q / size);
-}
-
-static float4 san_soft(texture2d<float> tex, sampler smp, float2 p, float2 size, float frost) {
-  if (frost < 0.25) {
-    return san_tap(tex, smp, p, size);
-  }
-  float o = frost * 0.7;
-  return (san_tap(tex, smp, p, size) * 2.0
-    + san_tap(tex, smp, p + float2(o, o), size)
-    + san_tap(tex, smp, p + float2(-o, o), size)
-    + san_tap(tex, smp, p + float2(o, -o), size)
-    + san_tap(tex, smp, p + float2(-o, -o), size)) / 6.0;
-}
-
-fragment float4 san_glass_fragment(SanGlassOut in [[stage_in]],
-                                   texture2d<float> under [[texture(0)]],
-                                   constant SanGlassUniforms& u [[buffer(0)]]) {
-  constexpr sampler smp(coord::normalized, address::clamp_to_edge, filter::linear);
-  float2 coord = in.uv * u.size;
-  float2 hs = u.size * 0.5;
-  float2 x = coord - hs;
-  float r = min(u.radius, min(hs.x, hs.y));
-  float edge = san_sd_round_rect(x, hs, r);
-  if (edge >= 0.0 || -edge >= u.depth) {
-    return float4(0.0);
-  }
-  float rnd = clamp(max(r, u.depth), 0.0, min(hs.x, hs.y));
-  float qx = abs(x.x) - hs.x + rnd;
-  float qy = abs(x.y) - hs.y + rnd;
-  float2 n = float2(0.0, sign(x.y));
-  if (qx > 0.0 && qy > 0.0) {
-    n = float2(sign(x.x) * qx, sign(x.y) * qy) / length(float2(qx, qy));
-  } else if (qx > qy) {
-    n = float2(sign(x.x), 0.0);
-  }
-  float amount = san_bezel_raw(-edge / u.depth) / u.most;
-  float2 d = n * (amount * u.reach);
-  float4 red = san_soft(under, smp, coord - d * (1.0 + 0.2 * u.split), u.size, u.frost);
-  float4 green = san_soft(under, smp, coord - d * (1.0 + 0.1 * u.split), u.size, u.frost);
-  float4 blue = san_soft(under, smp, coord - d, u.size, u.frost);
-  float4 c = float4(red.r, green.g, blue.b, (red.a + green.a + blue.a) / 3.0);
-  float grey = dot(c.rgb, float3(0.2126, 0.7152, 0.0722));
-  c.rgb = clamp(mix(float3(grey), c.rgb, float3(u.saturation)), float3(0.0), float3(c.a));
-  float edgePt = -edge / u.unit;
-  float k = min(min(1.0, amount * 20.0), edgePt);
-  k = min(k, clamp(edgePt, 0.0, 1.0));
-  return c * k;
-}
-"""
-
-/// Same layout as `SanGlassUniforms` in the shader: a float2, then eight floats (40 bytes).
-struct SanGlassUniforms {
-  var size: SIMD2<Float>
-  var radius: Float
-  var depth: Float
-  var reach: Float
-  var split: Float
-  var frost: Float
-  var saturation: Float
-  var unit: Float
-  var most: Float
-}
 
 // MARK: - Renderer (one per process)
 
@@ -127,8 +14,11 @@ final class SanGlassRenderer {
   let device: MTLDevice
   let queue: MTLCommandQueue
   let textureCache: CVMetalTextureCache
-  let bezelMost: Float
+  /// Frosted glass blurs its capture with Metal Performance Shaders; without it a frosted glass falls
+  /// back to the rim's soft taps.
+  let supportsBlur: Bool
   private(set) var pipeline: MTLRenderPipelineState?
+  private var blurs: [Float: MPSImageGaussianBlur] = [:]
 
   private init?() {
     guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
@@ -142,7 +32,7 @@ final class SanGlassRenderer {
     self.device = device
     self.queue = queue
     self.textureCache = madeCache
-    self.bezelMost = SanGlassRenderer.computeBezelMost()
+    self.supportsBlur = MPSSupportsMTLDevice(device)
 
     device.makeLibrary(source: sanGlassShaderSource, options: nil) { [weak self] library, error in
       guard let self = self else { return }
@@ -167,17 +57,91 @@ final class SanGlassRenderer {
     }
   }
 
-  /// Normaliser of glisse's bezel profile: its largest value over the same 256 samples glisse takes.
-  private static func computeBezelMost() -> Float {
-    var most = 0.0
-    for i in 0..<256 {
-      let t = max(0.004, Double(i) / 255.0)
-      let surface = pow(1.0 - pow(1.0 - t, 4.0), 0.25)
-      let incident = atan(pow(1.0 - t, 3.0) / pow(surface, 3.0))
-      let refracted = asin(sin(incident) / 1.5)
-      most = max(most, tan(incident - refracted) * (0.6 + surface))
-    }
-    return Float(most)
+  /// A Gaussian blur of `sigma` capture pixels, made once per (quarter-pixel) sigma. Main thread only.
+  func blur(sigma: Float) -> MPSImageGaussianBlur? {
+    guard supportsBlur, sigma >= 0.5 else { return nil }
+    let key = (sigma * 4).rounded() / 4
+    if let made = blurs[key] { return made }
+    let made = MPSImageGaussianBlur(device: device, sigma: key)
+    made.edgeMode = .clamp
+    blurs[key] = made
+    return made
+  }
+}
+
+// MARK: - Stats
+
+/// What the glass costs, summed over every instance since the last reset, for the perf monitor
+/// (`SanGlass.stats()` in JS). Updated on the main thread, read from the JS thread, hence the lock.
+enum SanGlassStats {
+  private static let lock = NSLock()
+  private static var instances = 0
+  private static var ticks = 0
+  private static var captures = 0
+  private static var captureTime: CFTimeInterval = 0
+  private static var captureMax: CFTimeInterval = 0
+  private static var draws = 0
+  private static var visited = 0
+  private static var rendered = 0
+  private static var whole = 0
+  private static var since = CACurrentMediaTime()
+
+  static func attached(_ delta: Int) {
+    lock.lock(); instances += delta; lock.unlock()
+  }
+
+  static func ticked() {
+    lock.lock(); ticks += 1; lock.unlock()
+  }
+
+  static func captured(cost: CFTimeInterval, counts: SanGlassCaptureCounts) {
+    lock.lock()
+    captures += 1
+    captureTime += cost
+    captureMax = max(captureMax, cost)
+    visited += counts.visited
+    rendered += counts.rendered
+    whole += counts.whole
+    lock.unlock()
+  }
+
+  static func drew() {
+    lock.lock(); draws += 1; lock.unlock()
+  }
+
+  static func snapshot() -> [String: Any] {
+    lock.lock()
+    defer { lock.unlock() }
+    let seconds = max(0.001, CACurrentMediaTime() - since)
+    let perCapture = { (n: Int) -> Double in captures > 0 ? Double(n) / Double(captures) : 0 }
+    return [
+      "seconds": seconds,
+      "instances": instances,
+      "ticksPerSecond": Double(ticks) / seconds,
+      "capturesPerSecond": Double(captures) / seconds,
+      "drawsPerSecond": Double(draws) / seconds,
+      "captureMsAverage": captures > 0 ? captureTime * 1000 / Double(captures) : 0,
+      "captureMsMax": captureMax * 1000,
+      // Main-thread time spent capturing, per second of wall time: the glass's share of the UI thread.
+      "captureMsPerSecond": captureTime * 1000 / seconds,
+      "layersVisitedPerCapture": perCapture(visited),
+      "layersRenderedPerCapture": perCapture(rendered),
+      "subtreesRenderedWholePerCapture": perCapture(whole),
+    ]
+  }
+
+  static func reset() {
+    lock.lock()
+    ticks = 0
+    captures = 0
+    captureTime = 0
+    captureMax = 0
+    draws = 0
+    visited = 0
+    rendered = 0
+    whole = 0
+    since = CACurrentMediaTime()
+    lock.unlock()
   }
 }
 
@@ -197,37 +161,48 @@ private final class SanGlassDisplayLinkProxy: NSObject {
 
 // MARK: - View
 
-/// San's liquid glass on iOS: what is beneath this view, bent at its rim with glisse's lens.
+/// San's liquid glass on iOS: what is beneath this view, bent at its rim with glisse's lens, optionally
+/// frosted, tinted and lit at the rim.
 ///
 /// Each frame, everything drawn beneath the view (at each ancestor level, the parent's background and
 /// the sublayers below this view's branch) is rendered into a small IOSurface-backed buffer covering
-/// only the view's own area, at 2x at most, and handed to Metal without a copy. The fragment shader
-/// draws only the rim band; the middle stays transparent, so the live content shows through it.
+/// only the view's own area and handed to Metal without a copy. Only the parts of the layer tree that
+/// can reach that area are visited (`SanGlassLayerCapture`); the first version rendered whole sibling
+/// subtrees, so a tab bar paid for every layer of the screen next to it, every frame.
 ///
-/// Cost control, because this runs on the main thread: frames are capped at 60 Hz; the buffer is
+/// Clear glass (no blur) is captured at up to 2x and draws only its rim band and tint; the middle is
+/// the live content. Frosted glass (`blur` > 0) is captured at 1x or 0.5x (the blur removes the detail a
+/// sharper capture would pay for), blurred with Metal Performance Shaders and drawn whole.
+///
+/// Cost control, because the capture runs on the main thread: frames are capped at 60 Hz; the buffer is
 /// fingerprinted and Metal is skipped while it is unchanged; after half a second of no change it is
-/// sampled at 15 Hz until something moves; and if rendering ever costs more than 2 ms it drops to every
-/// other frame. It stops entirely while the view is out of a window (a pushed screen covers the tabs).
+/// sampled at 15 Hz until something moves; if capturing ever costs more than 2 ms it drops to every
+/// other frame. It does nothing while the view is out of a window, off screen, hidden or transparent
+/// through any ancestor (a frost that is faded out costs nothing).
 public final class SanGlassView: ExpoView {
-  var cornerRadius: Double = 0 { didSet { dirty = true } }
-  var bend: Double = 1 { didSet { dirty = true } }
-  var dispersion: Double = 2 { didSet { dirty = true } }
-  var frost: Double = 0.5 { didSet { dirty = true } }
-  var saturation: Double = 1.5 { didSet { dirty = true } }
-  var depthFraction: Double = 0.3 { didSet { dirty = true } }
-  var maxDepth: Double = 36 { didSet { dirty = true } }
+  var look = SanGlassLook() {
+    didSet {
+      dirty = true
+      if look.blur != oldValue.blur { buffersValid = false }
+    }
+  }
 
   private let metalLayer = CAMetalLayer()
+  private let layerCapture = SanGlassLayerCapture()
   private var displayLink: CADisplayLink?
   private var buffers: [CVPixelBuffer] = []
+  private var buffersValid = false
   private var bufferIndex = 0
   private var bufferWidth = 0
   private var bufferHeight = 0
+  private var captureScale: CGFloat = 2
+  private var blurTarget: MTLTexture?
   private var lastFingerprint: UInt64 = 0
   private var unchangedFrames = 0
   private var tickCount = 0
   private var dirty = true
   private var captureCost: CFTimeInterval = 0
+  private var attached = false
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -246,6 +221,7 @@ public final class SanGlassView: ExpoView {
 
   deinit {
     displayLink?.invalidate()
+    if attached { SanGlassStats.attached(-1) }
   }
 
   public override func layoutSubviews() {
@@ -283,17 +259,39 @@ public final class SanGlassView: ExpoView {
     link.add(to: .main, forMode: .common)
     displayLink = link
     dirty = true
+    if !attached {
+      attached = true
+      SanGlassStats.attached(1)
+    }
   }
 
   private func stop() {
     displayLink?.invalidate()
     displayLink = nil
+    if attached {
+      attached = false
+      SanGlassStats.attached(-1)
+    }
+  }
+
+  /// Hidden, or transparent through this view or any ancestor: nothing of the glass would be seen.
+  private func effectivelyVisible() -> Bool {
+    var alpha: CGFloat = 1
+    var view: UIView? = self
+    while let current = view {
+      if current.isHidden { return false }
+      alpha *= current.alpha
+      if alpha < 0.01 { return false }
+      view = current.superview
+    }
+    return true
   }
 
   fileprivate func tick() {
     guard let renderer = SanGlassRenderer.shared, let pipeline = renderer.pipeline else { return }
-    guard let window = window, !isHidden, alpha > 0.01, bounds.width >= 2, bounds.height >= 2 else { return }
+    guard let window = window, bounds.width >= 2, bounds.height >= 2, effectivelyVisible() else { return }
     if !convert(bounds, to: window).intersects(window.bounds) { return }
+    SanGlassStats.ticked()
 
     tickCount &+= 1
     let idle = !dirty && unchangedFrames > 30
@@ -302,7 +300,9 @@ public final class SanGlassView: ExpoView {
 
     let started = CACurrentMediaTime()
     guard let captured = capture() else { return }
-    captureCost = captureCost * 0.9 + (CACurrentMediaTime() - started) * 0.1
+    let cost = CACurrentMediaTime() - started
+    captureCost = captureCost * 0.9 + cost * 0.1
+    SanGlassStats.captured(cost: cost, counts: layerCapture.counts)
 
     if !dirty && captured.fingerprint == lastFingerprint {
       unchangedFrames += 1
@@ -327,11 +327,24 @@ public final class SanGlassView: ExpoView {
     return status == kCVReturnSuccess ? buffer : nil
   }
 
+  /// Pixels per point of the capture. Frosted glass: 1x or 0.5x, since its blur removes the detail a
+  /// sharper capture would pay for. Clear glass shows its capture only in the rim band, sharp: up to 2x,
+  /// but within about 48,000 pixels. Rasterising what is beneath is most of a capture's cost once the
+  /// tree is culled (macOS probe: a 250 x 260 pt menu cost 5.8 ms at 2x and 0.6 ms at 0.5x), and a big
+  /// surface's band is wide enough to take less. The tab bar (172 x 60 pt) stays at 2x.
+  private func preferredCaptureScale() -> CGFloat {
+    let screen = window?.screen.scale ?? 2
+    if look.blur >= 6 { return 0.5 }
+    if look.blur >= 2 { return 1 }
+    let area = max(1, bounds.width * bounds.height)
+    return max(1, min(min(screen, 2), (48_000 / area).squareRoot()))
+  }
+
   private func capture() -> (buffer: CVPixelBuffer, fingerprint: UInt64)? {
-    let scale = min(window?.screen.scale ?? 2, 2)
+    let scale = preferredCaptureScale()
     let width = max(1, Int((bounds.width * scale).rounded(.up)))
     let height = max(1, Int((bounds.height * scale).rounded(.up)))
-    if width != bufferWidth || height != bufferHeight || buffers.count < 2 {
+    if !buffersValid || width != bufferWidth || height != bufferHeight || buffers.count < 2 {
       // Two buffers, used in turn, so the CPU never draws into the one the GPU may still be reading.
       buffers.removeAll()
       for _ in 0..<2 {
@@ -340,6 +353,9 @@ public final class SanGlassView: ExpoView {
       }
       bufferWidth = width
       bufferHeight = height
+      captureScale = scale
+      blurTarget = nil
+      buffersValid = true
       dirty = true
     }
     bufferIndex = (bufferIndex + 1) % buffers.count
@@ -364,6 +380,7 @@ public final class SanGlassView: ExpoView {
     // Layer coordinates run downwards; a bitmap context's run upwards.
     context.translateBy(x: 0, y: CGFloat(height))
     context.scaleBy(x: CGFloat(width) / bounds.width, y: -CGFloat(height) / bounds.height)
+    context.translateBy(x: -bounds.minX, y: -bounds.minY)
     context.clip(to: bounds)
     renderBeneath(into: context)
 
@@ -380,55 +397,44 @@ public final class SanGlassView: ExpoView {
   }
 
   /// Renders, in this view's coordinates, everything that is drawn beneath it: from the window down,
-  /// each ancestor's background colour and the sublayers below this view's branch, in z order.
+  /// each ancestor's background and the sublayers below this view's branch, in z order, visiting only
+  /// what can reach this view's area.
   private func renderBeneath(into context: CGContext) {
-    var levels: [(UIView, UIView)] = []
-    var child: UIView = self
-    while let parent = child.superview {
-      levels.append((parent, child))
+    var levels: [(parent: CALayer, branch: CALayer, glassToParent: CGAffineTransform)] = []
+    var toAncestor = CGAffineTransform.identity
+    var child: CALayer = layer
+    while let parent = child.superlayer {
+      toAncestor = toAncestor.concatenating(SanGlassLayerCapture.layerToSuperlayer(child))
+      levels.append((parent, child, toAncestor))
       child = parent
     }
-    let target = layer
-    for (parent, branch) in levels.reversed() {
-      let parentLayer = parent.layer
-      if let colour = parentLayer.backgroundColor, colour.alpha > 0.001 {
-        let rect = parentLayer.convert(parentLayer.bounds, to: target)
-        if rect.intersects(bounds) {
-          context.saveGState()
-          context.setFillColor(colour)
-          context.fill(rect)
-          context.restoreGState()
+    layerCapture.target = layer.bounds
+    layerCapture.resetCounts()
+    for level in levels.reversed() {
+      let parentToGlass = level.glassToParent.inverted()
+      context.saveGState()
+      context.concatenate(parentToGlass)
+      SanGlassLayerCapture.drawBackground(of: level.parent, in: context)
+      if let sublayers = level.parent.sublayers {
+        for sublayer in SanGlassLayerCapture.drawingOrder(sublayers) {
+          if sublayer === level.branch { break }
+          layerCapture.draw(sublayer, parentToTarget: parentToGlass, in: context)
         }
       }
-      guard let sublayers = parentLayer.sublayers, !sublayers.isEmpty else { continue }
-      let ordered = sublayers.enumerated().sorted { lhs, rhs in
-        if lhs.element.zPosition != rhs.element.zPosition {
-          return lhs.element.zPosition < rhs.element.zPosition
-        }
-        return lhs.offset < rhs.offset
-      }
-      for entry in ordered {
-        let sublayer = entry.element
-        if sublayer === branch.layer { break }
-        if sublayer.isHidden || sublayer.opacity < 0.01 { continue }
-        let rect = sublayer.convert(sublayer.bounds, to: target)
-        if !rect.intersects(bounds) { continue }
-        let w = max(sublayer.bounds.width, 0.0001)
-        let h = max(sublayer.bounds.height, 0.0001)
-        context.saveGState()
-        context.translateBy(x: rect.minX, y: rect.minY)
-        context.scaleBy(x: rect.width / w, y: rect.height / h)
-        context.translateBy(x: -sublayer.bounds.minX, y: -sublayer.bounds.minY)
-        if sublayer.opacity < 0.999 {
-          context.setAlpha(CGFloat(sublayer.opacity))
-        }
-        sublayer.render(in: context)
-        context.restoreGState()
-      }
+      context.restoreGState()
     }
   }
 
   // MARK: Draw
+
+  private func blurDestination(width: Int, height: Int, device: MTLDevice) -> MTLTexture? {
+    if let made = blurTarget, made.width == width, made.height == height { return made }
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
+    descriptor.usage = [.shaderRead, .shaderWrite]
+    descriptor.storageMode = .private
+    blurTarget = device.makeTexture(descriptor: descriptor)
+    return blurTarget
+  }
 
   private func draw(_ buffer: CVPixelBuffer, renderer: SanGlassRenderer, pipeline: MTLRenderPipelineState) {
     var cvTexture: CVMetalTexture?
@@ -438,9 +444,17 @@ public final class SanGlassView: ExpoView {
       kCFAllocatorDefault, renderer.textureCache, buffer, nil, .bgra8Unorm, width, height, 0, &cvTexture
     ) == kCVReturnSuccess,
       let madeTexture = cvTexture,
-      let texture = CVMetalTextureGetTexture(madeTexture),
-      let drawable = metalLayer.nextDrawable(),
+      let source = CVMetalTextureGetTexture(madeTexture),
       let commandBuffer = renderer.queue.makeCommandBuffer() else { return }
+
+    var texture = source
+    if look.blur > 0,
+       let blur = renderer.blur(sigma: look.blur * Float(captureScale)),
+       let destination = blurDestination(width: width, height: height, device: renderer.device) {
+      blur.encode(commandBuffer: commandBuffer, sourceTexture: source, destinationTexture: destination)
+      texture = destination
+    }
+    guard let drawable = metalLayer.nextDrawable() else { return }
 
     let pass = MTLRenderPassDescriptor()
     pass.colorAttachments[0].texture = drawable.texture
@@ -449,7 +463,8 @@ public final class SanGlassView: ExpoView {
     pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
     guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
 
-    var uniforms = makeUniforms(renderer: renderer)
+    let size = SIMD2<Float>(Float(metalLayer.drawableSize.width), Float(metalLayer.drawableSize.height))
+    var uniforms = look.uniforms(size: size, scale: Float(metalLayer.contentsScale), most: SanGlassBezel.most)
     encoder.setRenderPipelineState(pipeline)
     encoder.setFragmentTexture(texture, index: 0)
     encoder.setFragmentBytes(&uniforms, length: MemoryLayout<SanGlassUniforms>.stride, index: 0)
@@ -462,25 +477,6 @@ public final class SanGlassView: ExpoView {
     }
     commandBuffer.present(drawable)
     commandBuffer.commit()
-  }
-
-  private func makeUniforms(renderer: SanGlassRenderer) -> SanGlassUniforms {
-    let scale = Float(metalLayer.contentsScale)
-    let widthPt = Float(bounds.width)
-    let heightPt = Float(bounds.height)
-    let depthPt = min(Float(depthFraction) * min(widthPt, heightPt), Float(maxDepth))
-    let depthPx = max(1, depthPt * scale)
-    let size = SIMD2<Float>(Float(metalLayer.drawableSize.width), Float(metalLayer.drawableSize.height))
-    return SanGlassUniforms(
-      size: size,
-      radius: Float(cornerRadius) * scale,
-      depth: depthPx,
-      reach: Float(bend) * depthPx,
-      split: Float(dispersion),
-      frost: Float(frost) * scale,
-      saturation: Float(saturation),
-      unit: scale,
-      most: renderer.bezelMost
-    )
+    SanGlassStats.drew()
   }
 }
