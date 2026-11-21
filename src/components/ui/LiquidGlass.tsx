@@ -11,6 +11,7 @@ import {
 import { useSettingsStore } from '../../store/settingsStore';
 import { useTheme } from '../../theme';
 import { androidSurfaceStyle, type AppSurfaceRole } from './AppBlurView';
+import { isSanGlassAvailable } from '../../../modules/san-glass/index';
 
 // ── Native liquid glass (iOS 26+) — single integration point ───────────────
 //
@@ -136,6 +137,23 @@ export function useLiquidGlassActive(): boolean {
   // The only things that may switch glass off are the user's own setting and the OS
   // accessibility flag, which is what `enabled` and `reduced` already are.
   return NATIVE_GLASS_CAPABLE && enabled && !reduced;
+}
+
+/**
+ * True when San's OWN glass (modules/san-glass) can run: the binary has it, the device supports it
+ * (any iPhone with Metal, Android 13+), the user's liquid-glass setting is on, and the OS is not asking
+ * for less transparency. Where it is true, surfaces that support it use it INSTEAD of the system glass:
+ * the request was for our own glass on both platforms, not Apple's. On binaries built before the
+ * module existed (an over-the-air update reaching an old build) it is false and nothing changes.
+ */
+export function useCustomGlassActive(): boolean {
+  const enabled = useSettingsStore((s) => s.liquidGlassEnabled);
+  const reduced = React.useSyncExternalStore(
+    subscribeReduceTransparency,
+    isReduceTransparencyEnabled,
+    isReduceTransparencyEnabled,
+  );
+  return isSanGlassAvailable && enabled && !reduced;
 }
 
 function subscribeReduceTransparency(onStoreChange: () => void): () => void {

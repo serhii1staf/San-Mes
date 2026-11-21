@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["SanGlassModule"]
+  },
+  "android": {
+    "modules": ["com.sanmes.glass.SanGlassModule"]
+  }
+}
