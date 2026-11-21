@@ -87,6 +87,8 @@ export default function ProfileScreen() {
           the tab bar and they rise out of it (see ProfileQuickDial in CustomTabBar). */}
       <Animated.ScrollView
         onScroll={anim.onScroll}
+        onScrollEndDrag={anim.onScrollEndDrag}
+        onMomentumScrollEnd={anim.onMomentumScrollEnd}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         bounces={false}
@@ -128,7 +130,7 @@ export default function ProfileScreen() {
           profileId={user.id}
           isOwn
           author={{ name: user.displayName || user.username || '', emoji: user.emoji || '😊', verified: !!user.is_verified, badge: user.badge }}
-          sticky={{ scrollY: anim.scrollY, top: insets.top + 6, bottomPad: getTabBarHeight(insets.bottom) + 28, chromeBottom: getTabBarHeight(insets.bottom) }}
+          sticky={{ scrollY: anim.scrollY, rest: anim.rest, top: insets.top + 6, bottomPad: getTabBarHeight(insets.bottom) + 28, chromeBottom: getTabBarHeight(insets.bottom) }}
         />
       </Animated.ScrollView>
 

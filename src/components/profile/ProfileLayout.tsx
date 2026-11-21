@@ -11,7 +11,7 @@
  * are opacity / translate on the native driver; the media grid is read from the small per-chat tail
  * cache AFTER the push transition, never on the open frame.
  */
-import React, { memo, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Pressable,
@@ -22,6 +22,7 @@ import {
   Platform,
   InteractionManager,
   useWindowDimensions,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -37,6 +38,7 @@ import { LinkedText } from '../ui/LinkedText';
 import { HeaderBackgroundLayer } from './HeaderBackgroundLayer';
 import { ProfileLinkBubbles } from './ProfileLinkBubbles';
 import { HeaderSceneLayer } from './HeaderSceneLayer';
+import { createScrollRest, useRestFlag } from './scrollRest';
 import type { HeaderScene } from '../../services/headerScene';
 import type { BannerTransform } from '../../utils/bannerTransform';
 import { compareIso } from '../../utils/compareIso';
@@ -50,13 +52,21 @@ import { useT } from '../../i18n/store';
 
 export function useProfileScrollAnim() {
   const scrollY = React.useRef(new Animated.Value(0)).current;
-  return useMemo(() => ({
-    scrollY,
-    onScroll: Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
-    headerOpacity: scrollY.interpolate({ inputRange: [0, 36, 210], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
-    leftTranslateX: scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' }),
-    rightTranslateX: scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' }),
-  }), [scrollY]);
+  return useMemo(() => {
+    // The resting offset, for pausing what has been scrolled away. See scrollRest.ts.
+    const { rest, onRest } = createScrollRest();
+    return {
+      scrollY,
+      onScroll: Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
+      // Both: a drag released without a fling ends with `onScrollEndDrag` alone on iOS.
+      onScrollEndDrag: onRest,
+      onMomentumScrollEnd: onRest,
+      rest,
+      headerOpacity: scrollY.interpolate({ inputRange: [0, 36, 210], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
+      leftTranslateX: scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' }),
+      rightTranslateX: scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' }),
+    };
+  }, [scrollY]);
 }
 export type ProfileScrollAnim = ReturnType<typeof useProfileScrollAnim>;
 
@@ -124,6 +134,10 @@ export function ProfileActionPill({ glassActive, onPress, square = false, accent
 
 // ─── Header card (the original design, minus follower counts) ───────────────
 
+/** The link drops' band, below the top inset: beside the avatar. */
+const DROPS_TOP = 44;
+const DROPS_HEIGHT = 108;
+
 export const ProfileHeaderCard = memo(function ProfileHeaderCard({
   topInset, anim, glassActive, emoji, displayName, username, isVerified, badge, bio, links,
   bannerUrl, bannerTransform, scene, sceneAnimate, onAvatarPress, actions,
@@ -148,6 +162,15 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
   const theme = useTheme();
   const { width } = useWindowDimensions();
   const settled = useTransitionSettled();
+  // The drops and the stickers pause once the page has come to rest with them above the top of the
+  // screen (see `ScrollRest`). The drops' own band ends well before the card does, so they stop first.
+  const [cardH, setCardH] = useState(0);
+  const onCardLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = Math.round(e.nativeEvent.layout.height);
+    setCardH((prev) => (prev === h ? prev : h));
+  }, []);
+  const dropsAway = useRestFlag(anim.rest, (y) => y >= topInset + DROPS_TOP + DROPS_HEIGHT);
+  const cardAway = useRestFlag(anim.rest, (y) => cardH > 0 && y >= cardH);
   // ── Telegram's profile scroll animation ────────────────────────────────────
   // As the profile scrolls, the avatar travels to the Dynamic Island on iPhone (shrinking and turning
   // black, so it merges into it) and slides out through the top of the screen elsewhere — the effect
@@ -191,7 +214,7 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
   const handleColor = onMedia ? 'rgba(255,255,255,0.85)' : theme.colors.text.secondary;
   const shadow = onMedia ? styles.textShadow : null;
   return (
-    <View style={{ borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+    <View onLayout={onCardLayout} style={{ borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
       {bannerUrl ? (
         <View style={StyleSheet.absoluteFill}>
           {/* No shimmer: a shimmer on every cold open is exactly the "it is loading" look that was
@@ -226,17 +249,17 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}>{actions}</View>
       </View>
 
-      <HeaderSceneLayer scene={scene} animate={sceneAnimate} />
+      <HeaderSceneLayer scene={scene} animate={sceneAnimate && !cardAway} />
 
       {/* Links float as liquid bubbles in the space beside the avatar (they replaced the chip row
           under the @handle). Under the frost, so they frost over with the rest of the card. */}
       {links.length > 0 ? (
         <ProfileLinkBubbles
           links={links}
-          top={topInset + 44}
+          top={topInset + DROPS_TOP}
           left={20 + 84 + 16}
-          height={108}
-          active={sceneAnimate}
+          height={DROPS_HEIGHT}
+          active={sceneAnimate && !dropsAway}
         />
       ) : null}
 

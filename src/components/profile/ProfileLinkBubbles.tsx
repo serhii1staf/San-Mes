@@ -17,7 +17,8 @@
  * opacity change, which the compositor applies without redrawing anything.
  *
  * The loop starts after the open transition and stops while the screen is not focused (the own
- * profile tab stays mounted behind the other tabs) or when Reduce Motion is on.
+ * profile tab stays mounted behind the other tabs), once the page has come to rest with the drops
+ * scrolled off the top, or when Reduce Motion is on. It resumes from the pose it stopped in.
  *
  * ── THE IDLE LOOP IS ON THE NATIVE ANIMATED DRIVER ──────────────────────────
  *
@@ -194,27 +195,42 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
   const cx = left + R;
   const cy = top + R;
 
-  // 0 → 1 per period, on the native driver. See the note at the top of the file.
-  const loop = useRef(new RNAnimated.Value(0)).current;
-  const loopStartedRef = useRef(false);
+  // One period per unit of `t`, on the native driver; the views read its fractional part (`loop`).
+  //
+  // ── PAUSED WHILE OFF SCREEN, AND RESUMED WITHOUT A JUMP ───────────────────────
+  //
+  // Measured on another user's profile with links (Android emulator, the screen left idle): the drops'
+  // loops kept it drawing 150-185 frames a second; with them stopped, 2-3. The screen stops them when the
+  // header is scrolled away (`active`), so a resume has to happen with the drops in view, which rules out
+  // the old restart: it reset the loop to 0 first, which would make every drop jump.
+  //
+  // Instead `t` is never reset. A native loop from its current value to that value + 1 covers exactly
+  // one period, and `t mod 1` makes each iteration's wrap seamless (every curve below is a whole number
+  // of cycles per period). So a resume carries on from the pose the drop was frozen in. It also avoids
+  // `setValue`, which pushed the value to every bound view and cost 117 ms of JS on first start.
+  const t = useRef(new RNAnimated.Value(0)).current;
+  const loop = useMemo(() => RNAnimated.modulo(t, 1), [t]);
   useEffect(() => {
     if (!running) {
-      loop.stopAnimation();
+      t.stopAnimation();
       return;
     }
-    const anim = RNAnimated.loop(
-      RNAnimated.timing(loop, { toValue: 1, duration: period, easing: RNEasing.linear, useNativeDriver: true }),
-    );
-    // From the start of a cycle: the loop resets to the value it started from on every iteration.
-    // Only a RESTART needs the reset; a new value is already 0. `setValue` on a value bound to views
-    // pushes it through JS `setNativeProps` to every one of them (seven interpolations over three
-    // views per drop), and on the first start that was 117 ms of JS for one profile's drops in the
-    // emulator profile, landing just after the push animation.
-    if (loopStartedRef.current) loop.setValue(0);
-    loopStartedRef.current = true;
-    anim.start();
-    return () => anim.stop();
-  }, [running, loop, period]);
+    let anim: RNAnimated.CompositeAnimation | null = null;
+    let cancelled = false;
+    // Reads the native value when the loop has run before (asynchronously), 0 on the first start.
+    t.stopAnimation((value) => {
+      if (cancelled) return;
+      const from = Number.isFinite(value) ? value : 0;
+      anim = RNAnimated.loop(
+        RNAnimated.timing(t, { toValue: from + 1, duration: period, easing: RNEasing.linear, useNativeDriver: true }),
+      );
+      anim.start();
+    });
+    return () => {
+      cancelled = true;
+      anim?.stop();
+    };
+  }, [running, t, period]);
 
   // The idle motion, as functions of the cycle. Each drop starts `index * 0.17` of a cycle in, so the
   // cluster does not move in step; that offset is folded into each curve's phase.
@@ -455,8 +471,9 @@ const Bubble = memo(function Bubble({ url, size, left, top, index, running, webs
 });
 
 /**
- * The drop field. Lays itself out in the header to the right of the avatar; `active` should be
- * the screen's focus state so the loop stops when the profile is not on screen.
+ * The drop field. Lays itself out in the header to the right of the avatar. `active` is false while
+ * the drops are not on screen (the screen is not focused, or the page rests with them scrolled
+ * away), and the loop stops.
  */
 export const ProfileLinkBubbles = memo(function ProfileLinkBubbles({
   links,
