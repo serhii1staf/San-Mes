@@ -40,6 +40,7 @@ import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { isNativeGlassCapable } from '../../src/components/ui/LiquidGlass';
+import { isSanGlassAvailable } from '../../modules/san-glass/index';
 import { useT } from '../../src/i18n/store';
 import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
@@ -211,10 +212,10 @@ export default function SettingsScreen() {
   const setLiquidGlassEnabled = useSettingsStore((s) => s.setLiquidGlassEnabled);
   const androidBlurEnabled = useSettingsStore((s) => s.androidBlurEnabled);
   const setAndroidBlurEnabled = useSettingsStore((s) => s.setAndroidBlurEnabled);
-  // The liquid-glass toggle is only meaningful on iOS 26+ devices where the
-  // effect can actually render. Hide it everywhere else — a toggle that does
-  // nothing is worse than no toggle. Computed once (capability is static).
-  const glassCapable = isNativeGlassCapable();
+  // The liquid-glass toggle is only meaningful where some glass can actually render: Apple's (iOS 26+)
+  // or our own (modules/san-glass: any iPhone and Android 13+, in binaries that include it). Hidden
+  // everywhere else — a toggle that does nothing is worse than no toggle. Both are static per session.
+  const glassCapable = isNativeGlassCapable() || isSanGlassAvailable;
   // App version is read past the navigation transition: `expo-constants` is settings-only here and
   // reading `Constants.expoConfig?.version` the first time can warm a sizeable JSON.
   const [appVersion, setAppVersion] = useState('1.0.0');
@@ -499,7 +500,8 @@ export default function SettingsScreen() {
                   thumbColor="#FFFFFF"
                 />
               }
-              isLast
+              // On Android the blur row below follows it now, so it no longer ends the list there.
+              isLast={!IS_ANDROID}
             />
           )}
           {/* ── THE ANDROID BLUR SWITCH, WHICH ANDROID NEVER HAD ──────────────────
