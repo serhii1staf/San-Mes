@@ -1,0 +1,8 @@
+{
+  "name": "san-glass",
+  "version": "1.0.0",
+  "private": true,
+  "description": "San's own liquid glass: what is behind the view, bent at the rim with glisse's lens, drawn natively (Metal on iOS, AGSL on Android 13+).",
+  "main": "index.ts",
+  "license": "UNLICENSED"
+}

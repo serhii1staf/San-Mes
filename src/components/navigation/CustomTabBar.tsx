@@ -30,7 +30,8 @@ import { useTheme } from '../../theme';
 import { bottomScrimColors, BOTTOM_CHROME_SCRIM_HEIGHT, SCRIM_LOCATIONS } from '../../theme/scrim';
 import { BOTTOM_CHROME_SPRING } from '../../theme/motion';
 import { triggerHaptic } from '../../utils/haptics';
-import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
+import { GlassSurface, NativeGlassView, useCustomGlassActive, useLiquidGlassActive } from '../ui/LiquidGlass';
+import { SanGlassView } from '../../../modules/san-glass/index';
 import { GlassRim, type GlassRimShape } from '../ui/GlassRim';
 import { useTabBarStore } from '../../store/tabBarStore';
 import { useAuthStore } from '../../store';
@@ -171,6 +172,13 @@ const GLOW_RADIUS = 260;
 // How long a press on a tab that did not end in a switch (a long press) keeps the lens on that tab
 // before it goes back to the selected one. Longer than a tap's press-out → navigation round trip.
 const LENS_RETURN_MS = 450;
+// The glass that was asked for, glisse's `<Glass>` with `--lg-glass-bend: 1`, `--lg-glass-dispersion: 2`,
+// `--lg-blur: 0.5px` and `--lg-rim-shine: 1` (the rim is in assets/glass, drawn at that shine), plus the
+// `saturate(1.5)` glisse puts on everything its glass bends. Read by our native glass (SanGlassView).
+const GLASS_BEND = 1;
+const GLASS_DISPERSION = 2;
+const GLASS_FROST = 0.5;
+const GLASS_SATURATION = 1.5;
 // Without native glass the bar, the profile capsule and the dial buttons are clear (see
 // GlassBackdrop), and a drop shadow would show THROUGH them as a dark smudge: Android draws an
 // elevation shadow under a translucent view. glisse's glass has none on a dark page either.
@@ -707,15 +715,31 @@ const GlassBackdrop = React.memo(function GlassBackdrop({
   // `systemChromeMaterial` on iOS (a heavy frost; nothing behind could be made out) and the tonal
   // surface on Android. The bar's own bottom scrim still darkens what passes behind it.
   //
-  // What that glass also does and this cannot: bend the content at the rim and split its colours
-  // (bend 1, dispersion 2). glisse repaints a marked backdrop in WebGL to do that; React Native in this
-  // binary has no way to read the pixels behind a view. On iOS 26 the native glass below is `clear`,
-  // Apple's own transparent variant, and that does refract.
+  // ── AND THE BEND: OUR OWN NATIVE GLASS (modules/san-glass) ──────────────────────────────────────
+  //
+  // The rest of that glass, bend 1 and dispersion 2, needs the pixels behind the view, which only native
+  // code can read. `SanGlassView` does it with glisse's own lens: Metal on iPhone, an AGSL shader on
+  // Android 13+. It is used INSTEAD of the system glass wherever it runs (the request: our own glass,
+  // not Apple's). It draws only the rim band; the rim light (GlassRim) goes on top of it, as in glisse.
+  // Where it cannot run (old binaries, Android before 13, Reduce Transparency, the glass setting off) the
+  // surface is the clear glass with the lit rim, as before.
+  const customGlass = useCustomGlassActive();
   const fallback = (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {customGlass ? (
+        <SanGlassView
+          style={[StyleSheet.absoluteFill, roundStyle]}
+          cornerRadius={radius ?? 0}
+          bend={GLASS_BEND}
+          dispersion={GLASS_DISPERSION}
+          frost={GLASS_FROST}
+          saturation={GLASS_SATURATION}
+        />
+      ) : null}
       <GlassRim shape={rim} />
     </View>
   );
+  if (customGlass) return fallback;
   return (
     <GlassSurface
       style={[StyleSheet.absoluteFill, roundStyle]}
@@ -1111,7 +1135,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   // Real native liquid glass on the bar? Drives whether we drop our fake-glass
   // overlay layers (top reflection, lens decoration) so the genuine glass
   // isn't muddied by them.
-  const glassActive = useLiquidGlassActive();
+  // Our own glass (modules/san-glass) wins over the system's wherever it can run, as asked: then every
+  // surface here takes its non-system path (JS lens, borders, clipping) and GlassBackdrop draws ours.
+  const customGlass = useCustomGlassActive();
+  const glassActive = useLiquidGlassActive() && !customGlass;
   // Bottom safe-area inset = height of the Android system navigation bar
   // (or the iOS home-indicator). Under edge-to-edge the app draws behind
   // that bar, so without this the floating pill would sit partially BEHIND
