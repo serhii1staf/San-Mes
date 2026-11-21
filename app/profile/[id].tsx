@@ -162,6 +162,8 @@ export default function UserProfileScreen() {
       />
       <Animated.ScrollView
         onScroll={anim.onScroll}
+        onScrollEndDrag={anim.onScrollEndDrag}
+        onMomentumScrollEnd={anim.onMomentumScrollEnd}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         bounces={false}
@@ -203,7 +205,7 @@ export default function UserProfileScreen() {
           profileId={profileId}
           isOwn={isOwnProfile}
           author={{ name: profile.display_name || profile.username || '', emoji: profile.emoji || '😊', verified: !!profile.is_verified, badge: profile.badge }}
-          sticky={{ scrollY: anim.scrollY, top: insets.top + 6, bottomPad: insets.bottom + 32 }}
+          sticky={{ scrollY: anim.scrollY, rest: anim.rest, top: insets.top + 6, bottomPad: insets.bottom + 32 }}
         />
       </Animated.ScrollView>
 
