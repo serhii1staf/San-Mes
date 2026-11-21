@@ -1,0 +1,5 @@
+# Shell scripts run under bash on the build machines and must keep LF endings in every working copy.
+# Without this, a Windows checkout (core.autocrlf=true) turns them into CRLF, and an EAS build uploaded
+# from that checkout fails in the post-install hook: "$'\r': command not found", then "syntax error
+# near unexpected token `fi'" (Android preview build 4dc34648, 2026-11-21).
+*.sh text eol=lf
