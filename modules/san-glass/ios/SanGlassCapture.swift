@@ -239,7 +239,7 @@ final class SanGlassLayerCapture {
 
   static func mix(_ h: inout UInt64, color: CGColor?) {
     guard let color = color, let components = color.components else {
-      mix(&h, 0x5A4E_0000_0000_0001)
+      mix(&h, UInt64(0x5A4E_0000_0000_0001))
       return
     }
     for component in components { mix(&h, component) }
@@ -247,7 +247,7 @@ final class SanGlassLayerCapture {
 
   static func mix(_ h: inout UInt64, object: AnyObject?) {
     guard let object = object else {
-      mix(&h, 0x5A4E_0000_0000_0002)
+      mix(&h, UInt64(0x5A4E_0000_0000_0002))
       return
     }
     mix(&h, UInt64(UInt(bitPattern: ObjectIdentifier(object))))
