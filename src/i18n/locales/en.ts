@@ -179,6 +179,25 @@ const en: Record<string, string> = {
   'register.confirm_pin_subtitle': 'Enter the PIN once more',
   'register.error.pins_mismatch': "PINs don't match",
 
+  // ─── Sign-in / sign-up flow (app/(auth)/welcome.tsx) ─────────────────────
+  'auth.flow.login_key_subtitle': 'Paste the device key from Settings on your other device.',
+  'auth.flow.paste': 'Paste',
+  'auth.flow.login_pin_title': 'Your PIN',
+  'auth.flow.login_pin_subtitle': 'Enter your 4-digit PIN',
+  'auth.flow.change_key': 'Change',
+  'auth.flow.name_title': "What's your name?",
+  'auth.flow.name_subtitle': 'People you talk to will see your name and username.',
+  'auth.flow.name_placeholder': 'Name',
+  'auth.flow.emoji_title': 'Your emoji',
+  'auth.flow.emoji_subtitle': 'It will be your avatar. You can change it in your profile.',
+  'auth.flow.more_emoji': 'Another emoji',
+  'auth.flow.key_title': 'Your sign-in key',
+  'auth.flow.key_subtitle': "Save it. With the key and your PIN you can sign in on any device. It's also in Settings.",
+  'auth.flow.copy_key': 'Copy key',
+  'auth.flow.create': 'Create account',
+  'auth.flow.error_network': "Can't reach the server. Try again.",
+  'auth.flow.error_register': "Couldn't create the account. Try again.",
+
   // ─── Moderation ─────────────────────────────────────────────────────────
   'moderation.reason.csam': 'This text contains prohibited content and cannot be used.',
   'moderation.reason.violence': 'Threats and calls for violence are not allowed.',

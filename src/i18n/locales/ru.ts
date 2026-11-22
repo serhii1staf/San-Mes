@@ -184,6 +184,25 @@ const ru: Record<string, string> = {
   'register.confirm_pin_subtitle': 'Введи код ещё раз',
   'register.error.pins_mismatch': 'Коды не совпадают',
 
+  // ─── Sign-in / sign-up flow (app/(auth)/welcome.tsx) ─────────────────────
+  'auth.flow.login_key_subtitle': 'Вставь ключ устройства из Настроек на другом устройстве.',
+  'auth.flow.paste': 'Вставить',
+  'auth.flow.login_pin_title': 'Твой код',
+  'auth.flow.login_pin_subtitle': 'Введи 4-значный код',
+  'auth.flow.change_key': 'Изменить',
+  'auth.flow.name_title': 'Как тебя зовут?',
+  'auth.flow.name_subtitle': 'Имя и юзернейм увидят собеседники.',
+  'auth.flow.name_placeholder': 'Имя',
+  'auth.flow.emoji_title': 'Твой эмодзи',
+  'auth.flow.emoji_subtitle': 'Он будет твоим аватаром. Поменять можно в профиле.',
+  'auth.flow.more_emoji': 'Другой эмодзи',
+  'auth.flow.key_title': 'Твой ключ для входа',
+  'auth.flow.key_subtitle': 'Сохрани его. С ключом и кодом ты войдёшь на любом устройстве. Он есть и в Настройках.',
+  'auth.flow.copy_key': 'Скопировать ключ',
+  'auth.flow.create': 'Создать аккаунт',
+  'auth.flow.error_network': 'Нет связи с сервером. Попробуй ещё раз.',
+  'auth.flow.error_register': 'Не удалось создать аккаунт. Попробуй ещё раз.',
+
   // ─── Moderation ─────────────────────────────────────────────────────────
   'moderation.reason.csam': 'Этот текст содержит запрещённое содержимое и не может быть использован.',
   'moderation.reason.violence': 'Призывы к насилию и угрозы запрещены.',
