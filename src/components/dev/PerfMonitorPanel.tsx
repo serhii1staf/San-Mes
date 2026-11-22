@@ -35,7 +35,8 @@ interface Props {
 // `IDLE` sits next to `LONG` because the pair is only useful read together: a screen showing
 // six LONG is a screen with a problem, the same six as IDLE means the sampler was starved and the
 // snapshot says nothing about the app. Before the split, both looked like the first case.
-const FILTER_KINDS: PerfEventKind[] = ['NAV', 'MOUNT', 'INPUT', 'IMG', 'LONG', 'IDLE', 'UI', 'MARK'];
+// `JS` next to `UI`: a sub-30 window of either thread, now kept apart (they used to share `UI`).
+const FILTER_KINDS: PerfEventKind[] = ['NAV', 'MOUNT', 'INPUT', 'IMG', 'LONG', 'IDLE', 'UI', 'JS', 'MARK'];
 
 // Visual tint per kind. Kept small so the panel reads quickly at a glance.
 function tintForKind(kind: PerfEventKind, theme: any): string {
@@ -56,6 +57,8 @@ function tintForKind(kind: PerfEventKind, theme: any): string {
       return '#6b7280';
     case 'UI':
       return '#f59e0b';
+    case 'JS':
+      return '#f97316';
     case 'INTER':
       return '#8b5cf6';
     case 'ERROR':

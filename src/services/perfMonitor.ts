@@ -131,6 +131,13 @@ export type PerfEventKind =
   | 'IMG'
   | 'LONG'
   | 'UI'
+  /**
+   * A half-second window in which the JS thread's loop ran under 30 times (`js<30`). These were filed
+   * as `UI`, so the «UI» filter and any reading of "UI drops" mixed in JS-thread drops: on the
+   * emulator a chat scroll logged a dozen `js<30` under `UI` while the UI thread itself stayed near
+   * 50. Separate kinds, so each thread's drops are counted against that thread.
+   */
+  | 'JS'
   | 'MARK'
   | 'INTER'
   | 'ERROR'
@@ -570,7 +577,7 @@ class PerfMonitor {
           this._record({
             ts: now,
             type: 'slow',
-            kind: 'UI',
+            kind: 'JS',
             label: `js<30 @ ${this._currentRoute}`,
             route: this._currentRoute,
           });
