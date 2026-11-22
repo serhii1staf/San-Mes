@@ -64,6 +64,11 @@ const GIPHY_SIZED_RENDITION =
 function isGiphySizedRendition(uri: string): boolean {
   return GIPHY_SIZED_RENDITION.test(uri);
 }
+
+/** An animated Telegram sticker from our own sticker proxy, rendered by LottieSticker, not expo-image. */
+function isLottieStickerUri(uri: string): boolean {
+  return uri.indexOf('/v1/stickers/') !== -1 && uri.indexOf('fmt=lottie') !== -1;
+}
 // Retina-sharp display. (An earlier 1.4 experiment to cut decode cost made
 // photos look noticeably soft — and it did NOT fix the chat lag, which comes
 // from heavy bubble MOUNTS, not image decode. So quality is restored to 2×.)
@@ -400,6 +405,10 @@ export const CachedImage = memo(function CachedImage({
   useEffect(() => {
     if (!uri) return;
     if (!useSettingsStore.getState().perfMonitorEnabled) return;
+    // An animated sticker renders as Lottie (the branch below) and never fires an image `onLoad`, so
+    // it used to hold the pending-decodes gauge at +1 for as long as it was mounted: a chat with
+    // stickers on screen showed decodes "in flight" that did not exist.
+    if (isLottieStickerUri(uri)) return;
     decodeStart.current = Date.now();
     perfMonitor.incrementPendingDecodes();
     pendingHere.current = true;
@@ -431,7 +440,7 @@ export const CachedImage = memo(function CachedImage({
   //
   // See the Worker's file route: a `.tgs` is plain gzip around Lottie JSON, so it is gunzipped server-side
   // and arrives here as ordinary JSON. Nothing is transcoded and no native converter is involved.
-  if (uri.indexOf('/v1/stickers/') !== -1 && uri.indexOf('fmt=lottie') !== -1) {
+  if (isLottieStickerUri(uri)) {
     // `autoplay` is forwarded, not dropped. The GIF grid passes `false` to keep sixty cells still, and a
     // Lottie that ignored it would animate sixty vector timelines at once — worse than the animated-GIF
     // grid those cells were already changed to avoid.
@@ -500,7 +509,11 @@ export const CachedImage = memo(function CachedImage({
       pendingHere.current &&
       useSettingsStore.getState().perfMonitorEnabled
     ) {
-      perfMonitor.markImageDecode(uri, Date.now() - decodeStart.current);
+      // Where the bytes came from, so the panel can tell a network load from a cache hit.
+      perfMonitor.markImageDecode(uri, Date.now() - decodeStart.current, {
+        cache: e?.cacheType,
+        proxied: finalUri !== uri,
+      });
       perfMonitor.decrementPendingDecodes();
       pendingHere.current = false;
     }
