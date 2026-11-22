@@ -214,7 +214,11 @@ export interface RouteHotspot {
   avgMountMs: number;
   /** Worst single mount duration, ms. */
   worstMountMs: number;
-  /** Number of image decode events recorded on this route. */
+  /**
+   * Number of image loads that completed on this route, ALL of them. The event ring only keeps two
+   * per host per second (IMG_THROTTLE_*), and this used to be counted after that throttle, so a
+   * screen that loaded forty photos reported a handful.
+   */
   imgCount: number;
   /** Composite severity score used for ranking (higher = jankier). */
   score: number;
@@ -815,8 +819,20 @@ class PerfMonitor {
   }
 
   /**
-   * Image bitmap decode/load completion. Call from `expo-image` `onLoad`
-   * with the elapsed time from URI prop change to load.
+   * Image load completion. Call from `expo-image` `onLoad` with the elapsed time from the commit that
+   * mounted the image (or changed its URI) to that `onLoad`.
+   *
+   * ── WHAT THE DURATION IS, AND WHAT IT IS NOT ─────────────────────────────────
+   *
+   * It is a LATENCY, not a cost. The interval covers the native loader's queue, the network (for a
+   * weserv cache miss that includes weserv fetching the original from R2 and resizing it), the disk
+   * read, the decode on the loader's background threads, and the JS thread's delay in running the
+   * `onLoad` handler. It does not include drawing the picture. None of it blocks a frame by itself:
+   * an 885 ms entry means the photo arrived 885 ms after it was asked for, not that the screen froze.
+   *
+   * `info.cache` is expo-image's own answer to where the bytes came from (`none` = the network,
+   * `disk`, `memory`), so a slow entry can be told apart from a cached one. It goes into the label,
+   * because that is what the panel shows and copies.
    *
    * Throttle: the same host gets at most IMG_THROTTLE_MAX_PER_WINDOW
    * entries per IMG_THROTTLE_WINDOW_MS so a fast scroll over a feed full
@@ -827,7 +843,7 @@ class PerfMonitor {
    * this method, so we save the function-call hop in the disabled case.
    * The check below is the safety net in case a different consumer calls in.
    */
-  markImageDecode(uri: string, durationMs: number) {
+  markImageDecode(uri: string, durationMs: number, info?: { cache?: 'none' | 'disk' | 'memory'; proxied?: boolean }) {
     if (!useSettingsStore.getState().perfMonitorEnabled) return;
     if (!uri) return;
     // Normal remote images: group by hostname. Local/inline schemes
@@ -845,6 +861,8 @@ class PerfMonitor {
       if (scheme) host = scheme[1].toLowerCase();
     }
     const now = Date.now();
+    // Every load counts toward the route, including the ones the throttle below keeps out of the ring.
+    this._routeStat(this._currentRoute).imgCount += 1;
     let seen = this._imgHostThrottle.get(host);
     if (!seen) {
       seen = [];
@@ -886,14 +904,17 @@ class PerfMonitor {
         if (now - last > IMG_THROTTLE_WINDOW_MS) this._imgHostThrottle.delete(key);
       });
     }
-    this._routeStat(this._currentRoute).imgCount += 1;
+    // `net` / `disk` / `mem`, and `weserv` when the request went through the resizing proxy.
+    const source = info?.cache === 'none' ? 'net' : info?.cache === 'memory' ? 'mem' : info?.cache;
+    const label = source ? `${host} · ${source}${info?.proxied ? ' · weserv' : ''}` : host;
     this._record({
       ts: now,
       type: 'mark',
       kind: 'IMG',
-      label: host,
+      label,
       durationMs,
       route: this._currentRoute,
+      meta: info ? { cache: info.cache, proxied: !!info.proxied } : undefined,
     });
     this._notify();
   }
