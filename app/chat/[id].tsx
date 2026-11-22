@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useR
 import { View, FlatList, ScrollView, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, ActivityIndicator, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, useRecyclingState, type FlashListRef } from '@shopify/flash-list';
-import Reanimated, { useAnimatedStyle, interpolate, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, FadeInDown, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -17,6 +17,7 @@ import { CachedImage } from '../../src/components/ui/CachedImage';
 import { proxiedImageUrl, wasShownAtWidth } from '../../src/components/ui/CachedImage';
 import Skeleton from '../../src/components/ui/Skeleton';
 import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedText';
+import { isFreshMessage, markFreshMessage } from '../../src/utils/freshMessages';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../src/utils/appLinks';
@@ -582,6 +583,15 @@ function healLegacySender(
 // These must sit above `bubbleStyles`, because `StyleSheet.create` runs at module evaluation and
 // reads them immediately. Declaring them further down produced
 // `Block-scoped variable 'META_ROW_MARGIN' used before its declaration`.
+/**
+ * How a message that arrived while the chat is open comes in: it fades in while rising 16 pt into
+ * place, ease-out, 260 ms. A Reanimated entering animation, so Reanimated hides the row from its first
+ * frame (no flash of the final state). Applied only to rows `markFreshMessage` marked; see the note at
+ * `newestSeenRef`. Inside the list's cell the content is upright again, so +16 is below its place.
+ */
+const BUBBLE_ENTER = FadeInDown.duration(260)
+  .easing(Easing.out(Easing.cubic))
+  .withInitialValues({ opacity: 0, transform: [{ translateY: 16 }] });
 const META_ROW_MARGIN = 16;
 const META_COL_WIDTH = 46; // metaOutsideCol: width 34 + marginHorizontal 6 * 2
 const BUBBLE_H_PADDING = 28; // the bubble's paddingHorizontal (14) on both sides
@@ -1234,6 +1244,15 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     [isOwn, swipeTranslateStyle],
   );
 
+  // A message that arrived while the chat was open gets `BUBBLE_ENTER`. Decided once per message this
+  // cell shows (FlashList recycles cells), so re-renders never replay it. The row is keyed by the
+  // decision, so the entering animation runs: a remount of this one row for a new message, and once
+  // more when the cell is later recycled to another message, off screen.
+  const [enterKey] = useRecyclingState<string>(
+    () => (isFreshMessage(message.id) ? `fresh:${message.id}` : 'still'),
+    [message.id],
+  );
+
   // Frame-paced reveal of this bubble's image(s): once the screen flips
   // `imagesReady`, image bubbles no longer all decode on the SAME frame —
   // each waits its turn in a shared one-per-frame queue, so a GIF-heavy chat
@@ -1588,7 +1607,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             the full-width hit area and the reply icon is positioned against it, so both must stay
             still: the icon is what the swipe reveals, and a reveal target that travels with the
             thing revealing it would never appear to move. */}
-        <Reanimated.View style={rowSwipeStyle}>
+        <Reanimated.View key={enterKey} style={rowSwipeStyle} entering={enterKey === 'still' ? undefined : BUBBLE_ENTER}>
         <Reanimated.View ref={bubbleRef} style={bubbleBoxStyle}>
         {/* Long-press + drag-select is handled by `composedGesture` on the
             GestureDetector above (UI thread). This wrapper used to be a
@@ -6299,6 +6318,24 @@ export default function ChatScreen() {
   // cannot tear.
   const windowedMessagesRef = useRef<ChatMessage[]>([]);
   windowedMessagesRef.current = windowedMessages;
+
+  // ── A MESSAGE THAT ARRIVES WHILE THE CHAT IS OPEN ANIMATES IN ───────────────────
+  //
+  // Reported: sent and received messages (text, stickers, GIFs) "land abruptly". The newest row
+  // becoming a different, NEWER message, created in the last minute, is a message arriving: sent
+  // from here, received over realtime, or picked up by the history poll. Marked during render, before
+  // the list renders the row, so its bubble can start hidden (see `freshMessages` and `BUBBLE_ENTER`).
+  // Not marked: the first render (opening the chat), older history loading (the newest row does not
+  // change), a window move back to the newest from far up the history (those rows are older than a
+  // minute), and the same message under a new id (its time is not newer).
+  const newestSeenRef = useRef<{ id: string; at: number } | null>(null);
+  const newestRow = windowedMessages[0];
+  if (newestRow && newestRow.id !== newestSeenRef.current?.id) {
+    const at = Date.parse(newestRow.createdAt) || 0;
+    const prev = newestSeenRef.current;
+    if (prev && at > prev.at && Date.now() - at < 60_000) markFreshMessage(newestRow.id);
+    newestSeenRef.current = { id: newestRow.id, at };
+  }
 
   // Resolve a pending jump against the data FlashList is ACTUALLY rendering (see
   // the note on `pendingJumpRef`). Re-runs on every window change, so a jump
