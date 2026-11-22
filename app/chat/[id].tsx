@@ -28,6 +28,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
+import { ChatHeaderStatus } from '../../src/components/chat/ChatHeaderStatus';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { PhotoPickerPanel } from '../../src/components/chat/PhotoPickerPanel';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
@@ -5758,6 +5759,25 @@ export default function ChatScreen() {
   const typingChannel = conversationId ? typingChatChannelName(conversationId) : null;
   const { notifyTyping, notifyStopped } = useTypingPublisher(typingChannel);
 
+  // The header pill's two lines: the name (with the verified mark and badge) and, under it,
+  // «печатает…» or the @username. Shared by the glass and the flat pill. The status line is its own
+  // leaf (`ChatHeaderStatus`), so typing events re-render that line and not this screen.
+  const headerTitleContent = (
+    <>
+      <View style={styles.headerNameRow}>
+        <Text variant="caption" weight="semibold" numberOfLines={1} color={onBannerTextColor} style={styles.headerName}>{displayName}</Text>
+        {displayVerified && <VerifiedBadge size={13} />}
+        {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+      </View>
+      <ChatHeaderStatus
+        channelName={typingChannel}
+        username={displayUsername}
+        color={peerBannerUrl ? 'rgba(255,255,255,0.78)' : theme.colors.text.secondary}
+        typingColor={peerBannerUrl ? '#FFFFFF' : theme.colors.accent.primary}
+      />
+    </>
+  );
+
   const handleSend = useCallback(async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
     if ((!rawText.trim() && !hasImages) || !conversationId) return;
@@ -7668,24 +7688,28 @@ export default function ChatScreen() {
           </View>
         ) : (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-            {/* Left column hugs the back pill and never shrinks, so the
-                localized "Назад" label is always shown in full. The center
-                title column (flex:1) absorbs all the squeeze and truncates the
-                conversation name instead. iOS-style chevron + label. */}
+            {/* Telegram-style header (Nov 2026, asked for with a screenshot): a round back button,
+                the name centred in a taller pill with a status line under it, and the round avatar
+                on the right. All three are 44 pt, which fits the existing header row and scrim
+                (`headerScrimHeights(insets.top, 8)`), so nothing below the header moves. */}
             <View style={styles.headerSide}>
-              {glassActive ? (
-                <Pressable onPress={() => router.back()} style={{ borderRadius: 18 }}>
-                  <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.backPillGlass}>
-                    <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
-                    <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>{t('common.back')}</Text>
+              <Pressable
+                onPress={() => router.back()}
+                hitSlop={6}
+                style={styles.headerRound}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.back')}
+              >
+                {glassActive ? (
+                  <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerRoundFill}>
+                    <MaterialIcons name="chevron-left" size={30} color={theme.colors.text.primary} />
                   </NativeGlassView>
-                </Pressable>
-              ) : (
-                <Pressable onPress={() => router.back()} style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                  <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
-                  <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>{t('common.back')}</Text>
-                </Pressable>
-              )}
+                ) : (
+                  <View style={[styles.headerRoundFill, styles.headerRoundFlat, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+                    <MaterialIcons name="chevron-left" size={30} color={theme.colors.text.primary} />
+                  </View>
+                )}
+              </Pressable>
             </View>
             {/* ── RESTORED. THE BARE VERSION WAS WORSE. ────────────────────────────────
    
@@ -7708,7 +7732,7 @@ export default function ChatScreen() {
                   onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
                   onLongPress={openSearch}
                   delayLongPress={300}
-                  style={{ borderRadius: 18, maxWidth: '100%' }}
+                  style={{ borderRadius: 22, maxWidth: '100%' }}
                 >
                   {/* ── THE BANNER WAS MISSING FROM THIS BRANCH ENTIRELY ───────────
                       The banner-in-the-name-pill feature was written only into the `glassActive ===
@@ -7736,7 +7760,7 @@ export default function ChatScreen() {
                       what trades away the outward morph. That trade is deliberate: a visible banner
                       was the request, and per the paragraph above the morph was already unreachable
                       here. No border is added — the user asked for no outline. */}
-                  <View style={[styles.headerPillGlass, { overflow: 'hidden' }]}>
+                  <View style={[styles.headerTitlePill, { overflow: 'hidden' }]}>
                     {peerBannerUrl ? (
                       <CachedImage
                         uri={peerBannerUrl}
@@ -7748,14 +7772,12 @@ export default function ChatScreen() {
                       />
                     ) : null}
                     <GlassBg
-                      borderRadius={18}
+                      borderRadius={22}
                       glassStyle={peerBannerUrl ? 'clear' : 'regular'}
                       colorScheme={theme.isDark ? 'dark' : 'light'}
                       interactive={false}
                     />
-                    <Text variant="caption" weight="semibold" numberOfLines={1} color={peerBannerUrl ? '#FFFFFF' : undefined} style={{ flexShrink: 1 }}>{displayName}</Text>
-                    {displayVerified && <VerifiedBadge size={12} />}
-                    {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+                    {headerTitleContent}
                   </View>
                 </Pressable>
               ) : (
@@ -7763,7 +7785,7 @@ export default function ChatScreen() {
                   onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
                   onLongPress={openSearch}
                   delayLongPress={300}
-                  style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }, onBannerPillStyle]}
+                  style={[styles.headerTitlePill, styles.headerTitlePillFlat, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }, onBannerPillStyle]}
                 >
                   {/* ── THE BANNER LIVES HERE NOW ──────────────────────────────────────
                       Asked for after two rejected full-width strips: not a photo sitting across the
@@ -7776,7 +7798,7 @@ export default function ChatScreen() {
                       title), it adds no height, it adds no element, and it cannot be mistaken for
                       part of the transcript.
 
-                      `overflow: 'hidden'` is on `styles.headerPill`'s radius via the absolute child
+                      `overflow: 'hidden'` is on `styles.headerTitlePill`'s radius via the absolute child
                       being clipped by the parent's `borderRadius` — the pill already rounds itself,
                       so the image takes the capsule shape for free.
 
@@ -7801,9 +7823,7 @@ export default function ChatScreen() {
                       <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.42)' }]} />
                     </>
                   ) : null}
-                  <Text variant="caption" weight="semibold" numberOfLines={1} color={onBannerTextColor} style={{ flexShrink: 1 }}>{displayName}</Text>
-                  {displayVerified && <VerifiedBadge size={12} />}
-                  {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+                  {headerTitleContent}
                 </Pressable>
               )}
             </View>
@@ -7822,17 +7842,22 @@ export default function ChatScreen() {
                   banner version. */}
               {/* Liquid glass like the back pill and the search buttons beside it. It was the one
                   header control still drawn as a flat circle when glass is on. */}
-              {glassActive ? (
-                <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={{ borderRadius: 18 }}>
-                  <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
-                    <Avatar emoji={displayEmoji} name={displayName} size="xs" />
+              <Pressable
+                onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
+                style={styles.headerRound}
+                accessibilityRole="button"
+                accessibilityLabel={displayName}
+              >
+                {glassActive ? (
+                  <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerRoundFill}>
+                    <Avatar emoji={displayEmoji} name={displayName} size="sm" />
                   </NativeGlassView>
-                </Pressable>
-              ) : (
-                <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                  <Avatar emoji={displayEmoji} name={displayName} size="xs" />
-                </Pressable>
-              )}
+                ) : (
+                  <View style={[styles.headerRoundFill, styles.headerRoundFlat, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+                    <Avatar emoji={displayEmoji} name={displayName} size="sm" />
+                  </View>
+                )}
+              </Pressable>
             </View>
           </View>
         )}
@@ -8244,32 +8269,26 @@ const styles = StyleSheet.create({
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
   headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
   headerCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  // Side columns hug their content and NEVER shrink, so the back pill's "Назад"
-  // label is always shown in full and the avatar stays fixed. The center title
-  // takes the remaining space (flex:1) and the NAME pill truncates within it —
-  // this is what stops the back label from being squeezed by a long name. iOS-
-  // style approximate centering (the title is centered in the gap between the
-  // back pill and the avatar, not the full screen) is intentional + sufficient.
+  // Side columns hug their content and NEVER shrink, so the round buttons stay fixed. The center
+  // title takes the remaining space (flex:1) and the NAME pill truncates within it. iOS-style
+  // approximate centering (the title is centered in the gap between the two round buttons, which
+  // are the same width, so in practice on the screen too) is intentional + sufficient.
   headerSide: { flexShrink: 0, alignItems: 'flex-start', justifyContent: 'center' },
   headerTitleWrap: { flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center' },
 
-  // iOS-style back pill: chevron + "Назад" label. Auto width (no fixed circle
-  // size) so it grows to fit the localized label; keeps the 36pt height and
-  // rounded geometry of the other header chrome. flexShrink:0 so it is never
-  // squeezed below its content width (the label must never truncate).
-  backPill: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, borderWidth: 1, paddingLeft: 6, paddingRight: 14, gap: 2 },
-  backPillGlass: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, paddingLeft: 8, paddingRight: 16, gap: 2 },
-  // flexShrink:0 + no width cap so the localized "Назад" label is never clipped.
-  backLabel: { marginLeft: -2, flexShrink: 0 },
-  // maxWidth:'100%' bounds the name pill to the available middle space so a long
-  // name TRUNCATES (numberOfLines={1}) instead of overflowing or squeezing the
-  // back button; short names still hug their content and stay centered.
-  headerPill: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, borderWidth: 1, paddingHorizontal: 16 },
-  // Interactive-glass shape variants: same geometry as the flat chrome but with
-  // NO border and NO overflow clipping, so the liquid glass can morph OUTWARD
-  // over content on touch. The icon/content lives INSIDE the glass as children.
+  // The search header's 36 pt circles (arrows, close). Interactive-glass variant: same geometry as
+  // the flat one but with NO border and NO overflow clipping. The icon lives inside the glass.
   headerCircleGlass: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  headerPillGlass: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, paddingHorizontal: 16 },
+  // ── The Telegram-style header (round back, two-line name pill, round avatar) ──
+  headerRound: { width: 44, height: 44, borderRadius: 22 },
+  headerRoundFill: { width: '100%', height: '100%', borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  headerRoundFlat: { borderWidth: 1 },
+  // Same 44 pt as the round buttons beside it. `minWidth` so a short name still reads as a pill
+  // rather than a circle; `maxWidth` lets a long name truncate inside `headerTitleWrap`.
+  headerTitlePill: { maxWidth: '100%', minWidth: 120, height: 44, borderRadius: 22, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' },
+  headerTitlePillFlat: { borderWidth: 1 },
+  headerNameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, maxWidth: '100%' },
+  headerName: { fontSize: 15, lineHeight: 19, flexShrink: 1 },
 
   // ── Message-search field ──────────────────────────────────────────────────
   //

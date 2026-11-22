@@ -215,7 +215,7 @@ export default function AppearanceScreen() {
         {/* Live preview of the app itself: the theme, the mode and the interface font change every
             screen, not one chat. The chat look has its own previews in the chat settings modals. */}
         <View style={[styles.preview, { borderColor: theme.colors.border.light }]}>
-          <AppPreview height={268} />
+          <AppPreview height={330} />
         </View>
 
         <View style={{ paddingHorizontal: 16 }}>
