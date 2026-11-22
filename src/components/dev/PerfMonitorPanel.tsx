@@ -363,6 +363,9 @@ export function PerfMonitorPanel({ onClose }: Props) {
                 ? ` · ${t('perf.glass_skipped', 'skipped')} ${Math.round(glass.skipsPerSecond)}/s (${(glass.signatureMsPerSecond ?? 0).toFixed(1)} ${t('perf.ms_per_s', 'ms/s')})`
                 : ''}
               {glass.renderMsPerCapture != null ? ` · render ${glass.renderMsPerCapture.toFixed(2)}` : ''}
+              {glass.leafCacheHitsPerSecond != null
+                ? ` · cache ${Math.round(glass.leafCacheHitsPerSecond)}/${Math.round(glass.leafCacheMadePerSecond ?? 0)}/${Math.round(glass.leafCacheRefusedPerSecond ?? 0)} (${(glass.leafCacheMB ?? 0).toFixed(1)} MB)`
+                : ''}
               {glass.slowestRender ? ` · ${glass.slowestRender} ${(glass.slowestRenderMs ?? 0).toFixed(1)}` : ''}
             </Text>
           ) : null}
