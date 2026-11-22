@@ -506,7 +506,6 @@ const ru: Record<string, string> = {
   'chat.photo': 'Фото',
   'chat.deleted_account': 'Удалённый аккаунт',
   'chat.photos_count': '{n} фото',
-  'chat.open_fullscreen': 'Открыть на весь экран',
   'chat.pin': 'Закрепить',
   'chat.unpin': 'Открепить',
   'chat.pinned_message': 'Закреплённое сообщение',

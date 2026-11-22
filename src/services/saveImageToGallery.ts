@@ -13,8 +13,8 @@
  *
  * Uses the `File` API of expo-file-system 19. The module's legacy functions (`downloadAsync`,
  * `cacheDirectory`) are not exported from the main entry any more and throw at runtime there,
- * which is why the old copy of this code in `app/chat/fullscreen.tsx` could only ever fail when the
- * photo was not already in the image cache.
+ * which is why the old copy of this code in the full-screen message viewer (app/chat/fullscreen.tsx,
+ * removed in Nov 2026) could only ever fail when the photo was not already in the image cache.
  *
  * Everything is imported lazily so screens that never save do not load the modules.
  */
