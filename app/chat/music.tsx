@@ -397,7 +397,7 @@ export default function MusicChatScreen() {
           {/* Commands drawer — anchored ABOVE the input row, slides in via
               LayoutAnimation when toggled. */}
           {commandsOpen ? (
-            <View style={{ marginBottom: 8, borderRadius: 18, overflow: 'hidden', ...(glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }) }}>
+            <View style={{ marginBottom: 8, borderRadius: 18, overflow: 'hidden', ...(glassActive ? { borderWidth: 0 } : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }) }}>
               {glassActive ? <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
               {COMMANDS.map((c, i) => (
                 <Pressable
@@ -448,7 +448,7 @@ export default function MusicChatScreen() {
                   ...(commandsOpen
                     ? { backgroundColor: theme.colors.accent.primary, borderWidth: 1, borderColor: theme.colors.border.light }
                     : glassActive
-                      ? null
+                      ? { borderWidth: 0 }
                       : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }),
                 }}
               >

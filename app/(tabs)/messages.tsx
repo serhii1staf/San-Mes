@@ -1126,6 +1126,15 @@ function useEditShift(editProgress: SharedValue<number>) {
  */
 const EDIT_MODE_USED = makeMutable(false);
 
+// ── `{ borderWidth: 0 }`, NOT `null`, ON THE GLASS SIDE OF THESE STYLES ──────────
+//
+// On Android (React Native 0.81) a REMOVED `borderWidth` is passed to the view as NaN, and
+// `BorderInsets.resolve` keeps that NaN (its fallbacks only catch null). A view with `overflow:
+// 'hidden'` then clips its children to a NaN padding box in `clipToPaddingBox`, which draws nothing:
+// switching the glass on mid-session made these pills, text included, disappear until a restart. An
+// explicit 0 is a real width, so the padding box is the whole view again. The same fix is applied
+// wherever a glass-dependent style used to drop a border (chat, comments, AI and music chats).
+
 /**
  * Header chrome buttons. Both follow the same rule the rest of the app uses for
  * liquid glass: the glass is a BACKGROUND sibling (`GlassBg`) and the label/icon
@@ -1158,7 +1167,7 @@ const HeaderPillButton = React.memo(function HeaderPillButton({
       style={[
         styles.headerPill,
         glassActive
-          ? null
+          ? { borderWidth: 0 }
           : {
               backgroundColor: theme.colors.background.elevated,
               borderWidth: 1,
@@ -1196,7 +1205,7 @@ const HeaderIconButton = React.memo(function HeaderIconButton({
       style={[
         styles.headerIconBtn,
         glassActive
-          ? null
+          ? { borderWidth: 0 }
           : {
               backgroundColor: theme.colors.background.elevated,
               borderWidth: 1,
@@ -2947,7 +2956,7 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
         styles.actionBar,
         { bottom: 14 + bottomInset },
         glassActive
-          ? null
+          ? { borderWidth: 0 }
           : {
               backgroundColor: theme.colors.background.elevated,
               borderWidth: 1,

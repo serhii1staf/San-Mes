@@ -7399,7 +7399,7 @@ export default function ChatScreen() {
             stack, so it stays put relative to the input when the keyboard moves. */}
         <TypingIndicator channelName={typingChannel} />
         {banner && (
-          <View style={[{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden' }, glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
+          <View style={[{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden' }, glassActive ? { borderWidth: 0 } : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
             {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
             <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
             <MaterialIcons name={editing ? 'edit' : 'reply'} size={15} color={theme.colors.accent.primary} />
@@ -8113,7 +8113,7 @@ const SearchActionBar = React.memo(function SearchActionBar({
         styles.searchActionBar,
         { bottom: 14 + bottomInset },
         glassActive
-          ? null
+          ? { borderWidth: 0 }
           : {
               backgroundColor: theme.colors.background.elevated,
               borderWidth: 1,
@@ -8171,7 +8171,7 @@ const PinnedMessageBar = React.memo(function PinnedMessageBar({
         style={[
           styles.pinnedBar,
           glassActive
-            ? null
+            ? { borderWidth: 0 }
             : {
                 backgroundColor: theme.colors.background.elevated,
                 borderWidth: 1,

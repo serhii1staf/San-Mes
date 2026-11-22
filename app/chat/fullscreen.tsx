@@ -77,6 +77,11 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 // already decoded instead of requesting a new size (a different cache key).
 const VIEWER_IMG_MAX_W = Math.min(Math.round(SCREEN_W), 1080);
 
+// The glass side of the header frames sets `borderWidth: 0` instead of dropping the border. On
+// Android a removed `borderWidth` reaches the view as NaN, and an `overflow: 'hidden'` view then
+// draws nothing (see the note above `HeaderPillButton` in app/(tabs)/messages.tsx).
+const GLASS_FRAME = { borderWidth: 0 } as const;
+
 export default function ChatFullscreenScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -316,7 +321,7 @@ export default function ChatFullscreenScreen() {
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel={t('common.close', 'Закрыть')}
-            style={[styles.headerBtn, glassActive ? null : headerBtnFrame]}
+            style={[styles.headerBtn, glassActive ? GLASS_FRAME : headerBtnFrame]}
           >
             {glassActive ? (
               <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
@@ -337,7 +342,7 @@ export default function ChatFullscreenScreen() {
               still truncate rather than push the buttons around. */}
           <View style={styles.captionSlot} pointerEvents="none">
           <View
-            style={[styles.captionFrame, glassActive ? null : headerBtnFrame]}
+            style={[styles.captionFrame, glassActive ? GLASS_FRAME : headerBtnFrame]}
             pointerEvents="none"
           >
             {glassActive ? (
@@ -370,7 +375,7 @@ export default function ChatFullscreenScreen() {
                 hitSlop={10}
                 accessibilityRole="button"
                 accessibilityLabel={t('common.save')}
-                style={[styles.headerBtn, glassActive ? null : headerBtnFrame]}
+                style={[styles.headerBtn, glassActive ? GLASS_FRAME : headerBtnFrame]}
               >
                 {glassActive ? (
                   <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
@@ -388,7 +393,7 @@ export default function ChatFullscreenScreen() {
               hitSlop={10}
               accessibilityRole="button"
               accessibilityLabel={currentPinned ? t('chat.unpin', 'Открепить') : t('chat.pin', 'Закрепить')}
-              style={[styles.headerBtn, glassActive ? null : headerBtnFrame]}
+              style={[styles.headerBtn, glassActive ? GLASS_FRAME : headerBtnFrame]}
             >
               {glassActive ? (
                 <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
@@ -684,7 +689,7 @@ const FullscreenComposer = React.memo(function FullscreenComposer({
         style={[
           styles.composerField,
           glassActive
-            ? null
+            ? { borderWidth: 0 }
             : {
                 backgroundColor: theme.colors.background.elevated,
                 borderWidth: 1,
