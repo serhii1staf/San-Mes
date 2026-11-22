@@ -257,26 +257,7 @@ export default function FontsFamilyScreen() {
             </View>
           </ShrinkingModalTitle>
         </View>
-        <Pressable onPress={handleApply} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
-          {glassActive ? (
-            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18 }]}>
-              <RNText style={styles.headerApplyText} allowFontScaling={false}>
-                {t('common.apply')}
-              </RNText>
-            </NativeGlassView>
-          ) : (
-            <BlurView
-              intensity={80}
-              role="scrim"
-              tint="dark"
-              style={[styles.headerPillInner, { paddingHorizontal: 14 }]}
-            >
-              <RNText style={styles.headerApplyText} allowFontScaling={false}>
-                {t('common.apply')}
-              </RNText>
-            </BlurView>
-          )}
-        </Pressable>
+        {/* No Apply here: the footer has it. A second one in the header was a duplicate (reported). */}
       </View>
 
       {/* ── Controls + footer ───────────────────────────────────────── */}
@@ -438,7 +419,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerTitleText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  headerApplyText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
   // Controls + footer
   controlsWrap: {
     flex: 1,
