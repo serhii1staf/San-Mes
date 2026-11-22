@@ -23,6 +23,7 @@ import React from 'react';
 import { AccessibilityInfo, Platform, StyleSheet, View, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
 import { useSettingsStore } from '../../store/settingsStore';
 import { SanGlassView, isSanGlassAvailable, sanGlassFeatureLevel } from '../../../modules/san-glass/index';
+import { androidSurfaceStyle } from './androidSurface';
 
 // ── Reduce Transparency (accessibility) ────────────────────────────────────
 //
@@ -154,8 +155,45 @@ export interface SanGlassLayerProps extends GlassCorners {
   tintColor?: string;
 }
 
+// ── ANDROID: FROSTED AND SCRIM GLASS ARE A FLAT FILL ─────────────────────────────
+//
+// Measured on LDPlayer (Nov 2026). Release build: the RenderThread spent 410-690 ms per second with our
+// glass on against 160-190 with it off, on the same scrolls. Debug build: turning off ONLY the frosted
+// and scrim looks took another profile's scroll from 16.7 % janky frames to 1.0 % (all glass off:
+// 0.7 %). The frosted look on Android is a GPU blur of a re-recorded copy of everything beneath, every
+// frame something under it moves, and that is what the frames were waiting for.
+//
+// So on Android those two looks are the app's existing Android surface (`androidSurfaceStyle`, the
+// same fill the blur fallback uses, so the two families cannot drift apart) with the caller's tint on
+// top. Clear glass (the tab bar's lens, buttons and pills) stays real glass: it is cheap, because its
+// middle is the live content and only the rim band is drawn. iOS is unchanged. Approved by the owner
+// as "variant A".
+const FLAT_FROST = Platform.OS === 'android';
+
+function flatRadii(cornerRadius?: number, cornerRadii?: [number, number, number, number]): ViewStyle {
+  if (cornerRadii) {
+    return {
+      borderTopLeftRadius: cornerRadii[0],
+      borderTopRightRadius: cornerRadii[1],
+      borderBottomRightRadius: cornerRadii[2],
+      borderBottomLeftRadius: cornerRadii[3],
+    };
+  }
+  return { borderRadius: cornerRadius ?? 0 };
+}
+
 /** The glass alone, filling its parent. Draws its own rounding; nothing inside it. */
 export const SanGlassLayer = React.memo(function SanGlassLayer({ kind, dark, strength, tintColor, cornerRadius, cornerRadii }: SanGlassLayerProps) {
+  if (FLAT_FROST && kind !== 'clear') {
+    const radii = flatRadii(cornerRadius, cornerRadii);
+    // `strength` is 0..1 (a blur's intensity / 100); the surface curve takes the intensity itself.
+    const surface = androidSurfaceStyle((strength ?? 0.6) * 100, dark, kind === 'scrim' ? 'scrim' : 'chrome');
+    return (
+      <View pointerEvents="none" style={[StyleSheet.absoluteFill, radii, surface]}>
+        {tintColor ? <View style={[StyleSheet.absoluteFill, radii, { backgroundColor: tintColor }]} /> : null}
+      </View>
+    );
+  }
   const look = withTint(glassLook(kind, dark, strength), tintColor);
   return (
     <SanGlassView
