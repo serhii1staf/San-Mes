@@ -84,6 +84,10 @@ enum SanGlassStats {
   private static var visited = 0
   private static var rendered = 0
   private static var whole = 0
+  /// Ticks where the scene signature was unchanged, so no capture ran.
+  private static var skips = 0
+  /// Time spent computing scene signatures (every tick that gets that far).
+  private static var signatureTime: CFTimeInterval = 0
   private static var since = CACurrentMediaTime()
 
   static func attached(_ delta: Int) {
@@ -109,6 +113,13 @@ enum SanGlassStats {
     lock.lock(); draws += 1; lock.unlock()
   }
 
+  static func signed(cost: CFTimeInterval, skipped: Bool) {
+    lock.lock()
+    signatureTime += cost
+    if skipped { skips += 1 }
+    lock.unlock()
+  }
+
   static func snapshot() -> [String: Any] {
     lock.lock()
     defer { lock.unlock() }
@@ -127,6 +138,9 @@ enum SanGlassStats {
       "layersVisitedPerCapture": perCapture(visited),
       "layersRenderedPerCapture": perCapture(rendered),
       "subtreesRenderedWholePerCapture": perCapture(whole),
+      // Captures avoided because nothing beneath had changed, and what finding that out cost.
+      "skipsPerSecond": Double(skips) / seconds,
+      "signatureMsPerSecond": signatureTime * 1000 / seconds,
     ]
   }
 
@@ -140,6 +154,8 @@ enum SanGlassStats {
     visited = 0
     rendered = 0
     whole = 0
+    skips = 0
+    signatureTime = 0
     since = CACurrentMediaTime()
     lock.unlock()
   }
@@ -174,11 +190,13 @@ private final class SanGlassDisplayLinkProxy: NSObject {
 /// the live content. Frosted glass (`blur` > 0) is captured at 1x or 0.5x (the blur removes the detail a
 /// sharper capture would pay for), blurred with Metal Performance Shaders and drawn whole.
 ///
-/// Cost control, because the capture runs on the main thread: frames are capped at 60 Hz; the buffer is
-/// fingerprinted and Metal is skipped while it is unchanged; after half a second of no change it is
-/// sampled at 15 Hz until something moves; if capturing ever costs more than 2 ms it drops to every
-/// other frame. It does nothing while the view is out of a window, off screen, hidden or transparent
-/// through any ancestor (a frost that is faded out costs nothing).
+/// Cost control, because the capture runs on the main thread: frames are capped at 60 Hz; before each
+/// capture a cheap signature of the layers beneath (`SanGlassLayerCapture.signature`) is compared with
+/// the last one, and while it is unchanged nothing is captured, apart from one capture every
+/// `backstopInterval` for what the signature cannot see; the buffer is fingerprinted and Metal is
+/// skipped while the pixels are unchanged; if capturing costs more than 2 ms it drops to every other
+/// frame while the scene moves. It does nothing while the view is out of a window, off screen, hidden
+/// or transparent through any ancestor (a frost that is faded out costs nothing).
 public final class SanGlassView: ExpoView {
   var look = SanGlassLook() {
     didSet {
@@ -198,11 +216,16 @@ public final class SanGlassView: ExpoView {
   private var captureScale: CGFloat = 2
   private var blurTarget: MTLTexture?
   private var lastFingerprint: UInt64 = 0
-  private var unchangedFrames = 0
   private var tickCount = 0
   private var dirty = true
   private var captureCost: CFTimeInterval = 0
   private var attached = false
+  /// The scene signature at the last capture, and when that capture ran.
+  private var lastSignature: UInt64 = 0
+  private var lastCaptureAt: CFTimeInterval = 0
+  /// How long an unchanged signature may go without a real capture: the longest a backing store
+  /// redrawn in place (which the signature cannot see) can take to show in the glass.
+  private static let backstopInterval: CFTimeInterval = 0.5
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -294,24 +317,55 @@ public final class SanGlassView: ExpoView {
     SanGlassStats.ticked()
 
     tickCount &+= 1
-    let idle = !dirty && unchangedFrames > 30
-    let every = idle ? 4 : (captureCost > 0.002 ? 2 : 1)
-    if tickCount % every != 0 { return }
+    // Nothing beneath changed since the last capture: skip it, unless the backstop is due.
+    let now = CACurrentMediaTime()
+    let signature = sceneSignature()
+    let signed = CACurrentMediaTime()
+    let unchanged = !dirty && signature == lastSignature
+    let skip = unchanged && now - lastCaptureAt < Self.backstopInterval
+    SanGlassStats.signed(cost: signed - now, skipped: skip)
+    if skip { return }
+    // While the scene moves, an expensive capture runs every other frame.
+    if !unchanged && captureCost > 0.002 && tickCount % 2 != 0 { return }
 
     let started = CACurrentMediaTime()
     guard let captured = capture() else { return }
     let cost = CACurrentMediaTime() - started
     captureCost = captureCost * 0.9 + cost * 0.1
     SanGlassStats.captured(cost: cost, counts: layerCapture.counts)
+    lastSignature = signature
+    lastCaptureAt = now
 
-    if !dirty && captured.fingerprint == lastFingerprint {
-      unchangedFrames += 1
-      return
-    }
+    if !dirty && captured.fingerprint == lastFingerprint { return }
     lastFingerprint = captured.fingerprint
-    unchangedFrames = 0
     dirty = false
     draw(captured.buffer, renderer: renderer, pipeline: pipeline)
+  }
+
+  /// A signature of everything `renderBeneath` would draw, over the same levels, plus this view's own
+  /// size and its place in each ancestor. See `SanGlassLayerCapture.signature`.
+  private func sceneSignature() -> UInt64 {
+    var h = SanGlassLayerCapture.signatureSeed
+    layerCapture.target = layer.bounds
+    SanGlassLayerCapture.mix(&h, layer.bounds.width)
+    SanGlassLayerCapture.mix(&h, layer.bounds.height)
+    var toAncestor = CGAffineTransform.identity
+    var child: CALayer = layer
+    while let parent = child.superlayer {
+      toAncestor = toAncestor.concatenating(SanGlassLayerCapture.layerToSuperlayer(child))
+      let parentToGlass = toAncestor.inverted()
+      SanGlassLayerCapture.mix(&h, object: parent)
+      SanGlassLayerCapture.mix(&h, parentToGlass)
+      SanGlassLayerCapture.mix(&h, color: parent.backgroundColor)
+      if let sublayers = parent.sublayers {
+        for sublayer in SanGlassLayerCapture.drawingOrder(sublayers) {
+          if sublayer === child { break }
+          layerCapture.signature(sublayer, parentToTarget: parentToGlass, into: &h)
+        }
+      }
+      child = parent
+    }
+    return h
   }
 
   // MARK: Capture

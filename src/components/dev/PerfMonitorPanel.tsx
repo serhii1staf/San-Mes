@@ -359,6 +359,9 @@ export function PerfMonitorPanel({ onClose }: Props) {
               {glass.captureMsAverage.toFixed(2)}, {t('perf.max', 'max')} {glass.captureMsMax.toFixed(1)} {t('perf.ms_label', 'ms')})
               {glass.layersVisitedPerCapture != null ? ` · ${t('perf.layers', 'layers')} ${Math.round(glass.layersVisitedPerCapture)}` : ''}
               {glass.levelsRecordedPerCapture != null ? ` · ${t('perf.rerecorded', 'rerecorded')} ${glass.levelsRecordedPerCapture.toFixed(1)}` : ''}
+              {glass.skipsPerSecond != null
+                ? ` · ${t('perf.glass_skipped', 'skipped')} ${Math.round(glass.skipsPerSecond)}/s (${(glass.signatureMsPerSecond ?? 0).toFixed(1)} ${t('perf.ms_per_s', 'ms/s')})`
+                : ''}
             </Text>
           ) : null}
         </View>
