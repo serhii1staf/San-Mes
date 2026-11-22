@@ -491,6 +491,7 @@ const ru: Record<string, string> = {
   'chat.composer.send_a11y': 'Отправить',
   'chat.composer.save_a11y': 'Сохранить',
   'chat.viewer.download_a11y': 'Скачать',
+  'chat.header.typing': 'печатает…',
   'chat.viewer.save_denied': 'Нет доступа к галерее. Его можно разрешить в настройках.',
   'chat.search_placeholder': 'Поиск по сообщениям...',
   'chat.editing': 'Редактирование',
@@ -991,6 +992,13 @@ const ru: Record<string, string> = {
   'appearance.preview.name3': 'Команда San',
   'appearance.preview.msg3': 'Добро пожаловать в San!',
   'appearance.preview.yesterday': 'Вчера',
+  'appearance.preview.name4': 'Ника',
+  'appearance.preview.msg4': 'Завтра в 7, не забудь!',
+  'appearance.preview.name5': 'Дизайн',
+  'appearance.preview.msg5': 'Новый макет готов 🎨',
+  'appearance.preview.reply1': 'Отлично! Смотри, что нашёл 👀',
+  'appearance.preview.reply2': 'Красиво! Где это?',
+  'appearance.preview.reply3': 'Покажу завтра ✨',
 
   // AI-applied theme → matching pixel-icon picker carousel that appears
   // under the action bubble in the AI chat. Keys live in the appearance
