@@ -131,6 +131,128 @@ final class SanGlassLayerCapture {
     if group { ctx.endTransparencyLayer() }
   }
 
+  // MARK: Signature
+
+  /// Mixes into `h` what `draw` would read for `layer` and the part of its subtree that can reach the
+  /// target: identity, placement, size, visibility, and the properties drawn (background, border,
+  /// corners, contents identity, shape and gradient parameters). Arguments as for `draw`.
+  ///
+  /// ── WHY ──────────────────────────────────────────────────────────────────────────────────────────
+  ///
+  /// The owner's iPhone snapshots showed the glass capturing about 60 times a second in total with
+  /// `drawsPerSecond: 0`: nothing beneath had changed, every capture rasterised the same pixels, and
+  /// the fingerprint threw them away afterwards. At 2.6 ms (profile) to 5.9 ms (a chat with long
+  /// messages) per capture that was 257-352 ms of main thread per second, at rest.
+  ///
+  /// This walk visits the same culled layers without drawing anything, so comparing two signatures
+  /// costs microseconds where a capture costs milliseconds. Equal signatures mean nothing beneath moved,
+  /// appeared, disappeared or was restyled. What it cannot see is a backing store redrawn IN PLACE (the
+  /// same contents object holding new pixels, e.g. a text view that re-rendered), which is why the view
+  /// still captures every `backstopInterval` whatever the signature says.
+  ///
+  /// `culled` is false inside a subtree that `draw` hands to `render(in:)` whole: that renders all of
+  /// it, so all of it is hashed.
+  func signature(_ layer: CALayer, parentToTarget: CGAffineTransform, into h: inout UInt64, culled: Bool = true) {
+    if layer.isHidden || layer.opacity < 0.01 { return }
+    if layer is CAMetalLayer { return }
+    let toParent = Self.layerToSuperlayer(layer)
+    let toTarget = toParent.concatenating(parentToTarget)
+    let clips = layer.masksToBounds || layer.mask != nil
+    if culled {
+      var reach = layer.bounds.applying(toTarget)
+      if !clips { reach = reach.insetBy(dx: -overflowMargin, dy: -overflowMargin) }
+      if !reach.intersects(target) { return }
+    }
+    let bounds = layer.bounds
+    Self.mix(&h, object: layer)
+    Self.mix(&h, toTarget)
+    Self.mix(&h, bounds.origin.x)
+    Self.mix(&h, bounds.origin.y)
+    Self.mix(&h, bounds.width)
+    Self.mix(&h, bounds.height)
+    Self.mix(&h, CGFloat(layer.opacity))
+    Self.mix(&h, color: layer.backgroundColor)
+    Self.mix(&h, layer.cornerRadius)
+    Self.mix(&h, UInt64(layer.maskedCorners.rawValue) | (clips ? 1 << 32 : 0))
+    Self.mix(&h, layer.borderWidth)
+    Self.mix(&h, color: layer.borderColor)
+    Self.mix(&h, object: layer.contents.map { $0 as AnyObject })
+    if let shape = layer as? CAShapeLayer {
+      Self.mix(&h, object: shape.path)
+      Self.mix(&h, color: shape.fillColor)
+      Self.mix(&h, color: shape.strokeColor)
+      Self.mix(&h, shape.lineWidth)
+      Self.mix(&h, shape.strokeStart)
+      Self.mix(&h, shape.strokeEnd)
+    } else if let gradient = layer as? CAGradientLayer {
+      // CGColor is immutable, so the objects' identity says whether the colours changed.
+      for c in gradient.colors ?? [] { Self.mix(&h, object: c as AnyObject) }
+      for l in gradient.locations ?? [] { Self.mix(&h, CGFloat(l.doubleValue)) }
+      Self.mix(&h, gradient.startPoint.x)
+      Self.mix(&h, gradient.startPoint.y)
+      Self.mix(&h, gradient.endPoint.x)
+      Self.mix(&h, gradient.endPoint.y)
+    } else if let text = layer as? CATextLayer {
+      Self.mix(&h, object: text.string.map { $0 as AnyObject })
+    }
+    if let mask = layer.mask {
+      if let shapeMask = mask as? CAShapeLayer { Self.mix(&h, object: shapeMask.path) }
+      Self.mix(&h, Self.layerToSuperlayer(mask))
+      Self.mix(&h, object: mask.contents.map { $0 as AnyObject })
+    }
+    let whole = Self.needsWholeRender(layer)
+    if whole {
+      Self.mix(&h, CGFloat(layer.shadowOpacity))
+      Self.mix(&h, layer.shadowRadius)
+      Self.mix(&h, layer.shadowOffset.width)
+      Self.mix(&h, layer.shadowOffset.height)
+      Self.mix(&h, color: layer.shadowColor)
+      Self.mix(&h, object: layer.shadowPath)
+      Self.mix(&h, UInt64(layer.filters?.count ?? 0))
+    }
+    guard let sublayers = layer.sublayers, !sublayers.isEmpty else { return }
+    Self.mix(&h, UInt64(sublayers.count))
+    for sublayer in Self.drawingOrder(sublayers) {
+      signature(sublayer, parentToTarget: toTarget, into: &h, culled: culled && !whole)
+    }
+  }
+
+  /// FNV-1a, 64 bit, over whole words.
+  static let signatureSeed: UInt64 = 14_695_981_039_346_656_037
+
+  @inline(__always) static func mix(_ h: inout UInt64, _ v: UInt64) {
+    h = (h ^ v) &* 1_099_511_628_211
+  }
+
+  @inline(__always) static func mix(_ h: inout UInt64, _ v: CGFloat) {
+    mix(&h, Double(v).bitPattern)
+  }
+
+  static func mix(_ h: inout UInt64, _ t: CGAffineTransform) {
+    mix(&h, t.a)
+    mix(&h, t.b)
+    mix(&h, t.c)
+    mix(&h, t.d)
+    mix(&h, t.tx)
+    mix(&h, t.ty)
+  }
+
+  static func mix(_ h: inout UInt64, color: CGColor?) {
+    guard let color = color, let components = color.components else {
+      mix(&h, 0x5A4E_0000_0000_0001)
+      return
+    }
+    for component in components { mix(&h, component) }
+  }
+
+  static func mix(_ h: inout UInt64, object: AnyObject?) {
+    guard let object = object else {
+      mix(&h, 0x5A4E_0000_0000_0002)
+      return
+    }
+    mix(&h, UInt64(UInt(bitPattern: ObjectIdentifier(object))))
+  }
+
   // MARK: Geometry
 
   /// The affine transform taking `layer`'s coordinates (its bounds space) to its superlayer's: the

@@ -334,6 +334,61 @@ for (name, glass) in [("tabbar", barGlass), ("header", headerGlass), ("menu", me
   print("    pixels off by >3 from window.render(in:): old \(dOld.count) (max \(dOld.max)), culled \(dNew.count) (max \(dNew.max)) of \(dNew.total)")
 }
 
+// ── The scene signature (SanGlassLayerCapture.signature) ───────────────────────────────────────────
+// What SanGlassView compares before each capture (same levels, same order as its sceneSignature): it
+// must change when anything the capture would draw changes, stay equal when nothing does, and cost a
+// small fraction of a capture.
+func sceneSignature(_ glass: CALayer) -> UInt64 {
+  var h = SanGlassLayerCapture.signatureSeed
+  culler.target = glass.bounds
+  SanGlassLayerCapture.mix(&h, glass.bounds.width)
+  SanGlassLayerCapture.mix(&h, glass.bounds.height)
+  for level in levels(glass) {
+    let parentToGlass = level.glassToParent.inverted()
+    SanGlassLayerCapture.mix(&h, object: level.parent)
+    SanGlassLayerCapture.mix(&h, parentToGlass)
+    SanGlassLayerCapture.mix(&h, color: level.parent.backgroundColor)
+    for sub in SanGlassLayerCapture.drawingOrder(level.parent.sublayers ?? []) {
+      if sub === level.branch { break }
+      culler.signature(sub, parentToTarget: parentToGlass, into: &h)
+    }
+  }
+  return h
+}
+
+var signatureFailures = 0
+func expectSignature(_ name: String, _ glass: CALayer, changes: Bool, _ mutate: () -> Void, _ restore: () -> Void) {
+  CATransaction.begin()
+  CATransaction.setDisableActions(true)
+  let before = sceneSignature(glass)
+  mutate()
+  let after = sceneSignature(glass)
+  restore()
+  let back = sceneSignature(glass)
+  CATransaction.commit()
+  let ok = (before != after) == changes && back == before
+  if !ok { signatureFailures += 1 }
+  print("signature \(ok ? "PASS" : "FAIL"): \(name) (expected \(changes ? "a change" : "no change"), restored \(back == before ? "equal" : "DIFFERENT"))")
+}
+
+print("signature: stable \(sceneSignature(headerGlass) == sceneSignature(headerGlass) ? "PASS" : "FAIL")")
+expectSignature("list scrolled 1 pt under the header", headerGlass, changes: true, { scroll.bounds.origin.y += 1 }, { scroll.bounds.origin.y -= 1 })
+expectSignature("banner image replaced under the header", headerGlass, changes: true, { bannerLayer.contents = thumb }, { bannerLayer.contents = banner })
+expectSignature("hidden layer shown under the header", headerGlass, changes: true, { hiddenLayer.isHidden = false }, { hiddenLayer.isHidden = true })
+expectSignature("group opacity changed under the menu", menuGlass, changes: true, { group.opacity = 0.3 }, { group.opacity = 0.6 })
+expectSignature("menu glass moved 5 pt", menuGlass, changes: true, { menuGlass.position.y += 5 }, { menuGlass.position.y -= 5 })
+expectSignature("avatar corner radius changed under the header", headerGlass, changes: true, { avatar.cornerRadius = 10 }, { avatar.cornerRadius = 26 })
+let farCard = content.sublayers![content.sublayers!.count - 1]
+let farColor = farCard.backgroundColor
+expectSignature("card far off screen recoloured (header)", headerGlass, changes: false, { farCard.backgroundColor = CGColor(red: 1, green: 0, blue: 0, alpha: 1) }, { farCard.backgroundColor = farColor })
+expectSignature("card far off screen recoloured (tab bar)", barGlass, changes: false, { farCard.backgroundColor = CGColor(red: 1, green: 0, blue: 0, alpha: 1) }, { farCard.backgroundColor = farColor })
+for (name, glass) in [("tabbar", barGlass), ("header", headerGlass), ("menu", menuGlass)] {
+  let tSig = timeMs(200) { _ = sceneSignature(glass) }
+  let tCap = timeMs(25) { captureNew(glass, into: makeContext(glass, scale: 1)) }
+  print(String(format: "signature %@: %.4f ms against a 1x capture of %.3f ms (%.0fx cheaper)", name, tSig, tCap, tCap / max(tSig, 0.00001)))
+}
+print("signature: \(signatureFailures == 0 ? "all checks passed" : "\(signatureFailures) FAILED")")
+
 // ── The shader ──────────────────────────────────────────────────────────────────────────────────────
 guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
   print("metal: no device on this machine; shader not checked")
