@@ -1771,9 +1771,20 @@ export default function MessagesScreen() {
   // mid-exit and the bar would simply vanish. Latching means they cost nothing
   // until first opened and then stay mounted for the rest of the session, so
   // every animation behaves exactly as before from the first use onward.
+  //
+  // The selection bar is also built two seconds after the screen mounts, off-screen, when nothing
+  // else is happening. Built by the first «Изм.» tap instead, its mount landed on the same frames as
+  // the rows starting to slide: measured on the emulator, the worst frame of the first entry was
+  // 320 ms against 160-200 ms for every later one. It still costs nothing on the cold mount.
   const [editBarUsed, setEditBarUsed] = useState(false);
   useEffect(() => {
-    if (editMode && !editBarUsed) setEditBarUsed(true);
+    if (editBarUsed) return;
+    if (editMode) {
+      setEditBarUsed(true);
+      return;
+    }
+    const id = setTimeout(() => setEditBarUsed(true), 2000);
+    return () => clearTimeout(id);
   }, [editMode, editBarUsed]);
   const [composeUsed, setComposeUsed] = useState(false);
   useEffect(() => {
@@ -2914,7 +2925,11 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
   onPin: () => void;
   allSelectedPinned: boolean;
 }) {
-  const progress = useSharedValue(visible ? 1 : 0);
+  // Starts OFF-SCREEN whatever `visible` is, so the effect below always slides it in. This was
+  // `useSharedValue(visible ? 1 : 0)`, and since the bar is first mounted by the «Изм.» tap itself
+  // (see `editBarUsed`), the first time it mounted already in place: no slide, while the second
+  // time (mounted, at 0) it sprang in. Reported as «Изм.» being abrupt the first time only.
+  const progress = useSharedValue(0);
   useEffect(() => {
     // Spring, shared with the tab bar's hide (`BOTTOM_CHROME_SPRING`). These two surfaces
     // trade places, so they must move on one curve; see the note in src/theme/motion.ts.
