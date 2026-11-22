@@ -506,7 +506,6 @@ const en: Record<string, string> = {
   'chat.photo': 'Photo',
   'chat.deleted_account': 'Deleted account',
   'chat.photos_count': '{n} photos',
-  'chat.open_fullscreen': 'Open fullscreen',
   'chat.pin': 'Pin',
   'chat.unpin': 'Unpin',
   'chat.pinned_message': 'Pinned message',

@@ -941,10 +941,6 @@ function AppStack() {
       <Stack.Screen name="chat/[id]" />
       <Stack.Screen name="chat/ai" />
       <Stack.Screen name="chat/music" />
-      {/* Full-screen message viewer. A pushed route (not a modal) on purpose —
-          see the header comment in `chat/fullscreen.tsx`: pushing unmounts the
-          chat's message list instead of leaving it laying out underneath. */}
-      <Stack.Screen name="chat/fullscreen" />
       {/* A normal pushed screen, like Telegram's profile editor, not a sheet sliding up from the
           bottom. Swipe back from anywhere, same as the profiles it is opened from. */}
       <Stack.Screen name="profile/edit" options={SWIPE_BACK_ANYWHERE} />
