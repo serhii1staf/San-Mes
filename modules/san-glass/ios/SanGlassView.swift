@@ -93,6 +93,17 @@ enum SanGlassStats {
   private static var buffersMade = 0
   /// Time spent computing scene signatures (every tick that gets that far).
   private static var signatureTime: CFTimeInterval = 0
+  /// Inside `render(in:)` of subtrees drawn whole.
+  private static var wholeTime: CFTimeInterval = 0
+  /// The leaf cache: big leaves drawn from it, rendered into it, not cached; time rendering into it;
+  /// its size after the latest capture (read on the main thread, published here).
+  private static var cacheHits = 0
+  private static var cacheMade = 0
+  private static var cacheRefused = 0
+  private static var cacheMakeTime: CFTimeInterval = 0
+  private static var cacheRedrawDrops = 0
+  private static var cacheBytes = 0
+  private static var cacheEntries = 0
   private static var since = CACurrentMediaTime()
 
   static func attached(_ delta: Int) {
@@ -103,7 +114,12 @@ enum SanGlassStats {
     lock.lock(); ticks += 1; lock.unlock()
   }
 
+  /// Main thread (the cache's size is read here, where it lives).
   static func captured(cost: CFTimeInterval, counts: SanGlassCaptureCounts) {
+    let cache = SanGlassLeafCache.shared
+    let bytes = cache.totalBytes
+    let entries = cache.count
+    let redrawDrops = cache.takeRedrawDrops()
     lock.lock()
     captures += 1
     captureTime += cost
@@ -112,9 +128,18 @@ enum SanGlassStats {
     rendered += counts.rendered
     whole += counts.whole
     renderTime += counts.renderTime
+    wholeTime += counts.wholeTime
+    cacheHits += counts.cacheHits
+    cacheMade += counts.cacheMade
+    cacheRefused += counts.cacheRefused
+    cacheMakeTime += counts.cacheMakeTime
+    cacheRedrawDrops += redrawDrops
+    cacheBytes = bytes
+    cacheEntries = entries
     if counts.slowestTime > slowestRender, let layer = counts.slowestLayer {
       slowestRender = counts.slowestTime
-      slowestRenderWhat = SanGlassLayerCapture.describe(layer)
+      // "cached": that call rendered a big leaf into the leaf cache, a one-off per leaf.
+      slowestRenderWhat = SanGlassLayerCapture.describe(layer) + (counts.slowestWasMade ? " cached" : "")
     }
     lock.unlock()
   }
@@ -161,6 +186,18 @@ enum SanGlassStats {
       "slowestRenderMs": slowestRender * 1000,
       "slowestRender": slowestRenderWhat,
       "buffersMadePerSecond": Double(buffersMade) / seconds,
+      // From build 105. The part of renderMsPerCapture spent on subtrees drawn whole, and the leaf
+      // cache: big leaves drawn from it, rendered into it, drawn directly instead (animated, about to
+      // redraw, or no room), the time spent rendering into it, entries dropped because their layer
+      // was about to redraw (an edit, a recycled cell), and its size after the latest capture.
+      "wholeRenderMsPerCapture": captures > 0 ? wholeTime * 1000 / Double(captures) : 0,
+      "leafCacheHitsPerSecond": Double(cacheHits) / seconds,
+      "leafCacheMadePerSecond": Double(cacheMade) / seconds,
+      "leafCacheRefusedPerSecond": Double(cacheRefused) / seconds,
+      "leafCacheMakeMsPerSecond": cacheMakeTime * 1000 / seconds,
+      "leafCacheRedrawDropsPerSecond": Double(cacheRedrawDrops) / seconds,
+      "leafCacheMB": Double(cacheBytes) / 1_048_576,
+      "leafCacheEntries": cacheEntries,
     ]
   }
 
@@ -180,6 +217,12 @@ enum SanGlassStats {
     slowestRender = 0
     slowestRenderWhat = ""
     buffersMade = 0
+    wholeTime = 0
+    cacheHits = 0
+    cacheMade = 0
+    cacheRefused = 0
+    cacheMakeTime = 0
+    cacheRedrawDrops = 0
     since = CACurrentMediaTime()
     lock.unlock()
   }
@@ -219,8 +262,9 @@ private final class SanGlassDisplayLinkProxy: NSObject {
 /// the last one, and while it is unchanged nothing is captured, apart from one capture every
 /// `backstopInterval` for what the signature cannot see; the buffer is fingerprinted and Metal is
 /// skipped while the pixels are unchanged; if capturing costs more than 2 ms it drops to every other
-/// frame while the scene moves. It does nothing while the view is out of a window, off screen, hidden
-/// or transparent through any ancestor (a frost that is faded out costs nothing).
+/// frame while the scene moves; leaves with big contents (a long message's text) are drawn from images
+/// rendered once (`SanGlassLeafCache`). It does nothing while the view is out of a window, off screen,
+/// hidden or transparent through any ancestor (a frost that is faded out costs nothing).
 public final class SanGlassView: ExpoView {
   var look = SanGlassLook() {
     didSet {
@@ -270,6 +314,7 @@ public final class SanGlassView: ExpoView {
   }
 
   deinit {
+    if displayLink != nil { Self.running = max(0, Self.running - 1) }
     displayLink?.invalidate()
     if attached { SanGlassStats.attached(-1) }
   }
@@ -298,8 +343,27 @@ public final class SanGlassView: ExpoView {
     }
   }
 
+  /// Glass views in a window, and the observers that empty the leaf cache (installed once).
+  private static var running = 0
+  private static var observing = false
+
+  /// The leaf cache holds up to `SanGlassLeafCache.maxBytes` of images: given back on a memory warning,
+  /// in the background, and when no glass view is in a window.
+  private static func observeMemory() {
+    guard !observing else { return }
+    observing = true
+    let center = NotificationCenter.default
+    for name in [UIApplication.didReceiveMemoryWarningNotification, UIApplication.didEnterBackgroundNotification] {
+      _ = center.addObserver(forName: name, object: nil, queue: .main) { _ in
+        SanGlassLeafCache.shared.removeAll()
+      }
+    }
+  }
+
   private func start() {
     guard displayLink == nil, SanGlassRenderer.shared != nil else { return }
+    Self.observeMemory()
+    Self.running += 1
     let link = CADisplayLink(target: SanGlassDisplayLinkProxy(self), selector: #selector(SanGlassDisplayLinkProxy.tick(_:)))
     if #available(iOS 15.0, *) {
       link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
@@ -316,6 +380,13 @@ public final class SanGlassView: ExpoView {
   }
 
   private func stop() {
+    if displayLink != nil {
+      Self.running -= 1
+      if Self.running <= 0 {
+        Self.running = 0
+        SanGlassLeafCache.shared.removeAll()
+      }
+    }
     displayLink?.invalidate()
     displayLink = nil
     if attached {

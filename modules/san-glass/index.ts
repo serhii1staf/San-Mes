@@ -91,6 +91,22 @@ export interface SanGlassStats {
   slowestRenderMs?: number;
   slowestRender?: string;
   buffersMadePerSecond?: number;
+  /**
+   * iOS (from build 105): the part of `renderMsPerCapture` spent on subtrees drawn whole, and the leaf
+   * cache (leaves with big contents, such as a long message's text, rendered once and then drawn from
+   * that image): drawn from it, rendered into it and drawn directly instead (animated, about to
+   * redraw, or no room) per second, the time spent rendering into it, entries dropped per second
+   * because their view was about to redraw (an edit, a recycled list cell), and its size.
+   * `slowestRender` ends in " cached" when the slowest call was such a one-off render.
+   */
+  wholeRenderMsPerCapture?: number;
+  leafCacheHitsPerSecond?: number;
+  leafCacheMadePerSecond?: number;
+  leafCacheRefusedPerSecond?: number;
+  leafCacheMakeMsPerSecond?: number;
+  leafCacheRedrawDropsPerSecond?: number;
+  leafCacheMB?: number;
+  leafCacheEntries?: number;
 }
 
 const nativeModule = requireOptionalNativeModule<SanGlassNativeModule>('SanGlass');
