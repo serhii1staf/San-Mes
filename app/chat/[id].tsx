@@ -641,15 +641,12 @@ const bubbleStyles = StyleSheet.create({
   // fresh literal on each render of each row.
   bubbleBox: { maxWidth: BUBBLE_MAX_W, flexShrink: 1, marginBottom: 4 },
   // `flexShrink: 0` is load-bearing: without it a long message squeezes the column to zero width
-  // and the time disappears. `alignItems: center` stacks the button directly over the time.
+  // and the time disappears.
   // FIXED width, so `META_COL_WIDTH` above is a fact rather than an estimate: 34 + 6 + 6 = 46.
   // If this width changes, change META_COL_WIDTH with it or the bubble limit silently stops
   // matching reality — which is precisely the bug this block exists to prevent.
-  metaOutsideCol: { width: 34, flexShrink: 0, alignItems: 'center', justifyContent: 'flex-end', gap: 1, marginHorizontal: 6, paddingBottom: 2 },
+  metaOutsideCol: { width: 34, flexShrink: 0, alignItems: 'center', justifyContent: 'flex-end', marginHorizontal: 6, paddingBottom: 2 },
   timestampOutside: { fontSize: 10, lineHeight: 12, opacity: 0.9 },
-  // The icon's own box is small, but `hitSlop={10}` on the Pressable takes the touch
-  // target well past Apple's 44 pt guidance without affecting layout.
-  expandInline: { paddingVertical: 1 },
   timestampInline: { fontSize: 10 },
 });
 
@@ -775,7 +772,7 @@ function OlderMessagesLoader({ visible, color }: { visible: boolean; color: stri
 //
 //   SCREEN_WIDTH
 //     − META_ROW_MARGIN * 2   the row's own horizontal margins (it owns them now, not the bubble)
-//     − META_COL_WIDTH        the timestamp/fullscreen column plus its margins
+//     − META_COL_WIDTH        the timestamp column plus its margins
 //     = BUBBLE_MAX_W
 //
 // and `CHAT_IMG_MAX_W` is then clamped to fit INSIDE that, minus the bubble's horizontal padding.
@@ -1125,7 +1122,7 @@ const SwipeReplyIcon = React.memo(function SwipeReplyIcon({ translateX, accent }
   );
 });
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, heldId, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; heldId?: SharedValue<string>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, heldId, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; heldId?: SharedValue<string>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
   // The quoted message's one-line preview. Cheap (a few string checks) and only meaningful when this
@@ -1474,14 +1471,6 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // synchronously while slots are free — so the instant-appearance this existed to protect is kept for
   // the ordinary case, and only a burst is made to queue.
 
-  // `Pressable.onPress` receives a gesture event, not the message — bind it here
-  // so the button can stay a plain onPress while the screen's handler keeps
-  // taking the message it acts on.
-  const handleOpenFullscreen = useCallback(
-    () => onOpenFullscreen(message),
-    [onOpenFullscreen, message],
-  );
-
   // ── Derived-from-text work, memoized per message ────────────────────────────
   //
   // Both of these ran on EVERY render of every mounted bubble. Neither is expensive alone,
@@ -1636,8 +1625,6 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               isDark={theme.isDark}
             />
           ) : null}
-          {/* The expand-to-fullscreen affordance now lives inline next to the
-              timestamp, further down — see `bubbleStyles.metaRow`. */}
 
           {/* ── A MEDIA-ONLY MESSAGE GETS NO BUBBLE ──────────────────────────────────
    
@@ -1841,19 +1828,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
           </View>
         </View>
         </Reanimated.View>
-        {/* The meta column: full-screen button ABOVE the time, as requested. Both are tiny and
-            tinted from the theme rather than from the bubble's contrast colour — they are no
-            longer ON the bubble, so they must read against the chat background instead. */}
+        {/* The meta column: the time, outside the bubble. Tinted from the theme rather than from the
+            bubble's contrast colour, because it reads against the chat background. The full-screen
+            button that sat above it was removed at the owner's request (Nov 2026). */}
         <View style={bubbleStyles.metaOutsideCol}>
-          <Pressable
-            onPress={handleOpenFullscreen}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={t('chat.open_fullscreen', 'Открыть на весь экран')}
-            style={bubbleStyles.expandInline}
-          >
-            <MaterialIcons name="open-in-full" size={10} color={theme.colors.text.tertiary} />
-          </Pressable>
           <Text variant="caption" color={theme.colors.text.tertiary} style={bubbleStyles.timestampOutside}>
             {timeLabel}
           </Text>
@@ -2446,8 +2424,8 @@ export default function ChatScreen() {
   // which is exactly the shape of the unattributed time in the snapshots — a 267 ms long task on
   // `chat/[id]` whose only named marks summed to 5 ms.
   //
-  // Now empty until first needed. `ensureRecentsLoaded` is called from `openEmoji` / `openGif`, which
-  // is the moment the values become visible, and it is one-shot via a ref so re-opening the panel
+  // Now empty until first needed. `ensureRecentsLoaded` is called from `openEmoji` (the only way the
+  // panel opens; GIFs are its second tab), which is the moment the values become visible, and it is one-shot via a ref so re-opening the panel
   // does not re-read. Everything downstream is unchanged: the pushers still return the updated list
   // and still write through to MMKV.
   const [recentEmoji, setRecentEmoji] = useState<string[]>([]);
@@ -3116,8 +3094,8 @@ export default function ChatScreen() {
   const EMOJI_GAP = 8;
 
   // Keep the UI-thread lift mirror in sync with the JS panel state.
-  // IMPORTANT: when a panel is OPENING, the rise is owned by openEmoji/openGif
-  // (they may animate liftSV 0→1 for a smooth rise when the keyboard is down).
+  // IMPORTANT: when a panel is OPENING, the rise is owned by openEmoji
+  // (it may animate liftSV 0→1 for a smooth rise when the keyboard is down).
   // This effect must NOT clobber that animation by force-setting liftSV = 1.
   // It only (a) re-arms the lift while returning to the keyboard (keepLifted)
   // and (b) animates the lift back down on a full close.
@@ -3174,27 +3152,8 @@ export default function ChatScreen() {
     }
   }, [emojiPanelSV, liftSV, keyboardHeight]);
 
-  // Open the GIF panel — twin of openEmoji. Mutually exclusive with emoji.
-  const openGif = useCallback(() => {
-    // Same as `openEmoji`: the recents become visible here, so this is where they load.
-    ensureRecentsLoaded();
-    const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
-    emojiPanelSV.value = h;
-    setEmojiPanelHeight(h);
-    setKeepLifted(false);
-    setPanelTab('gif');
-    const kbUp = Math.abs(keyboardHeight.value) > 1;
-    if (kbUp) {
-      liftSV.value = 1;
-      requestAnimationFrame(() => Keyboard.dismiss());
-    } else {
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => {
-          liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
-        }),
-      );
-    }
-  }, [emojiPanelSV, liftSV, keyboardHeight]);
+  // There is no separate "open GIFs" entry any more: the composer's emoji button opens the panel on
+  // the emoji tab and the panel's own switcher (`switchPanel`) leads to the GIFs.
 
   // Switch tab WITHOUT touching the keyboard/lift — the panel is already open
   // and the keyboard is already down, so this is a pure horizontal slide.
@@ -4308,18 +4267,6 @@ export default function ChatScreen() {
     [id, participantId, displayName, displayEmoji, displayUsername, setMessages, t, currentUserId],
   );
 
-  // Open the full-screen viewer on a specific message. A route (not a modal) so
-  // the platform owns the transition and back-gesture, and so this screen's
-  // message list is not left mounted underneath doing layout work.
-  const openFullscreen = useCallback((m: ChatMessage) => {
-    if (!conversationId) return;
-    triggerHaptic('light');
-    router.push({
-      pathname: '/chat/fullscreen',
-      params: { id: conversationId, messageId: m.id },
-    } as any);
-  }, [conversationId]);
-
   // ── Reveal the message you just sent ──────────────────────────────────────
   //
   // This used to be an unconditional `requestAnimationFrame(() => scrollToEnd())`
@@ -5072,7 +5019,14 @@ export default function ChatScreen() {
   // pin needs the id too. A sibling state rather than widening the viewer's `payload`, because the
   // component freezes a copy of `payload` for the exit animation — chrome must keep reading the live
   // value while the parent has already cleared it.
+  //
+  // `viewerIndexRef` is which photo is on screen. `viewerImages.index` is only where the viewer
+  // OPENED; the footer's download and delete must act on the photo the user swiped to. A ref, so
+  // paging through the photos does not re-render this screen.
+  const viewerIndexRef = useRef(0);
+  const onViewerIndexChange = useCallback((index: number) => { viewerIndexRef.current = index; }, []);
   const openImageViewer = useCallback((images: string[], index: number, message: ChatMessage) => {
+    viewerIndexRef.current = index;
     setViewerImages({ images, index });
     setViewerMsg(message);
   }, []);
@@ -5558,7 +5512,8 @@ export default function ChatScreen() {
     const target = viewerMsg;
     const shown = viewerImages;
     if (!target || !conversationId) return;
-    const currentUri = shown ? shown.images[Math.min(shown.index, shown.images.length - 1)] : undefined;
+    // The photo ON SCREEN, not the one the viewer opened on (they differ after a swipe).
+    const currentUri = shown ? shown.images[Math.min(viewerIndexRef.current, shown.images.length - 1)] : undefined;
     const all = target.imageUrls || [];
     const remaining = currentUri ? all.filter((u) => u !== currentUri) : [];
     const text = target.text || '';
@@ -5641,6 +5596,31 @@ export default function ChatScreen() {
     } catch {}
   }, [viewerMsg, viewerImages, conversationId, pinnedIds, unpinMessage, handleMenuAction, closeImageViewer, setMessages, t]);
 
+  // «Скачать»: the photo on screen, at its original size, into the photo library (add-only access,
+  // see src/services/saveImageToGallery.ts). One at a time: a second tap while the first is still
+  // downloading is ignored rather than saving the photo twice.
+  const savingViewerPhotoRef = useRef(false);
+  const saveViewerPhoto = useCallback(async () => {
+    const shown = viewerImages;
+    if (!shown || shown.images.length === 0 || savingViewerPhotoRef.current) return;
+    const uri = shown.images[Math.min(viewerIndexRef.current, shown.images.length - 1)];
+    savingViewerPhotoRef.current = true;
+    try {
+      const { saveImageToGallery } = await import('../../src/services/saveImageToGallery');
+      const result = await saveImageToGallery(uri);
+      if (result === 'saved') {
+        triggerHaptic('medium');
+        showToast(t('swipeable.saved_to_gallery'), 'check');
+      } else if (result === 'denied') {
+        showToast(t('chat.viewer.save_denied'), 'alert-circle');
+      } else {
+        showToast(t('swipeable.save_failed'), 'alert-circle');
+      }
+    } finally {
+      savingViewerPhotoRef.current = false;
+    }
+  }, [viewerImages, t]);
+
   const viewerFooter = useMemo(() => {
     if (!viewerMsg) return null;
     const own = viewerMsg.senderId === currentUserId || viewerMsg.senderId === 'current';
@@ -5678,6 +5658,11 @@ export default function ChatScreen() {
           </ScrollView>
         ) : null}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <ViewerActionButton
+          icon="download"
+          accessibilityLabel={t('chat.viewer.download_a11y')}
+          onPress={() => { void saveViewerPhoto(); }}
+        />
         {/* THE ICON REFLECTS STATE.
    
             It did not: I wrote `icon={isPinned ? 'bookmark' : 'bookmark'}` — the same glyph in both
@@ -5698,18 +5683,26 @@ export default function ChatScreen() {
             togglePinnedMessage(conversationId, viewerMsg.id);
           }}
         />
-        {own && (
+        {own ? (
           <ViewerActionButton
             icon="trash-2"
             destructive
             accessibilityLabel={t('chat.menu.delete')}
             onPress={() => { void deleteViewerPhoto(); }}
           />
+        ) : (
+          // Report someone else's photo (App Review 1.2), the same flow as the message menu's
+          // «Пожаловаться»: the reason sheet, then `submitReport` for the message.
+          <ViewerActionButton
+            icon="flag"
+            accessibilityLabel={t('chat.menu.report')}
+            onPress={() => handleMenuAction('report', viewerMsg)}
+          />
         )}
         </View>
       </View>
     );
-  }, [viewerMsg, currentUserId, conversationId, pinnedIds, togglePinnedMessage, deleteViewerPhoto, t]);
+  }, [viewerMsg, currentUserId, conversationId, pinnedIds, togglePinnedMessage, deleteViewerPhoto, saveViewerPhoto, handleMenuAction, t]);
 
   const onDeleteSearchResult = useCallback(() => {
     if (!activeMatchMessage) return;
@@ -6813,7 +6806,6 @@ export default function ChatScreen() {
         actionZones={actionZonesSV}
         heldId={heldIdSV}
         onFireDragAction={fireDragAction}
-        onOpenFullscreen={openFullscreen}
       />
       </>
     );
@@ -6823,7 +6815,7 @@ export default function ChatScreen() {
     // NOTE: `scrollToMessageId` and `dayLabels` are deliberately absent too — both
     // change identity on every data/window change and are reached through refs
     // (`stableJumpToMessage`, `dayLabelsRef`) for exactly that reason.
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, heldIdSV, fireDragAction, visTracker, imagesReady, glassActive, theme, openFullscreen]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, heldIdSV, fireDragAction, visTracker, imagesReady, glassActive, theme]);
 
   // Stable list header / footer elements. Passing INLINE JSX to FlashList's
   // ListHeaderComponent / ListFooterComponent handed it a fresh element
@@ -7460,7 +7452,6 @@ export default function ChatScreen() {
           onPickImages={openPhotoPanel}
           onPasteImage={pasteImageFromClipboard}
           onPasteImages={addPastedImages}
-          onOpenGif={openGif}
           inputRowStyle={inputRowStyle}
           emojiOpen={emojiOpen}
           gifOpen={gifOpen}
@@ -7952,6 +7943,7 @@ export default function ChatScreen() {
       <ImageViewerModal
         payload={viewerImages}
         onClose={closeImageViewer}
+        onIndexChange={onViewerIndexChange}
         topInset={insets.top}
         bottomInset={insets.bottom}
         proxyWidth={CHAT_IMG_MAX_W}

@@ -99,14 +99,12 @@ jest.mock('../../ui/LiquidGlass', () => {
     __esModule: true,
     useLiquidGlassActive: () => false,
     NativeGlassView: Passthrough,
-    GlassContainerView: Passthrough,
   };
 });
 
 // Animated icons → trivial stand-ins (no SVG/Lottie work in the test tree).
 jest.mock('../AnimatedKeyboardIcon', () => ({ AnimatedKeyboardIcon: () => null }));
 jest.mock('../AnimatedEmojiIcon', () => ({ AnimatedEmojiIcon: () => null }));
-jest.mock('../AnimatedGifIcon', () => ({ AnimatedGifIcon: () => null }));
 
 // expo-paste-input → no native wrapper, so ChatField renders the plain TextInput
 // (its tree position is fixed, matching production's crash-safe fallback path).
@@ -132,46 +130,76 @@ jest.mock('../../../services/perfMonitor', () => ({
 jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
 
 // eslint-disable-next-line import/first
-import { ChatInputBar } from '../ChatInputBar';
+import { ChatInputBar, type ChatInputBarHandle } from '../ChatInputBar';
 
 // ─── Harness ────────────────────────────────────────────────────────────────
 
 const renderers: any[] = [];
 
+interface BarState {
+  hasPendingImages?: boolean;
+  emojiOpen?: boolean;
+  isEditing?: boolean;
+}
+
 function renderBar() {
   let renderer!: any;
+  const ref = React.createRef<ChatInputBarHandle>();
+  const el = (s: BarState) => (
+    <ChatInputBar
+      ref={ref}
+      isEditing={!!s.isEditing}
+      hasPendingImages={!!s.hasPendingImages}
+      onSend={() => {}}
+      onPickImages={() => {}}
+      emojiOpen={!!s.emojiOpen}
+      gifOpen={false}
+      inputRowStyle={{}}
+    />
+  );
   act(() => {
-    renderer = TestRenderer.create(
-      <ChatInputBar
-        isEditing={false}
-        hasPendingImages={false}
-        onSend={() => {}}
-        onPickImages={() => {}}
-        onOpenGif={() => {}}
-        emojiOpen={false}
-        gifOpen={false}
-        inputRowStyle={{}}
-      />,
-    );
+    renderer = TestRenderer.create(el({}));
   });
   renderers.push(renderer);
   const ti = renderer.root.findByType(TextInput);
-  return { renderer, ti };
+  const update = (s: BarState) => act(() => renderer.update(el(s)));
+  return { renderer, ti, ref, update };
 }
 
-/** Simulate the TextInput reporting a new measured content height. */
-function fireHeight(ti: any, h: number) {
-  act(() => {
-    ti.props.onContentSizeChange({ nativeEvent: { contentSize: { height: h } } });
-  });
+/**
+ * Everything that can change the composer's state, as a step a test can replay: text of one to many
+ * lines, clearing, pending photos, an open panel, editing. The TextInput's own measurement is not
+ * reproducible in a test renderer, so what is checked is the part JS controls: that none of these
+ * ever hands a view around the TextInput a fixed height.
+ */
+type Step = { kind: 'text'; lines: number } | { kind: 'clear' } | { kind: 'state'; state: BarState };
+
+function apply(bar: ReturnType<typeof renderBar>, step: Step) {
+  if (step.kind === 'text') act(() => bar.ref.current?.setText(Array.from({ length: step.lines }, (_, i) => `line ${i}`).join('\n')));
+  else if (step.kind === 'clear') act(() => bar.ref.current?.clear());
+  else bar.update(step.state);
 }
+
+const CASCADE: Step[] = [
+  { kind: 'text', lines: 1 },
+  { kind: 'text', lines: 3 },
+  { kind: 'text', lines: 6 },
+  { kind: 'state', state: { emojiOpen: true } },
+  { kind: 'text', lines: 2 },
+  { kind: 'state', state: { hasPendingImages: true } },
+  { kind: 'clear' },
+  { kind: 'state', state: { isEditing: true } },
+  { kind: 'text', lines: 4 },
+  { kind: 'state', state: {} },
+  { kind: 'clear' },
+];
 
 /**
  * Every `height` applied to a View on the TextInput's ANCESTOR chain.
  *
  * Scoped to that chain on purpose. The bar legitimately contains fixed-size
- * chrome (the 44 pt send/attach capsules, the 30 pt emoji button, the 24 pt GIF
- * slot) whose heights are correct and must not be flagged. The defect is
+ * chrome (the 44 pt round photo/send buttons, the 32 pt send pill, the 24 pt
+ * emoji button) whose heights are correct and must not be flagged. The defect is
  * specifically a height on a view that ENCLOSES the TextInput, because that is
  * what caps the field's own measurement and stops it growing.
  *
@@ -221,16 +249,23 @@ describe('ChatInputBar composer height — stays intrinsic', () => {
   // ── The core regression ──────────────────────────────────────────────────
   // _Requirements: 2.1, 2.2, 2.3_
   it('never applies a JS-owned height to the composer, so growth stays intrinsic', () => {
-    const { renderer, ti } = renderBar();
+    const bar = renderBar();
 
     // Nothing pinned on the mount frame...
-    expect(pinnedAncestorHeights(renderer)).toStrictEqual([]);
+    expect(pinnedAncestorHeights(bar.renderer)).toStrictEqual([]);
 
-    // ...and nothing pinned after a full grow/shrink cascade either. This is the
-    // assertion the previous version of this file lacked: it is what fails if
-    // the height is ever moved back into JS.
-    [22, 48, 70, 92, 70, 22].forEach((h) => fireHeight(ti, h));
-    expect(pinnedAncestorHeights(renderer)).toStrictEqual([]);
+    // ...and nothing pinned through a full cascade of composer states either. This is the
+    // assertion the first version of this file lacked: it is what fails if the height is ever
+    // moved back into JS.
+    CASCADE.forEach((step) => {
+      apply(bar, step);
+      expect(pinnedAncestorHeights(bar.renderer)).toStrictEqual([]);
+    });
+  });
+
+  it('does not listen to content-size changes at all (nothing in JS needs the height)', () => {
+    const { ti } = renderBar();
+    expect(ti.props.onContentSizeChange).toBeUndefined();
   });
 
   it('eases the resulting frame change with a Reanimated layout transition', () => {
@@ -245,8 +280,8 @@ describe('ChatInputBar composer height — stays intrinsic', () => {
   });
 
   it('does not reach for LayoutAnimation (unsupported shape on Fabric)', () => {
-    const { ti } = renderBar();
-    [22, 48, 70, 92].forEach((h) => fireHeight(ti, h));
+    const bar = renderBar();
+    CASCADE.forEach((step) => apply(bar, step));
     expect(configureNextSpy).not.toHaveBeenCalled();
   });
 
@@ -267,25 +302,29 @@ describe('ChatInputBar composer height — stays intrinsic', () => {
 
   // ── Scoped property over the whole bug-condition input space ─────────────
   // _Requirements: 2.1, 2.2, 2.3_
-  it('property: no height sequence, in any order, ever pins a height', () => {
+  it('property: no sequence of composer states, in any order, ever pins a height', () => {
+    const step: fc.Arbitrary<Step> = fc.oneof(
+      // Up to 12 lines: past the 100 pt cap (5 lines), where the TextInput scrolls internally.
+      fc.integer({ min: 1, max: 12 }).map((lines) => ({ kind: 'text', lines }) as Step),
+      fc.constant({ kind: 'clear' } as Step),
+      fc
+        .record({ hasPendingImages: fc.boolean(), emojiOpen: fc.boolean(), isEditing: fc.boolean() })
+        .map((state) => ({ kind: 'state', state }) as Step),
+    );
     fc.assert(
-      fc.property(
-        fc.array(fc.integer({ min: 0, max: 140 }), { minLength: 1, maxLength: 10 }),
-        (heights) => {
-          const { renderer, ti } = renderBar();
-          heights.forEach((h) => fireHeight(ti, h));
+      fc.property(fc.array(step, { minLength: 1, maxLength: 10 }), (steps) => {
+        const bar = renderBar();
+        let ok = true;
+        steps.forEach((s) => {
+          apply(bar, s);
+          if (pinnedAncestorHeights(bar.renderer).length > 0) ok = false;
+        });
+        const noLayoutAnim = configureNextSpy.mock.calls.length === 0;
 
-          const pinned = pinnedAncestorHeights(renderer);
-          const noLayoutAnim = configureNextSpy.mock.calls.length === 0;
-
-          act(() => renderer.unmount());
-          renderers.pop();
-
-          // Deliberately covers out-of-range values (0, >100) too: clamping used
-          // to live in JS, and its removal must not resurrect a pinned height.
-          return pinned.length === 0 && noLayoutAnim;
-        },
-      ),
+        act(() => bar.renderer.unmount());
+        renderers.pop();
+        return ok && noLayoutAnim;
+      }),
       { numRuns: 50 },
     );
   });

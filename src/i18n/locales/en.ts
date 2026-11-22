@@ -485,6 +485,13 @@ const en: Record<string, string> = {
   // ─── Chat screen ───────────────────────────────────────────────────────
   'chat.fallback_name': 'Chat',
   'chat.input_placeholder': 'Message...',
+  'chat.composer.attach_a11y': 'Attach photo',
+  'chat.composer.emoji_a11y': 'Emoji and GIFs',
+  'chat.composer.keyboard_a11y': 'Keyboard',
+  'chat.composer.send_a11y': 'Send',
+  'chat.composer.save_a11y': 'Save',
+  'chat.viewer.download_a11y': 'Download',
+  'chat.viewer.save_denied': 'No access to the photo library. You can allow it in Settings.',
   'chat.search_placeholder': 'Search messages...',
   'chat.editing': 'Editing',
   'chat.replying': 'Reply to message',
