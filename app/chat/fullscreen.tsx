@@ -204,43 +204,21 @@ export default function ChatFullscreenScreen() {
     if (!uri || saving) return;
     setSaving(true);
     try {
-      const MediaLibrary = await import('expo-media-library');
-      // `writeOnly: true` asks for the add-only scope — the least access that can
-      // save a file, and it never grants us the ability to READ the library.
-      const perm = await MediaLibrary.requestPermissionsAsync(true);
-      if (!perm.granted) {
-        showToast(t('toast.error_generic'), 'alert-circle');
-        return;
+      // Shared with the chat's photo viewer. The copy that lived here used the legacy
+      // expo-file-system functions, which throw on SDK 54, so it failed whenever the photo was not
+      // already in the image cache. See src/services/saveImageToGallery.ts.
+      const { saveImageToGallery } = await import('../../src/services/saveImageToGallery');
+      const result = await saveImageToGallery(uri);
+      if (result === 'saved') {
+        triggerHaptic('medium');
+        // Reuses the existing swipe-to-screenshot strings rather than adding a second
+        // pair of keys that say the same thing in both locales.
+        showToast(t('swipeable.saved_to_gallery'), 'check');
+      } else if (result === 'denied') {
+        showToast(t('chat.viewer.save_denied'), 'alert-circle');
+      } else {
+        showToast(t('swipeable.save_failed'), 'alert-circle');
       }
-      // Resolve to a local file first: `createAssetAsync` cannot take a remote URL.
-      // expo-image has almost certainly already cached this exact derivative,
-      // because the viewer requests the same proxy width the bubble used.
-      const { Image: ExpoImage } = await import('expo-image');
-      const proxied = uri;
-      let localUri: string | null = null;
-      try {
-        const cached = await ExpoImage.getCachePathAsync(proxied);
-        if (cached) localUri = cached.startsWith('file') ? cached : 'file://' + cached;
-      } catch {
-        // fall through to a download
-      }
-      if (!localUri) {
-        const FileSystem = await import('expo-file-system');
-        const target = `${(FileSystem as any).cacheDirectory}san-save-${Date.now()}.jpg`;
-        const res = await (FileSystem as any).downloadAsync(proxied, target);
-        localUri = res?.uri ?? null;
-      }
-      if (!localUri) {
-        showToast(t('toast.error_generic'), 'alert-circle');
-        return;
-      }
-      await MediaLibrary.saveToLibraryAsync(localUri);
-      triggerHaptic('medium');
-      // Reuses the existing swipe-to-screenshot strings rather than adding a second
-      // pair of keys that say the same thing in both locales.
-      showToast(t('swipeable.saved_to_gallery'), 'check');
-    } catch {
-      showToast(t('swipeable.save_failed'), 'alert-circle');
     } finally {
       setSaving(false);
     }

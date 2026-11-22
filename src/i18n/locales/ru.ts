@@ -485,6 +485,13 @@ const ru: Record<string, string> = {
   // ─── Chat screen ───────────────────────────────────────────────────────
   'chat.fallback_name': 'Чат',
   'chat.input_placeholder': 'Сообщение...',
+  'chat.composer.attach_a11y': 'Прикрепить фото',
+  'chat.composer.emoji_a11y': 'Эмодзи и GIF',
+  'chat.composer.keyboard_a11y': 'Клавиатура',
+  'chat.composer.send_a11y': 'Отправить',
+  'chat.composer.save_a11y': 'Сохранить',
+  'chat.viewer.download_a11y': 'Скачать',
+  'chat.viewer.save_denied': 'Нет доступа к галерее. Его можно разрешить в настройках.',
   'chat.search_placeholder': 'Поиск по сообщениям...',
   'chat.editing': 'Редактирование',
   'chat.replying': 'Ответ на сообщение',

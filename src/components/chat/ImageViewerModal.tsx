@@ -1,5 +1,5 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Pressable, StyleSheet, Dimensions, FlatList } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Pressable, StyleSheet, Dimensions, FlatList, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
@@ -229,6 +229,12 @@ export interface ImageViewerModalProps {
    * losing that would have been a regression, so it is a capability of the shared viewer now.
    */
   zoomable?: boolean;
+  /**
+   * The page the user settled on in a multi-photo payload. Without it a caller only knows the
+   * index the viewer OPENED on, so an action in the footer (download, delete) would act on that
+   * photo even after the user had swiped to another one. Fired once per settled swipe.
+   */
+  onIndexChange?: (index: number) => void;
 }
 
 function ImageViewerModalComponent({
@@ -240,6 +246,7 @@ function ImageViewerModalComponent({
   footer,
   bottomInset = 0,
   zoomable = false,
+  onIndexChange,
 }: ImageViewerModalProps) {
   // Kept mounted for the length of the exit animation so the content does not blink
   // out before the backdrop has faded.
@@ -775,6 +782,13 @@ function ImageViewerModalComponent({
     [proxyWidth],
   );
 
+  // Through a ref so the pager's handler stays stable whatever the caller passes.
+  const onIndexChangeRef = useRef(onIndexChange);
+  onIndexChangeRef.current = onIndexChange;
+  const handlePageSettled = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    onIndexChangeRef.current?.(Math.round(e.nativeEvent.contentOffset.x / SCREEN_W));
+  }, []);
+
   if (!mounted || !shown) return null;
 
   // NOTE: not a native `Modal`. A Modal here would put the viewer in a separate
@@ -809,6 +823,7 @@ function ImageViewerModalComponent({
             // Off in both cases, so the pan is the only recogniser for the touch exactly when it
             // should be, and paging still works normally for a multi-image payload at 1x.
             scrollEnabled={isPager && !zoomedJS}
+            onMomentumScrollEnd={isPager ? handlePageSettled : undefined}
             // Three mounted pages at most: the one on screen and one either side.
             initialNumToRender={1}
             maxToRenderPerBatch={1}
@@ -932,5 +947,6 @@ export const ImageViewerModal = memo(
     prev.header === next.header &&
     prev.footer === next.footer &&
     prev.bottomInset === next.bottomInset &&
-    prev.zoomable === next.zoomable,
+    prev.zoomable === next.zoomable &&
+    prev.onIndexChange === next.onIndexChange,
 );
