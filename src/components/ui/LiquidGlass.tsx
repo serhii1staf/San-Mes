@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useTheme } from '../../theme';
-import { androidSurfaceStyle, type AppSurfaceRole } from './AppBlurView';
+import { androidSurfaceStyle, type AppSurfaceRole } from './androidSurface';
 import { isSanGlassAvailable } from '../../../modules/san-glass/index';
 import {
   GLASS_SURFACES_CAPABLE,
