@@ -76,6 +76,12 @@ export interface SanGlassStats {
   subtreesRenderedWholePerCapture?: number;
   /** Android: ancestor levels re-recorded per capture (the rest are reused). */
   levelsRecordedPerCapture?: number;
+  /**
+   * iOS (binaries from build 103): captures skipped per second because the scene signature beneath
+   * was unchanged, and the main-thread time spent computing those signatures, ms per second.
+   */
+  skipsPerSecond?: number;
+  signatureMsPerSecond?: number;
 }
 
 const nativeModule = requireOptionalNativeModule<SanGlassNativeModule>('SanGlass');
