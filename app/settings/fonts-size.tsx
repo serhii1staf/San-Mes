@@ -2,7 +2,7 @@
  * Telegram-style fullscreen "Text size" preview modal.
  *
  * Layout (top → bottom):
- *   1. Floating blur header pills — X (cancel) / title / Apply
+ *   1. Floating blur header pills — X (cancel) / title
  *   2. Chat preview area (~60% of screen) — user's chat wallpaper as the
  *      backdrop, with two fake chat bubbles + a date pill on top. Bubble
  *      text is rendered with the LIVE pending size, so dragging the slider
@@ -279,21 +279,7 @@ export default function FontsSizeScreen() {
             </View>
           </ShrinkingModalTitle>
         </View>
-        <Pressable onPress={handleApply} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
-          {glassActive ? (
-            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18 }]}>
-              <RNText style={styles.headerApplyText} allowFontScaling={false}>
-                {t('common.apply')}
-              </RNText>
-            </NativeGlassView>
-          ) : (
-            <BlurView intensity={80} role="scrim" tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
-              <RNText style={styles.headerApplyText} allowFontScaling={false}>
-                {t('common.apply')}
-              </RNText>
-            </BlurView>
-          )}
-        </Pressable>
+        {/* No Apply here: the footer has it. A second one in the header was a duplicate (reported). */}
       </View>
 
       {/* ── Controls + footer ───────────────────────────────────────── */}
@@ -667,11 +653,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
-  },
-  headerApplyText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
   },
   // Controls + footer
   controlsWrap: {

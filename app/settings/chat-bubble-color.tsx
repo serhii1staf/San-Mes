@@ -1,8 +1,9 @@
 /**
  * "Цвет сообщений" — modal message-color picker.
  *
- * Slide-up modal (registered in app/_layout). Floating X / Apply header pills
- * mirror the other chat modals (text-size, bubble-radius). A live
+ * Slide-up modal (registered in app/_layout). Floating X / title header pills
+ * mirror the other chat modals (text-size, bubble-radius); Apply is in the
+ * footer only. A live
  * ChatPreviewBubbles surface recolors BOTH bubbles as you pick. A "Мои /
  * Собеседника" target toggle chooses which side you're editing. Below: a custom
  * color/gradient creator (hue spectrum sliders), trendy gradient combinations
@@ -155,7 +156,7 @@ export default function ChatBubbleColorScreen() {
         />
       </View>
 
-      {/* ── Floating header pills (X / title / Apply) — top:28 like the
+      {/* ── Floating header pills (X / title) — top:28 like the
           other chat modals so the controls sit at the same level. ─────── */}
       <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
         <Pressable onPress={onCancel} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
@@ -185,17 +186,7 @@ export default function ChatBubbleColorScreen() {
             </View>
           </ShrinkingModalTitle>
         </View>
-        <Pressable onPress={onApply} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
-          {glassActive ? (
-            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18 }]}>
-              <RNText style={styles.headerApplyText} allowFontScaling={false}>{t('common.apply')}</RNText>
-            </NativeGlassView>
-          ) : (
-            <BlurView intensity={80} role="scrim" tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
-              <RNText style={styles.headerApplyText} allowFontScaling={false}>{t('common.apply')}</RNText>
-            </BlurView>
-          )}
-        </Pressable>
+        {/* No Apply here: the footer has it. A second one in the header was a duplicate (reported). */}
       </View>
 
       {/* Target toggle: which side am I editing? */}
@@ -380,7 +371,6 @@ const styles = StyleSheet.create({
   headerTitlePill: { borderRadius: 18, overflow: 'hidden', maxWidth: '100%' },
   headerTitleInner: { height: 36, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   headerTitleText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  headerApplyText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
 
   targetRow: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4, alignItems: 'center' },
   targetSeg: { flexDirection: 'row', borderRadius: 12, padding: 3 },

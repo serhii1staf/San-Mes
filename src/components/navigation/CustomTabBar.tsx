@@ -265,6 +265,10 @@ interface TabBarButtonProps {
   pillStretchW: SharedValue<number>;
   pillBaseWidth: number;
   slotWidth: number;
+  /** The active main-bar slot, or -1 while the profile capsule is focused. */
+  activeSlot: SharedValue<number>;
+  /** 1 while a finger is on the bar (glisse's lift). */
+  pillLift: SharedValue<number>;
 }
 
 // Note on Reanimated subscriptions (installed 4.1.7, `hook/useAnimatedStyle.js`): a mapper's
@@ -280,6 +284,8 @@ const MagnifyIcon = React.memo(function MagnifyIcon({
   pillBaseWidth,
   buttonCenterX,
   slotWidth,
+  activeSlot,
+  pillLift,
   children,
 }: {
   pressScale: SharedValue<number>;
@@ -288,6 +294,8 @@ const MagnifyIcon = React.memo(function MagnifyIcon({
   pillBaseWidth: number;
   buttonCenterX: number;
   slotWidth: number;
+  activeSlot: SharedValue<number>;
+  pillLift: SharedValue<number>;
   children: React.ReactNode;
 }) {
   const style = useAnimatedStyle(() => {
@@ -300,7 +308,16 @@ const MagnifyIcon = React.memo(function MagnifyIcon({
     // Magnification falls off with distance. Beyond ~0.55 of a slot width
     // there's no magnification — keeps the effect localized to the lens.
     const falloff = slotWidth > 0 ? slotWidth * 0.55 : 1;
-    const magnify = interpolate(
+    // ── NO LENS ON SCREEN, NO MAGNIFICATION ──────────────────────────────────
+    //
+    // While the profile capsule is focused the lens is unmounted, but `pillX` keeps its last value
+    // (or the Search slot, when the bar mounted on the profile). This style kept magnifying the icon
+    // under that stale position, so on the profile one main icon sat 18 % larger than the other, and
+    // the touch that left the profile slid that magnification across the bar before the lens appeared.
+    // Reported as "the bar first thinks I tapped Search, then Chats". So the magnification exists only
+    // while the lens does (a main tab is selected) or while a finger is on the bar.
+    const present = activeSlot.value >= 0 ? 1 : Math.min(1, pillLift.value / 0.3);
+    const magnify = present * interpolate(
       distance,
       [0, falloff],
       [ICON_MAGNIFY_MAX, 0],
@@ -327,6 +344,8 @@ const TabBarButton = React.memo(function TabBarButton({
   pillStretchW,
   pillBaseWidth,
   slotWidth,
+  activeSlot,
+  pillLift,
 }: TabBarButtonProps) {
   const iconName = ICON_NAMES[routeName] || 'ellipse';
 
@@ -362,6 +381,8 @@ const TabBarButton = React.memo(function TabBarButton({
         pillBaseWidth={pillBaseWidth}
         buttonCenterX={buttonCenterX}
         slotWidth={slotWidth}
+        activeSlot={activeSlot}
+        pillLift={pillLift}
       >
         {routeName === 'messages' ? (
           /* Chats icon plus an unread badge. Both live here because this component is the only
@@ -1509,7 +1530,12 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         dragged.value = false;
         touchX.value = e.x;
         everLifted.value = true;
-        pillX.value = withSpring(TAB_ROW_PADDING_H + touched * sw + PILL_INSET_X, LENS_X_SPRING);
+        // While the profile is focused there is no lens on screen to glide from, and `pillX` holds a
+        // stale slot (see `MagnifyIcon`). Springing from it slid the magnification from that slot to
+        // the touched one, which read as the bar selecting Search first. Jump straight to the tab
+        // under the finger instead; on a main tab the lens still glides as before.
+        const touchedX = TAB_ROW_PADDING_H + touched * sw + PILL_INSET_X;
+        pillX.value = activeSlotSV.value < 0 ? touchedX : withSpring(touchedX, LENS_X_SPRING);
         pillLift.value = withSpring(1, LIFT_SPRING);
       })
       .onStart(() => {
@@ -1812,6 +1838,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
                     pillStretchW={pillStretchW}
                     pillBaseWidth={pillBaseWidth}
                     slotWidth={slotWidth}
+                    activeSlot={activeSlotSV}
+                    pillLift={pillLift}
                   />
                 );
               })}

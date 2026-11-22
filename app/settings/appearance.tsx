@@ -9,6 +9,15 @@
  * no text and no icons, so a row of thirty costs almost nothing to mount — the old cards drew a fake
  * feed post (with like/repost icons for features that no longer exist) and a five-tab bar with the
  * removed Create button.
+ *
+ * ── ONLY THE LOOK OF THE WHOLE APP LIVES HERE ─────────────────────────────────
+ *
+ * This screen used to repeat four rows of «Настройки чатов» (chat background, message colour, bubble
+ * rounding, text size) in a «Чаты» section. Reported as illogical, and it was: the same values had two
+ * homes, and the chat-settings screen had more of them (the chat font, link emoji, the scroll button,
+ * reset). Now the split is by scope. Here: the theme (dark or light), the colour theme and the
+ * interface fonts, all of which change every screen. Everything about how a chat looks stays in
+ * Settings → Настройки чатов, one row above this screen in the settings list.
  */
 import React, { useCallback, useMemo, useRef } from 'react';
 import { View, Pressable, ScrollView, FlatList, StyleSheet, Alert, type ListRenderItem } from 'react-native';
@@ -21,12 +30,6 @@ import { Text } from '../../src/components/ui';
 import { AppPreview } from '../../src/components/settings/AppPreview';
 import { SettingsRow, SettingsSection } from '../../src/components/settings/SettingsList';
 import { useThemeStore, ACCENT_COLORS, type ThemeMode } from '../../src/store/themeStore';
-import { useSettingsStore } from '../../src/store/settingsStore';
-import {
-  useChatSettingsStore,
-  GLOBAL_CHAT_SETTINGS_KEY,
-  DEFAULT_CHAT_SETTINGS,
-} from '../../src/store/chatSettingsStore';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
@@ -128,10 +131,6 @@ export default function AppearanceScreen() {
   const setAccent = useThemeStore((s) => s.setAccent);
   const isDark = mode === 'dark';
 
-  const chatBubble = useSettingsStore((s) => s.chatBubble);
-  const globalChat = useChatSettingsStore((s) => s.settings[GLOBAL_CHAT_SETTINGS_KEY]);
-  const chat = useMemo(() => ({ ...DEFAULT_CHAT_SETTINGS, ...globalChat }), [globalChat]);
-
   const themes = useMemo(() => [...ACCENT_COLORS, ...aiThemes], [aiThemes]);
   const initialIndex = Math.max(0, themes.findIndex((c) => c.key === accent));
   const listRef = useRef<FlatList<ThemeConfig>>(null);
@@ -190,10 +189,6 @@ export default function AppearanceScreen() {
   );
 
   const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
-  const openChatModal = (pathname: string) => {
-    triggerHaptic('selection');
-    router.push({ pathname, params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any);
-  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -247,50 +242,8 @@ export default function AppearanceScreen() {
           {t('appearance.theme_hint')}
         </Text>
 
+        {/* No «Чаты» section: the chat look is in Settings → Настройки чатов (see the note at the top). */}
         <View style={{ paddingHorizontal: 16, marginTop: 18 }}>
-          <SettingsSection title={t('appearance.chats')}>
-            <SettingsRow
-              icon="wallpaper"
-              iconTint="teal"
-              label={t('chat_settings.background')}
-              value={chat.backgroundImage ? undefined : t('chat_settings.bg_none')}
-              valueNode={chat.backgroundImage ? <Feather name="check-circle" size={16} color={theme.colors.accent.primary} /> : undefined}
-              onPress={() => openChatModal('/settings/chat-background')}
-            />
-            <SettingsRow
-              icon="format-color-fill"
-              iconTint="pink"
-              label={t('chat_settings.message_color')}
-              valueNode={
-                <View
-                  style={[
-                    styles.swatch,
-                    { backgroundColor: (chatBubble && chatBubble.colors[0]) || theme.colors.accent.primary, borderColor: theme.colors.border.light },
-                  ]}
-                />
-              }
-              onPress={() => {
-                triggerHaptic('selection');
-                router.push('/settings/chat-bubble-color' as any);
-              }}
-            />
-            <SettingsRow
-              icon="rounded-corner"
-              iconTint="indigo"
-              label={t('chat_settings.bubble_radius')}
-              value={String(chat.bubbleRadius)}
-              onPress={() => openChatModal('/settings/chat-bubble-radius')}
-            />
-            <SettingsRow
-              icon="format-size"
-              iconTint="orange"
-              label={t('chat_settings.font_size')}
-              value={`${chat.fontSize} pt`}
-              onPress={() => openChatModal('/settings/chat-text-size')}
-              isLast
-            />
-          </SettingsSection>
-
           <SettingsSection title={t('appearance.interface')}>
             <SettingsRow
               icon="text-fields"
@@ -355,5 +308,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   thumbLabel: { marginTop: 6, fontSize: 12, maxWidth: THUMB_W + 8 },
-  swatch: { width: 22, height: 22, borderRadius: 11, borderWidth: StyleSheet.hairlineWidth },
 });
