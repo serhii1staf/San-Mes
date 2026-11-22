@@ -977,7 +977,7 @@ export default function AIChatScreen() {
           {/* Commands drawer — anchored ABOVE the input row, slides in via
               LayoutAnimation when toggled. Same pattern as Music chat. */}
           {commandsOpen ? (
-            <View style={{ marginBottom: 8, borderRadius: 18, overflow: 'hidden', ...(glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }) }}>
+            <View style={{ marginBottom: 8, borderRadius: 18, overflow: 'hidden', ...(glassActive ? { borderWidth: 0 } : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }) }}>
               {glassActive ? <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
               {COMMANDS.map((c, i) => (
                 <Pressable
@@ -1021,7 +1021,7 @@ export default function AIChatScreen() {
                   // fill/border and the clip so the interactive glass child
                   // can morph outward; otherwise the flat capsule is unchanged.
                   ...(glassActive
-                    ? null
+                    ? { borderWidth: 0 }
                     : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }),
                 }}
               >
@@ -1054,7 +1054,7 @@ export default function AIChatScreen() {
                     ...(commandsOpen
                       ? { backgroundColor: theme.colors.accent.primary, borderWidth: 1, borderColor: theme.colors.border.light }
                       : glassActive
-                        ? null
+                        ? { borderWidth: 0 }
                         : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }),
                   }}
                 >

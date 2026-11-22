@@ -314,6 +314,20 @@ class SanGlassView(context: Context, appContext: AppContext) : ExpoView(context,
         SanGlassStats.levelRecorded()
       }
     }
+    // ── A ROOT WITHOUT CONTENT MEANS THIS VIEW MUST BE REDRAWN TOO ───────────────────────────────
+    //
+    // This view's own display list draws `node` only if `node` had content when `onDraw` ran. The node
+    // loses its content when this view is detached (`onDetachedFromWindow` discards it) and when the
+    // render thread drops it, which it does to every node that leaves the drawn tree. Logged on the
+    // emulator: when a screen comes back (a chat closed over the profile, a tab shown again), every
+    // glass on it is drawn once BEFORE its first capture after the re-attach, so its display list is
+    // recorded without the node. Refilling the node alone never puts it back, because nothing
+    // invalidates this view: the glass kept only what is drawn over it (the tab bar's rim image) and
+    // lost its bend, tint and frost until something else redrew it (the app going to the background,
+    // a prop change). Brand-new views were spared only because a new node already forces a redraw.
+    // So a capture that finds the node empty redraws this view once: one extra frame per re-attach,
+    // none in steady state.
+    if (!n.hasDisplayList()) needsRedraw = true
     // The root lists the levels, each placed by its matrix. Re-recorded every frame: a handful of
     // operations, against the levels' content, which is what the reuse above saves.
     val canvas = n.beginRecording(w, h)
