@@ -896,10 +896,19 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
 const ProfileCapsuleAvatar = memo(function ProfileCapsuleAvatar({ fallbackColor, ringColor }: { fallbackColor: string; ringColor: string }) {
   const emoji = useAuthStore((s) => s.user?.emoji);
   const { isDownloading, downloadProgress, isUpdatePending } = useUpdates();
-  const [ringMounted, setRingMounted] = useState(isDownloading);
+  // ── A DOWNLOAD THAT FINISHED BEFORE THE TAB BAR APPEARED ──────────────────────────────────────────
+  //
+  // Reported: the ring "seems to have disappeared". The download at launch runs while the splash and
+  // the session restore are up, and when it is done before this mounts, `isDownloading` is never true
+  // here and the ring never showed. `isUpdatePending` at mount means exactly that case: an update
+  // downloaded at an earlier launch is the one running now, so a pending one came down in this launch.
+  // The ring then starts full, holds a moment so it can be seen, and fades back to the emoji; the
+  // update applies on the next start either way.
+  const [doneAtMount] = useState(!isDownloading && isUpdatePending);
+  const [ringMounted, setRingMounted] = useState(isDownloading || doneAtMount);
   // 0 = the account's emoji, 1 = the download arrow and ring.
-  const shown = useSharedValue(isDownloading ? 1 : 0);
-  const frac = useSharedValue(0);
+  const shown = useSharedValue(isDownloading || doneAtMount ? 1 : 0);
+  const frac = useSharedValue(doneAtMount ? 1 : 0);
   const spin = useSharedValue(0);
   // iOS does not report progress for the download it starts by itself at launch (only for
   // `fetchUpdateAsync`), so an unknown progress draws a fixed arc that just turns.
@@ -915,10 +924,11 @@ const ProfileCapsuleAvatar = memo(function ProfileCapsuleAvatar({ fallbackColor,
     // emoji. Nothing reloads: the update is applied on the next cold start (checkAutomatically ON_LOAD).
     const unmount = () => setRingMounted(false);
     if (isUpdatePending) frac.value = withTiming(1, { duration: 280 });
-    shown.value = withDelay(isUpdatePending ? 340 : 0, withTiming(0, { duration: 420 }, (finished) => {
+    const hold = doneAtMount ? 1600 : isUpdatePending ? 340 : 0;
+    shown.value = withDelay(hold, withTiming(0, { duration: 420 }, (finished) => {
       if (finished) runOnJS(unmount)();
     }));
-  }, [isDownloading, isUpdatePending, shown, frac]);
+  }, [isDownloading, isUpdatePending, doneAtMount, shown, frac]);
 
   useEffect(() => {
     if (!isDownloading) return;
