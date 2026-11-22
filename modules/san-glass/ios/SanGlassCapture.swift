@@ -9,6 +9,13 @@ struct SanGlassCaptureCounts {
   var rendered = 0
   /// Subtrees drawn whole because they use something this renderer does not reproduce itself.
   var whole = 0
+  /// Time inside `render(in:)` calls, and the single slowest one: what it drew and how long it took.
+  /// A diagnostic. On an iPhone a capture in a chat cost ~4.2 ms while the same work on the macOS probe,
+  /// big contents included, costs 0.01-0.05 ms, so the next snapshots name the layer responsible.
+  var renderTime: CFTimeInterval = 0
+  var slowestTime: CFTimeInterval = 0
+  /// Held only until the next capture resets the counts.
+  var slowestLayer: CALayer?
 }
 
 /// Draws what a layer tree shows inside one small rectangle, visiting only the parts of the tree that
@@ -95,7 +102,14 @@ final class SanGlassLayerCapture {
 
     if sublayers.isEmpty || Self.needsWholeRender(layer) {
       if layer.opacity < 0.999 { ctx.setAlpha(CGFloat(layer.opacity)) }
+      let started = CACurrentMediaTime()
       layer.render(in: ctx)
+      let took = CACurrentMediaTime() - started
+      counts.renderTime += took
+      if took > counts.slowestTime {
+        counts.slowestTime = took
+        counts.slowestLayer = layer
+      }
       counts.rendered += 1
       if !sublayers.isEmpty { counts.whole += 1 }
       return
@@ -129,6 +143,17 @@ final class SanGlassLayerCapture {
     ctx.restoreGState()
     Self.drawBorder(of: layer, in: ctx)
     if group { ctx.endTransparencyLayer() }
+  }
+
+  /// "RCTParagraphTextView 330x4000 contents +2": the view class owning the layer (or the layer class),
+  /// its size in points, whether it has contents, and how many sublayers it has.
+  static func describe(_ layer: CALayer) -> String {
+    let owner = layer.delegate.map { String(describing: type(of: $0)) } ?? String(describing: type(of: layer))
+    var text = "\(owner) \(Int(layer.bounds.width))x\(Int(layer.bounds.height))"
+    if layer.contents != nil { text += " contents" }
+    let children = layer.sublayers?.count ?? 0
+    if children > 0 { text += " +\(children)" }
+    return text
   }
 
   // MARK: Signature
@@ -237,12 +262,11 @@ final class SanGlassLayerCapture {
     mix(&h, t.ty)
   }
 
+  /// By identity, not by components: CGColor is immutable, so a different object is the only way a
+  /// colour can change, and reading `components` allocates an array per call. That was two arrays per
+  /// layer per signature. A new object with the same components costs one needless capture.
   static func mix(_ h: inout UInt64, color: CGColor?) {
-    guard let color = color, let components = color.components else {
-      mix(&h, UInt64(0x5A4E_0000_0000_0001))
-      return
-    }
-    for component in components { mix(&h, component) }
+    mix(&h, object: color)
   }
 
   static func mix(_ h: inout UInt64, object: AnyObject?) {

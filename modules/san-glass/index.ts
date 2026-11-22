@@ -82,6 +82,15 @@ export interface SanGlassStats {
    */
   skipsPerSecond?: number;
   signatureMsPerSecond?: number;
+  /**
+   * iOS (from build 104), diagnostics for where a capture's time goes: inside `render(in:)` per
+   * capture, the slowest single `render(in:)` and the layer it drew ("ViewClass WxH contents +N"),
+   * and capture buffers (re)allocated per second.
+   */
+  renderMsPerCapture?: number;
+  slowestRenderMs?: number;
+  slowestRender?: string;
+  buffersMadePerSecond?: number;
 }
 
 const nativeModule = requireOptionalNativeModule<SanGlassNativeModule>('SanGlass');

@@ -362,6 +362,8 @@ export function PerfMonitorPanel({ onClose }: Props) {
               {glass.skipsPerSecond != null
                 ? ` · ${t('perf.glass_skipped', 'skipped')} ${Math.round(glass.skipsPerSecond)}/s (${(glass.signatureMsPerSecond ?? 0).toFixed(1)} ${t('perf.ms_per_s', 'ms/s')})`
                 : ''}
+              {glass.renderMsPerCapture != null ? ` · render ${glass.renderMsPerCapture.toFixed(2)}` : ''}
+              {glass.slowestRender ? ` · ${glass.slowestRender} ${(glass.slowestRenderMs ?? 0).toFixed(1)}` : ''}
             </Text>
           ) : null}
         </View>

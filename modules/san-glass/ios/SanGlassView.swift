@@ -86,6 +86,11 @@ enum SanGlassStats {
   private static var whole = 0
   /// Ticks where the scene signature was unchanged, so no capture ran.
   private static var skips = 0
+  /// Inside `render(in:)`, summed; the slowest single call and what it drew; capture buffers made.
+  private static var renderTime: CFTimeInterval = 0
+  private static var slowestRender: CFTimeInterval = 0
+  private static var slowestRenderWhat = ""
+  private static var buffersMade = 0
   /// Time spent computing scene signatures (every tick that gets that far).
   private static var signatureTime: CFTimeInterval = 0
   private static var since = CACurrentMediaTime()
@@ -106,7 +111,16 @@ enum SanGlassStats {
     visited += counts.visited
     rendered += counts.rendered
     whole += counts.whole
+    renderTime += counts.renderTime
+    if counts.slowestTime > slowestRender, let layer = counts.slowestLayer {
+      slowestRender = counts.slowestTime
+      slowestRenderWhat = SanGlassLayerCapture.describe(layer)
+    }
     lock.unlock()
+  }
+
+  static func madeBuffers() {
+    lock.lock(); buffersMade += 1; lock.unlock()
   }
 
   static func drew() {
@@ -141,6 +155,12 @@ enum SanGlassStats {
       // Captures avoided because nothing beneath had changed, and what finding that out cost.
       "skipsPerSecond": Double(skips) / seconds,
       "signatureMsPerSecond": signatureTime * 1000 / seconds,
+      // Where a capture's time goes: inside render(in:) (the rest is buffers, context, fingerprint),
+      // and the slowest single render(in:) with the layer it drew.
+      "renderMsPerCapture": captures > 0 ? renderTime * 1000 / Double(captures) : 0,
+      "slowestRenderMs": slowestRender * 1000,
+      "slowestRender": slowestRenderWhat,
+      "buffersMadePerSecond": Double(buffersMade) / seconds,
     ]
   }
 
@@ -156,6 +176,10 @@ enum SanGlassStats {
     whole = 0
     skips = 0
     signatureTime = 0
+    renderTime = 0
+    slowestRender = 0
+    slowestRenderWhat = ""
+    buffersMade = 0
     since = CACurrentMediaTime()
     lock.unlock()
   }
@@ -223,9 +247,12 @@ public final class SanGlassView: ExpoView {
   /// The scene signature at the last capture, and when that capture ran.
   private var lastSignature: UInt64 = 0
   private var lastCaptureAt: CFTimeInterval = 0
+  /// Consecutive checked ticks on which the signature matched the last capture's.
+  private var quietTicks = 0
   /// How long an unchanged signature may go without a real capture: the longest a backing store
-  /// redrawn in place (which the signature cannot see) can take to show in the glass.
-  private static let backstopInterval: CFTimeInterval = 0.5
+  /// redrawn in place (which the signature cannot see) can take to show in the glass. 1 s since build
+  /// 104: at 0.5 s the backstop alone was 12 captures (50 ms of main thread) per second in a chat.
+  private static let backstopInterval: CFTimeInterval = 1.0
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -317,12 +344,23 @@ public final class SanGlassView: ExpoView {
     SanGlassStats.ticked()
 
     tickCount &+= 1
-    // Nothing beneath changed since the last capture: skip it, unless the backstop is due.
     let now = CACurrentMediaTime()
+    let backstopDue = now - lastCaptureAt >= Self.backstopInterval
+    // Quiet for half a second: look at the scene on every 4th frame only (15 Hz). Measured on an
+    // iPhone (build 103, a chat, 6 glass views), a signature costs ~0.3 ms and checking every frame
+    // was 99 ms of main thread per second, twice what the captures themselves cost. A change is
+    // then noticed within 3 frames, which is how fast the pre-103 idle sampling reacted, and checking
+    // goes back to every frame until it is quiet again.
+    if !dirty && !backstopDue && quietTicks >= 30 && tickCount % 4 != 0 {
+      SanGlassStats.signed(cost: 0, skipped: true)
+      return
+    }
+    // Nothing beneath changed since the last capture: skip it, unless the backstop is due.
     let signature = sceneSignature()
     let signed = CACurrentMediaTime()
     let unchanged = !dirty && signature == lastSignature
-    let skip = unchanged && now - lastCaptureAt < Self.backstopInterval
+    quietTicks = unchanged ? quietTicks + 1 : 0
+    let skip = unchanged && !backstopDue
     SanGlassStats.signed(cost: signed - now, skipped: skip)
     if skip { return }
     // While the scene moves, an expensive capture runs every other frame.
@@ -411,6 +449,7 @@ public final class SanGlassView: ExpoView {
       blurTarget = nil
       buffersValid = true
       dirty = true
+      SanGlassStats.madeBuffers()
     }
     bufferIndex = (bufferIndex + 1) % buffers.count
     let buffer = buffers[bufferIndex]
