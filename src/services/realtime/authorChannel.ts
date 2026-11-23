@@ -38,6 +38,7 @@ function applyProfileEdit(profileId: string, payload: Record<string, unknown>): 
   if (has('theme_id')) merged.theme_id = payload.theme_id ?? null;
   if (has('badge')) merged.badge = payload.badge ?? null;
   if (has('is_verified')) merged.is_verified = !!payload.is_verified;
+  if (has('screenshots_disabled')) merged.screenshots_disabled = !!payload.screenshots_disabled;
   // Stored the way the profile screen stores a fetched profile: links as a JSON string, the
   // header scene as text.
   if (has('links')) merged.links = payload.links == null ? null : JSON.stringify(payload.links);

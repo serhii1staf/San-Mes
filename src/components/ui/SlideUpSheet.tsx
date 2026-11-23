@@ -64,6 +64,12 @@ interface SlideUpSheetProps {
    * Default is on. The grabber still drags to dismiss either way.
    */
   expandable?: boolean;
+  /**
+   * Fixed colours for a sheet shown over a screen that has its own palette instead of the app theme
+   * (sign-up is always dark). Default: the theme's.
+   */
+  cardColor?: string;
+  grabberColor?: string;
 }
 
 /**
@@ -119,7 +125,15 @@ export function SlideUpSheet(props: SlideUpSheetProps) {
   return <SlideUpSheetBody {...props} />;
 }
 
-function SlideUpSheetBody({ visible, onClose, children, exitInstantRef, expandable = true }: SlideUpSheetProps) {
+function SlideUpSheetBody({
+  visible,
+  onClose,
+  children,
+  exitInstantRef,
+  expandable = true,
+  cardColor,
+  grabberColor,
+}: SlideUpSheetProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   /** Vertical offset from the resting detent. 0 = at rest, SCREEN_HEIGHT = off screen. */
@@ -307,7 +321,7 @@ function SlideUpSheetBody({ visible, onClose, children, exitInstantRef, expandab
               style={[
                 styles.card,
                 {
-                  backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF',
+                  backgroundColor: cardColor ?? (theme.isDark ? theme.colors.background.elevated : '#FFFFFF'),
                 },
                 cardStyle,
               ]}
@@ -319,7 +333,7 @@ function SlideUpSheetBody({ visible, onClose, children, exitInstantRef, expandab
                   <View
                     style={[
                       styles.grabber,
-                      { backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' },
+                      { backgroundColor: grabberColor ?? (theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') },
                     ]}
                   />
                 </View>

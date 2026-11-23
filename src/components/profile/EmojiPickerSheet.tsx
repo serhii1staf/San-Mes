@@ -165,20 +165,39 @@ function cellText(size: number) {
   return s;
 }
 
+/**
+ * Colours for a host screen that does not follow the app theme. Sign-up is always dark, and the old
+ * picker it used (`EmojiPickerModal`) neither matched that screen nor this sheet.
+ */
+export interface EmojiSheetPalette {
+  card: string;
+  grabber: string;
+  title: string;
+  header: string;
+  cellIdle: string;
+  cellActive: string;
+  /** Selection ring and the preview's ring. */
+  accent: string;
+  previewBg: string;
+}
+
 export function EmojiPickerSheet({
   visible,
   selected,
   onPick,
   onClose,
+  palette,
 }: {
   visible: boolean;
   selected: string;
   onPick: (emoji: string) => void;
   onClose: () => void;
+  palette?: EmojiSheetPalette;
 }) {
   const theme = useTheme();
   const t = useT();
-  const accent = theme.colors.accent.primary;
+  const accent = palette?.accent ?? theme.colors.accent.primary;
+  const headerColor = palette?.header ?? theme.colors.text.secondary;
 
   // Seven cells across whatever width the floating sheet has; the rounding remainder goes into the
   // side padding so the grid sits centred while short rows still start at the left.
@@ -190,15 +209,15 @@ export function EmojiPickerSheet({
   const rowH = cell + GAP;
   const listH = Math.round(Math.min(Dimensions.get('window').height * 0.45, HEADER_H + rowH * 7));
 
-  const idleBg = theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
-  const activeBg = accent + '30';
+  const idleBg = palette?.cellIdle ?? (theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)');
+  const activeBg = palette?.cellActive ?? accent + '30';
 
   const renderItem = useCallback<ListRenderItem<Row>>(
     ({ item }) => {
       if (item.kind === 'header') {
         return (
           <View style={styles.header}>
-            <Text variant="caption" weight="semibold" color={theme.colors.text.secondary}>
+            <Text variant="caption" weight="semibold" color={headerColor}>
               {t(item.titleKey)}
             </Text>
           </View>
@@ -221,7 +240,7 @@ export function EmojiPickerSheet({
         </View>
       );
     },
-    [accent, activeBg, cell, idleBg, onPick, rowH, selected, t, theme.colors.text.secondary],
+    [accent, activeBg, cell, headerColor, idleBg, onPick, rowH, selected, t],
   );
 
   // Fixed heights, so the list never measures a row and can jump straight to any offset.
@@ -235,11 +254,11 @@ export function EmojiPickerSheet({
   );
 
   return (
-    <SlideUpSheet visible={visible} onClose={onClose}>
-      <Text variant="body" weight="semibold" align="center" style={styles.title}>
+    <SlideUpSheet visible={visible} onClose={onClose} cardColor={palette?.card} grabberColor={palette?.grabber}>
+      <Text variant="body" weight="semibold" align="center" color={palette?.title} style={styles.title}>
         {t('edit_profile.emoji_title')}
       </Text>
-      <View style={[styles.preview, { borderColor: accent, backgroundColor: accent + '15' }]}>
+      <View style={[styles.preview, { borderColor: accent, backgroundColor: palette?.previewBg ?? accent + '15' }]}>
         <RNText style={styles.previewText} allowFontScaling={false}>
           {selected}
         </RNText>

@@ -42,7 +42,8 @@ import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Text } from '../../src/components/ui';
-import { EmojiPickerModal } from '../../src/components/ui/EmojiPickerModal';
+import { EmojiPickerSheet, type EmojiSheetPalette } from '../../src/components/profile/EmojiPickerSheet';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 import { AuthBackdrop } from '../../src/components/auth/AuthBackdrop';
 import {
   Appear,
@@ -77,6 +78,20 @@ type Mode = 'welcome' | 'login' | 'register';
 type Step = 'key' | 'pin' | 'name' | 'emoji' | 'newPin' | 'confirm' | 'reveal';
 const REGISTER_STEPS: Step[] = ['name', 'emoji', 'newPin', 'confirm', 'reveal'];
 const QUICK_EMOJI = ['😎', '🦊', '🐼', '🌸', '🔥', '🚀', '🐱', '👾'];
+/**
+ * «Другой эмодзи» opens the same sheet as the profile editor, in this screen's dark palette. It used
+ * `EmojiPickerModal`, an older design that mounted every cell at once and so opened with a stall.
+ */
+const EMOJI_SHEET_PALETTE: EmojiSheetPalette = {
+  card: '#141416',
+  grabber: 'rgba(255,255,255,0.18)',
+  title: AUTH.text,
+  header: AUTH.text2,
+  cellIdle: AUTH.field,
+  cellActive: 'rgba(255,255,255,0.16)',
+  accent: '#FFFFFF',
+  previewBg: 'rgba(255,255,255,0.08)',
+};
 
 const BANNED_WORDS = [
   'fuck', 'shit', 'ass', 'bitch', 'dick', 'cock', 'pussy', 'nigger', 'nigga',
@@ -140,6 +155,13 @@ export default function AuthScreen() {
   const [newKey, setNewKey] = useState('');
   const [copied, setCopied] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Stable, because the sheet's cells are memoised on them. Picking only flips `visible`; the sheet
+  // runs its own close and calls `onClose` once it is gone, so there is exactly one exit animation.
+  const closePicker = useCallback(() => setPickerOpen(false), []);
+  const onPickEmoji = useCallback((e: string) => {
+    setEmoji(e);
+    setPickerOpen(false);
+  }, []);
 
   const keyRef = useRef<TextInput>(null);
   const nameRef = useRef<TextInput>(null);
@@ -335,6 +357,7 @@ export default function AuthScreen() {
       is_verified: profile.is_verified || false,
       bannerUrl: profile.banner_url || undefined,
       links: profile.links || undefined,
+      screenshots_disabled: !!(profile as any).screenshots_disabled,
     });
     router.replace('/(tabs)');
   }, [busy, keyRaw, signIn, t]);
@@ -661,7 +684,13 @@ export default function AuthScreen() {
         </>
       ) : null}
 
-      <EmojiPickerModal visible={pickerOpen} onClose={() => setPickerOpen(false)} onSelect={(e) => { setEmoji(e); setPickerOpen(false); }} />
+      <EmojiPickerSheet
+        visible={pickerOpen}
+        selected={emoji}
+        onPick={onPickEmoji}
+        onClose={closePicker}
+        palette={EMOJI_SHEET_PALETTE}
+      />
     </View>
   );
 }
@@ -740,7 +769,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emojiBig: { fontSize: 56 },
+  // emojiTextStyle, not a bare fontSize: a colour emoji is taller than its point size, and on some
+  // Android phones the default line box cut its top off. See src/components/ui/emojiText.ts.
+  emojiBig: emojiTextStyle(56),
   quickGrid: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   quick: {
     width: 42,
@@ -753,7 +784,7 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   quickOn: { borderColor: '#FFFFFF' },
-  quickText: { fontSize: 22 },
+  quickText: emojiTextStyle(22),
   keyBox: {
     borderRadius: 20,
     backgroundColor: AUTH.field,

@@ -28,7 +28,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { AppPreview } from '../../src/components/settings/AppPreview';
-import { SettingsRow, SettingsSection } from '../../src/components/settings/SettingsList';
 import { useThemeStore, ACCENT_COLORS, type ThemeMode } from '../../src/store/themeStore';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -242,21 +241,9 @@ export default function AppearanceScreen() {
           {t('appearance.theme_hint')}
         </Text>
 
-        {/* No «Чаты» section: the chat look is in Settings → Настройки чатов (see the note at the top). */}
-        <View style={{ paddingHorizontal: 16, marginTop: 18 }}>
-          <SettingsSection title={t('appearance.interface')}>
-            <SettingsRow
-              icon="text-fields"
-              iconTint="blue"
-              label={t('settings.fonts')}
-              onPress={() => {
-                triggerHaptic('selection');
-                router.push('/settings/fonts' as any);
-              }}
-              isLast
-            />
-          </SettingsSection>
-        </View>
+        {/* No «Чаты» section: the chat look is in Settings → Настройки чатов (see the note at the top).
+            And no «Интерфейс» → «Шрифты» row any more: it was the same screen as the «Шрифты» row
+            directly under «Оформление» in Settings, so the two read as a duplicate. */}
       </ScrollView>
     </View>
   );

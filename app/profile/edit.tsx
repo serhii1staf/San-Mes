@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, ScrollView, Pressable, StyleSheet, Text as RNText, Dimensions, Switch, Platform } from 'react-native';
+import { View, ScrollView, Pressable, StyleSheet, Text as RNText, Dimensions, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,7 +9,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { SettingsRow, SettingsSection } from '../../src/components/settings/SettingsList';
+import { SettingsSection } from '../../src/components/settings/SettingsList';
 import {
   EditorAddLinkRow,
   EditorField,
@@ -70,7 +70,7 @@ export default function EditProfileScreen() {
   // user asks to edit, and only then becomes "Сохранить".
   //
   // The reason this needs care: the text fields are not the only things on this screen that mutate
-  // state. The emoji picker, the banner, the links and the screenshot toggle all do. If `isEditing`
+  // state. The emoji picker, the banner and the links all do. If `isEditing`
   // gated ONLY the pill's label, a user who changed their banner without first tapping "Изменить"
   // would have no Save button and no way to persist it — the change would look accepted and then be
   // silently discarded on back.
@@ -91,13 +91,9 @@ export default function EditProfileScreen() {
   // Resolved once so both the glass and the BlurView branch of the header pill render the same string
   // — they are two copies of the same pill and previously each inlined the label expression.
   const headerActionLabel = isSaving ? '...' : t('common.done');
-  // Owner-controlled screenshot lock — travels with the account. When ON,
-  // anyone VIEWING this profile / chatting with this user gets capture
-  // protection (Android: blocked outright; iOS: recording blocked + the
-  // 🙈 shield flashes on a still screenshot).
-  const [screenshotsDisabled, setScreenshotsDisabled] = useState<boolean>(
-    !!(user as any)?.screenshots_disabled,
-  );
+  // The screenshot lock used to be a row here. It moved to Settings → Безопасность, where it saves
+  // the moment it is switched (asked: "как будто ей не там место"; this screen is about the
+  // profile's content, and the lock is an account setting).
   // Banner: separate the underlying image URL from the position/zoom
   // transform. The user.bannerUrl string may already carry an
   // `#x=&y=&s=` hash from a prior save — split it on mount so the
@@ -188,7 +184,6 @@ export default function EditProfileScreen() {
       username !== displayUser.username ||
       selectedEmoji !== (displayUser.emoji || '😊') ||
       JSON.stringify(links) !== initialLinks ||
-      screenshotsDisabled !== !!(user as any)?.screenshots_disabled ||
       (bannerUri ? serializeBannerTransform(bannerUri, bannerTransform) : undefined) !== (initialBanner || undefined);
     if (!dirty) {
       router.back();
@@ -261,7 +256,6 @@ export default function EditProfileScreen() {
         emoji: selectedEmoji,
         links,
         bannerUrl: localBannerUrl,
-        screenshots_disabled: screenshotsDisabled,
       });
 
       if (user?.id) {
@@ -286,7 +280,6 @@ export default function EditProfileScreen() {
           emoji: selectedEmoji,
           banner_url: persistedUrl || undefined,
           links: links.length > 0 ? links : [],
-          screenshots_disabled: screenshotsDisabled,
         });
 
         if (persistedUrl && persistedUrl !== localBannerUrl) {
@@ -352,7 +345,6 @@ export default function EditProfileScreen() {
 
   const bgPrimary = theme.colors.background.primary;
   const bgElevated = theme.colors.background.elevated;
-  const switchOffTrack = theme.isDark ? '#48484A' : '#E5E5EA';
   const accent = theme.colors.accent.primary;
 
   return (
@@ -522,10 +514,9 @@ export default function EditProfileScreen() {
             Asked for: the fields looked "очень по-старому". They were three outlined boxes, one per
             field, each with its own 1.5 pt border. Now they are the settings screens' grouped cards
             (`SettingsSection`): name and username share one card with a hairline between them, the
-            bio has its own with a character counter, links are rows with the service's own tile, and
-            the privacy switch is an ordinary settings row with its explanation underneath. No outlines
-            anywhere: the card is the container, and a focused field shows it by its caption taking the
-            accent colour. */}
+            bio has its own with a character counter, and links are rows with the service's own tile.
+            No outlines anywhere: the card is the container, and a focused field shows it by its
+            caption taking the accent colour. */}
         <View style={styles.form}>
           <SettingsSection>
             <EditorField
@@ -583,30 +574,6 @@ export default function EditProfileScreen() {
                 <EditorAddLinkRow label={t('edit_profile.add_link')} onPress={handleAddLink} />
               </>
             ) : null}
-          </SettingsSection>
-
-          {/* Privacy — owner-controlled screenshot lock. Per-account: the flag is saved on the profile
-              row and read by anyone viewing this account, so no per-second polling. */}
-          <SettingsSection footer={t('settings.screenshots_disabled_desc', 'Stop others from screenshotting or recording your profile and chats')}>
-            <SettingsRow
-              icon="no-photography"
-              iconTint="red"
-              label={t('settings.screenshots_disabled', 'Disable screenshots')}
-              labelLines={2}
-              showChevron={false}
-              rightElement={
-                <Switch
-                  value={screenshotsDisabled}
-                  onValueChange={setScreenshotsDisabled}
-                  // iOS system greys for the off track: `border.light` is the card's own colour in
-                  // the dark palette, which made the switch's track vanish into the row.
-                  trackColor={{ false: switchOffTrack, true: accent }}
-                  ios_backgroundColor={switchOffTrack}
-                  thumbColor="#FFFFFF"
-                />
-              }
-              isLast
-            />
           </SettingsSection>
         </View>
       </ScrollView>

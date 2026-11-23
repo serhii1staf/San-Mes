@@ -39,7 +39,13 @@ import { validateThemeId } from '../themeIds';
 // `header_scene` is deliberately absent — the live database has no such column and naming it
 // fails the whole query. See the long note on `PROFILE_AUTH_COLUMNS` in routes/auth.ts for the
 // full reason and for how to restore it after applying migration 0003.
-const PROFILE_PUBLIC_COLUMNS = `id, username, display_name, emoji, bio, banner_url, links, badge, is_verified, created_at, updated_at, theme_id`;
+//
+// `screenshots_disabled` is public on purpose: it is enforced on the VIEWER's device, so every viewer
+// has to be told. It was missing from every projection, so the owner's own toggle read back as
+// `false` on each launch and foreground ("включаю, но она всё время выключается"), and viewers
+// never saw it at all. The column has existed in the live table all along (verified with
+// `pragma_table_info('profiles')` on 2026-11-23); only the Worker ignored it.
+const PROFILE_PUBLIC_COLUMNS = `id, username, display_name, emoji, bio, banner_url, links, badge, is_verified, created_at, updated_at, theme_id, screenshots_disabled`;
 
 /**
  * Public columns plus `device_key`. Only for callers that have already PROVEN they
@@ -531,6 +537,14 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
     // Compare against the boolean projection that callers actually see.
     const prev = !!current?.is_verified;
     if (prev !== v.is_verified) delta['is_verified'] = v.is_verified;
+  }
+  // The owner's screenshot lock. Rides the realtime delta like any other public field, so a viewer
+  // who has this profile or chat open starts (or stops) protecting it without reopening.
+  if (typeof v.screenshots_disabled === 'boolean') {
+    sets.push('screenshots_disabled = ?');
+    binds.push(v.screenshots_disabled ? 1 : 0);
+    const prev = !!current?.screenshots_disabled;
+    if (prev !== v.screenshots_disabled) delta['screenshots_disabled'] = v.screenshots_disabled;
   }
 
   // Username has its own uniqueness gate.
