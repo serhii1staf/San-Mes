@@ -153,6 +153,12 @@ export interface SanGlassLayerProps extends GlassCorners {
   dark: boolean;
   strength?: number;
   tintColor?: string;
+  /**
+   * A small control (a button, a pill, a field), not a panel or a backdrop. On Android its frosted look
+   * is drawn as clear glass under a heavier tint instead of a flat fill. See "ANDROID: FROSTED AND
+   * SCRIM GLASS ARE A FLAT FILL" below. No effect on iOS.
+   */
+  control?: boolean;
 }
 
 // ── ANDROID: FROSTED AND SCRIM GLASS ARE A FLAT FILL ─────────────────────────────
@@ -168,7 +174,33 @@ export interface SanGlassLayerProps extends GlassCorners {
 // top. Clear glass (the tab bar's lens, buttons and pills) stays real glass: it is cheap, because its
 // middle is the live content and only the rim band is drawn. iOS is unchanged. Approved by the owner
 // as "variant A".
+//
+// ── EXCEPT THAT SMALL CONTROLS GET THE GLASS'S LIT RIM ──────────────────────────────────────────
+//
+// Reported (Nov 2026): on Android only the bottom navigation looks like glass; the chat's header
+// buttons and the composer do not. They are frosted, so they were the flat fill. What makes the tab
+// bar read as glass is mostly glisse's lit rim. A control (`control`: every `NativeGlassView` and the
+// small `GlassBg` pills) is now a slightly see-through fill with that rim on top, drawn by our glass
+// with no bend and no blur: the native view then strokes the rim itself, with the shader's formula, and
+// records nothing from beneath (SanGlassView.kt, "NO BEND, NO BLUR").
+//
+// Measured on a chat scroll on the emulator, three interleaved runs each, frames over 17 / 33 ms in
+// 120: flat controls 85-91 / 8-19, rim controls 81-105 / 7-17, the same. Two other ways were measured
+// and rejected: real clear glass on the six controls (106-119 / 18-27), and the rim drawn by the
+// glass's runtime shader (101-116 / 18-41), which costs an offscreen layer per view every frame.
+// Panels, menus, sheets and every blur surface keep the flat fill.
 const FLAT_FROST = Platform.OS === 'android';
+
+/**
+ * The body of a frosted control on Android: the chrome fill a little lighter than a panel's (the rim
+ * on top marks the edge, so the hairline is not needed), still opaque enough for the icon or text on it.
+ */
+function androidControlBody(dark: boolean, strength = 0.6): ViewStyle {
+  const s = Math.max(0, Math.min(1, strength));
+  return dark
+    ? { backgroundColor: `rgba(28,28,32,${(0.66 + 0.2 * s).toFixed(3)})` }
+    : { backgroundColor: `rgba(255,255,255,${(0.7 + 0.2 * s).toFixed(3)})`, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.12)' };
+}
 
 function flatRadii(cornerRadius?: number, cornerRadii?: [number, number, number, number]): ViewStyle {
   if (cornerRadii) {
@@ -183,7 +215,30 @@ function flatRadii(cornerRadius?: number, cornerRadii?: [number, number, number,
 }
 
 /** The glass alone, filling its parent. Draws its own rounding; nothing inside it. */
-export const SanGlassLayer = React.memo(function SanGlassLayer({ kind, dark, strength, tintColor, cornerRadius, cornerRadii }: SanGlassLayerProps) {
+export const SanGlassLayer = React.memo(function SanGlassLayer({ kind, dark, strength, tintColor, cornerRadius, cornerRadii, control }: SanGlassLayerProps) {
+  if (FLAT_FROST && kind === 'frosted' && control) {
+    // The body is a plain view, so a control is never left without one; the glass on top draws only
+    // the lit rim (no bend, no blur, no tint), which reads nothing beneath it.
+    const radii = flatRadii(cornerRadius, cornerRadii);
+    return (
+      <>
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, radii, androidControlBody(dark, strength)]}>
+          {tintColor ? <View style={[StyleSheet.absoluteFill, radii, { backgroundColor: tintColor }]} /> : null}
+        </View>
+        <SanGlassView
+          style={StyleSheet.absoluteFill}
+          cornerRadius={cornerRadii ? undefined : cornerRadius ?? 0}
+          cornerRadii={cornerRadii}
+          bend={0}
+          dispersion={0}
+          frost={0}
+          saturation={1}
+          shine={1}
+          blur={0}
+        />
+      </>
+    );
+  }
   if (FLAT_FROST && kind !== 'clear') {
     const radii = flatRadii(cornerRadius, cornerRadii);
     // `strength` is 0..1 (a blur's intensity / 100); the surface curve takes the intensity itself.
@@ -217,6 +272,8 @@ export interface SanGlassBoxProps extends ViewProps {
   dark: boolean;
   strength?: number;
   tintColor?: string;
+  /** See `SanGlassLayerProps.control`. */
+  control?: boolean;
   children?: React.ReactNode;
 }
 
@@ -225,11 +282,11 @@ export interface SanGlassBoxProps extends ViewProps {
  * the surface it replaces was. The glass is a sibling of the content, never its parent, so nothing on
  * the surface is bent or blurred, and it takes its corners from `style`.
  */
-export function SanGlassBox({ style, kind, dark, strength, tintColor, children, ...rest }: SanGlassBoxProps) {
+export function SanGlassBox({ style, kind, dark, strength, tintColor, control, children, ...rest }: SanGlassBoxProps) {
   const corners = cornersFromStyle(style);
   return (
     <View style={style} {...rest}>
-      <SanGlassLayer kind={kind} dark={dark} strength={strength} tintColor={tintColor} {...corners} />
+      <SanGlassLayer kind={kind} dark={dark} strength={strength} tintColor={tintColor} control={control} {...corners} />
       {children}
     </View>
   );

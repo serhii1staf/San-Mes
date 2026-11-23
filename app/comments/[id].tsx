@@ -1987,7 +1987,7 @@ export default function CommentsScreen() {
           <TypingIndicator channelName={typingChannel} />
           {editing ? (
             <View style={[{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 6, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 12, overflow: 'hidden' }, glassActive ? { borderWidth: 0 } : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
-              {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
+              {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" control interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
               <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
               <View style={{ flex: 1 }}>
                 <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>{t('comments.editing')}</Text>
@@ -1999,7 +1999,7 @@ export default function CommentsScreen() {
             </View>
           ) : replyTo ? (
             <View style={[{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 6, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 12, overflow: 'hidden' }, glassActive ? { borderWidth: 0 } : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
-              {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
+              {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" control interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
               <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
               {(() => {
                 const rb = parseReply(replyTo.content || '').body;

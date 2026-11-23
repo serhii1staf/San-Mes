@@ -7503,7 +7503,7 @@ export default function ChatScreen() {
         <TypingIndicator channelName={typingChannel} />
         {banner && (
           <View style={[{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden' }, glassActive ? { borderWidth: 0 } : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
-            {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
+            {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" control interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
             <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
             <MaterialIcons name={editing ? 'edit' : 'reply'} size={15} color={theme.colors.accent.primary} />
             {banner.imageUrls && banner.imageUrls.length > 0 ? (
@@ -7865,6 +7865,7 @@ export default function ChatScreen() {
                     <GlassBg
                       borderRadius={22}
                       glassStyle={peerBannerUrl ? 'clear' : 'regular'}
+                      control
                       colorScheme={theme.isDark ? 'dark' : 'light'}
                       interactive={false}
                     />
@@ -8233,7 +8234,7 @@ const SearchActionBar = React.memo(function SearchActionBar({
       ]}
     >
       {glassActive ? (
-        <GlassBg borderRadius={22} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
+        <GlassBg borderRadius={22} glassStyle="regular" control interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
       ) : null}
       <SearchActionButton
         icon={isPinned ? 'cancel' : 'bookmark'}
@@ -8290,7 +8291,7 @@ const PinnedMessageBar = React.memo(function PinnedMessageBar({
         ]}
       >
         {glassActive ? (
-          <GlassBg borderRadius={14} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
+          <GlassBg borderRadius={14} glassStyle="regular" control interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
         ) : null}
         <View style={[styles.pinnedAccent, { backgroundColor: theme.colors.accent.primary }]} />
         <MaterialIcons name="bookmark" size={14} color={theme.colors.accent.primary} />
