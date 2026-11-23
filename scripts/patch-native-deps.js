@@ -45,10 +45,11 @@ patchFile('fmt FMT_USE_CONSTEVAL', 'node_modules/react-native/ReactCommon/fmt/in
 //
 // React Native updates a ScrollView's Fabric state (its content offset) on EVERY scroll frame, on
 // both platforms (Android ReactScrollViewHelper.updateStateOnScrollChanged, iOS
-// RCTScrollViewComponentView scrollViewDidScroll). Each update is a shadow tree commit on the UI
-// thread. Reanimated 4.1's ReanimatedCommitHook treats every commit it did not make itself like a
-// React commit: it collects the props of EVERY view it has ever animated and clones them into the
-// new tree, so each scroll frame became one prop update per animated view on the UI thread.
+// RCTScrollViewComponentView scrollViewDidScroll). Each update is queued (EventQueue) and committed
+// to the shadow tree on the JS thread. Reanimated 4.1's ReanimatedCommitHook treats every commit it
+// did not make itself like a React commit: it collects the props of EVERY view it has ever animated
+// and clones them into the new tree, so each scroll frame cost that clone on the JS thread and one
+// prop update per animated view on the UI thread when the result was mounted.
 //
 // Traced on the Android emulator (atrace, Nov 2026): scrolling Settings, a batch of 9 UPDATE_PROPS
 // after every state update, 3-10 ms each, 93 of 96 frames over 17 ms; scrolling a chat, batches of
@@ -57,8 +58,10 @@ patchFile('fmt FMT_USE_CONSTEVAL', 'node_modules/react-native/ReactCommon/fmt/in
 // A state update clones the CURRENT tree, which already holds every animated prop Reanimated has
 // committed, so it needs none re-applied. Only React commits (source React) can carry stale props
 // for an animated view; they still get them. Updates Reanimated holds back while its commits are
-// paused are not cancelled here, so it commits them itself when the pause ends. State updates are
-// committed on the UI thread, Reanimated's own thread, so they do not pause it either.
+// paused are not cancelled here, so it commits them itself when the pause ends. Nor do state updates
+// pause it: the pause keeps Reanimated's frame-by-frame commits from making a long React commit retry,
+// and a state update is a short commit (the scroll view's ancestors cloned), cheap to retry if one
+// of Reanimated's lands first.
 patchFile('reanimated commit hook', 'node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/ReanimatedCommitHook.cpp', (src) => {
   const marker = '[san-mes] native state updates';
   if (src.includes(marker)) return null;
