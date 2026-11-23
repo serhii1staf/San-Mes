@@ -45,8 +45,11 @@ export interface MessageGestureParams<T extends { id: string }> {
   onReply: (m: T) => void;
   /** Fired (once on activate / once on end) so the parent can lock FlatList scroll. */
   onSwipeActive: (active: boolean) => void;
-  /** Fired (once, on long-press activation) to open the context menu. */
-  onLongPress: (m: T) => void;
+  /**
+   * Fired (once, on long-press activation) to open the context menu, with the bubble's animated ref:
+   * the menu snapshots that view when the message cannot be shown whole where it is.
+   */
+  onLongPress: (m: T, bubble?: unknown) => void;
   /** Fired (once, on long-press activation) with this bubble's window rect. */
   onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void;
   /** Fired (once, on release over a highlighted action row) to run that action. */
@@ -59,6 +62,8 @@ export interface MessageGestureParams<T extends { id: string }> {
   actionZones: SharedValue<ActionZone[]>;
   /** Id of the message whose menu is open (written by the screen); that bubble lifts a little. */
   heldId?: SharedValue<string>;
+  /** Id of the message the menu shows as a snapshot (written by the screen); that bubble is hidden. */
+  hiddenId?: SharedValue<string>;
 }
 
 export function useMessageGestures<T extends { id: string }>({
@@ -73,6 +78,7 @@ export function useMessageGestures<T extends { id: string }>({
   hoveredAction,
   actionZones,
   heldId,
+  hiddenId,
 }: MessageGestureParams<T>) {
   // Animated ref so the LongPress gesture can measure this bubble's window rect
   // on the UI thread — used to spawn the emoji "dissolve" burst at the right
@@ -154,7 +160,7 @@ export function useMessageGestures<T extends { id: string }>({
     }
   }, [message, idSV]);
   const fireReply = useCallback(() => onReply(messageRef.current), [onReply]);
-  const fireLongPress = useCallback(() => onLongPress(messageRef.current), [onLongPress]);
+  const fireLongPress = useCallback(() => onLongPress(messageRef.current, bubbleRef), [onLongPress, bubbleRef]);
   const fireMeasured = useCallback(
     (x: number, y: number, w: number, h: number) => onMeasured?.(messageRef.current.id, x, y, w, h),
     [onMeasured],
@@ -182,7 +188,7 @@ export function useMessageGestures<T extends { id: string }>({
         .failOffsetY([-10, 10])
         .onStart(() => {
           'worklet';
-          swipeFlagsSV.value = (swipeFlagsSV.value & LIFTED) | SWIPE_MOVED | SWIPE_ACTIVE;
+          swipeFlagsSV.value = (swipeFlagsSV.value & (LIFTED | HIDDEN)) | SWIPE_MOVED | SWIPE_ACTIVE;
           // Mount the reply icon now — see the note on `replyIconArmed`. One hop per gesture, not
           // per frame, and it lands ~12 pt of travel before the icon's opacity ramp leaves zero.
           runOnJS(armReplyIcon)();
@@ -215,7 +221,7 @@ export function useMessageGestures<T extends { id: string }>({
             translateXSV.value = withSpring(0, { damping: 20, stiffness: 220, mass: 0.8 });
           }
           const flags = swipeFlagsSV.value;
-          const kept = flags & (SWIPE_MOVED | LIFTED);
+          const kept = flags & (SWIPE_MOVED | LIFTED | HIDDEN);
           if (kept !== flags) swipeFlagsSV.value = kept;
           if ((flags & SWIPE_ACTIVE) !== 0) runOnJS(onSwipeActive)(false);
         }),
@@ -330,15 +336,27 @@ export function useMessageGestures<T extends { id: string }>({
   // `LIFTED` is set here, the first time the bubble is held, rather than by the long-press gesture:
   // `heldId` follows the menu, and the menu decides whether a hold counts. Writing it re-runs the
   // mappers once, and the second run returns the same spring.
+  //
+  // `hiddenId`: while the menu shows a snapshot of this bubble (a message that could not be shown
+  // whole where it is), the bubble itself is hidden, at once, so the snapshot is the only copy on
+  // screen. Same once-set rule, flag `HIDDEN`: from then on the style always carries `opacity`.
   const liftStyle = useAnimatedStyle(() => {
     if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return {};
     const held = !!heldId && heldId.value === idSV.value;
-    const flags = swipeFlagsSV.value;
-    if ((flags & LIFTED) === 0) {
-      if (!held) return {};
-      swipeFlagsSV.value = flags | LIFTED;
+    const hidden = !!hiddenId && hiddenId.value === idSV.value;
+    let flags = swipeFlagsSV.value;
+    if ((flags & (LIFTED | HIDDEN)) === 0 && !held && !hidden) return {};
+    const want = flags | (held ? LIFTED : 0) | (hidden ? HIDDEN : 0);
+    if (want !== flags) {
+      swipeFlagsSV.value = want;
+      flags = want;
     }
-    return { transform: [{ scale: withSpring(held ? 1.04 : 1, { damping: 15, stiffness: 260, mass: 0.7 }) }] };
+    const style: { transform?: { scale: number }[]; opacity?: number } = {};
+    if ((flags & LIFTED) !== 0) {
+      style.transform = [{ scale: withSpring(held ? 1.04 : 1, { damping: 15, stiffness: 260, mass: 0.7 }) }];
+    }
+    if ((flags & HIDDEN) !== 0) style.opacity = hidden ? 0 : 1;
+    return style;
   });
   // The reply icon's opacity ramp is built by `useReplyIconStyle`, inside the icon, which is only
   // mounted once a swipe has armed it (`replyIconArmed`). It used to be built here, so every bubble
@@ -347,13 +365,15 @@ export function useMessageGestures<T extends { id: string }>({
   return { bubbleRef, composedGesture, bubbleAnimStyle, translateX: translateXSV, replyIconArmed, liftStyle };
 }
 
-/** Bits of `swipeFlagsSV`. The first two are cleared when a swipe ends, the last two never. */
+/** Bits of `swipeFlagsSV`. The first two are cleared when a swipe ends, the others never. */
 const SWIPE_HAPTIC_FIRED = 1;
 const SWIPE_ACTIVE = 2;
 /** The row has been swiped, so its style writes `translateX` from now on. */
 const SWIPE_MOVED = 4;
 /** The bubble has been lifted by a held menu, so its style writes `scale` from now on. */
 const LIFTED = 8;
+/** The bubble has been hidden behind a menu's snapshot of it, so its style writes `opacity` from now on. */
+const HIDDEN = 16;
 
 /**
  * The swipe-to-reply icon's opacity ramp: invisible until 24 px of travel, fully opaque at the commit

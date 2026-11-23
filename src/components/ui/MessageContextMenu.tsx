@@ -50,10 +50,17 @@ interface MessageContextMenuProps {
   actionZones?: SharedValue<ActionZone[]>;
   /** Window band between the chat header and the composer; the lit cut-out is clipped to it. */
   visibleBounds?: { top: number; bottom: number };
+  /** The held bubble's view, for a snapshot when it cannot be shown whole (see `ActionMenu`). */
+  captureHeld?: () => unknown;
+  /** The snapshot's progress, with the held message's id (see `ActionMenu.onHeldPreview`). */
+  onHeldPreview?: (state: 'planned' | 'shown' | 'failed' | 'gone', messageId: string) => void;
 }
 
 export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageContextMenuProps>(function MessageContextMenu(
-  { visible, message, isOwn, anchor, isPinned, bubbleRadius, onClose, onClosing, onAction, dragActive, hoveredAction, actionZones, visibleBounds },
+  {
+    visible, message, isOwn, anchor, isPinned, bubbleRadius, onClose, onClosing, onAction, dragActive, hoveredAction,
+    actionZones, visibleBounds, captureHeld, onHeldPreview,
+  },
   ref,
 ) {
   const t = useT();
@@ -111,9 +118,13 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
     <ActionMenu<MessageAction>
       ref={menuRef}
       anchor={anchor ?? null}
-      // The bubble stays lit in a cut-out of the dim (and lifts a little, see useMessageGestures).
+      // The bubble stays lit in a cut-out of the dim (and lifts a little, see useMessageGestures),
+      // or, when it cannot be seen whole where it is, is shown as a snapshot.
       spotlightRadius={bubbleRadius ?? 18}
       spotlightBounds={visibleBounds}
+      spotlightLift={1.04}
+      captureHeld={captureHeld}
+      onHeldPreview={onHeldPreview ? (state) => onHeldPreview(state, message.id) : undefined}
       align={isOwn ? 'right' : 'left'}
       top={top}
       items={items}

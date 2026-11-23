@@ -1133,7 +1133,7 @@ const SwipeReplyIcon = React.memo(function SwipeReplyIcon({ translateX, accent }
   );
 });
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, heldId, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; heldId?: SharedValue<string>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, heldId, hiddenId, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage, bubble?: unknown) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; heldId?: SharedValue<string>; hiddenId?: SharedValue<string>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
   // The quoted message's one-line preview. Cheap (a few string checks) and only meaningful when this
@@ -1227,6 +1227,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     hoveredAction,
     actionZones,
     heldId,
+    hiddenId,
   });
   const bubbleBoxStyle = React.useMemo(() => [bubbleStyles.bubbleBox, liftStyle], [liftStyle]);
 
@@ -2289,9 +2290,18 @@ export default function ChatScreen() {
   // `keyboardDismissMode="interactive"` only handles the drag gesture, not
   // a programmatic open of an overlay, so we wrap the open with an
   // explicit dismiss here.
+  //
+  // Except while the menu takes a snapshot of the bubble (see `onHeldPreview`): dismissing the
+  // keyboard moves the whole transcript, and doing it before the snapshot is up moved the bubble out
+  // from under its lit cut-out, which was one of the ways the hold "broke". Then it is dismissed the
+  // moment the snapshot covers the bubble, or when the snapshot is given up on.
+  const heldTargetRef = useRef<unknown>(null);
+  const keyboardWaitRef = useRef(false);
   const onMessageLongPress = useCallback(
-    (m: ChatMessage) => {
-      Keyboard.dismiss();
+    (m: ChatMessage, bubble?: unknown) => {
+      heldTargetRef.current = bubble ?? null;
+      keyboardWaitRef.current = Keyboard.isVisible();
+      if (!keyboardWaitRef.current) Keyboard.dismiss();
       openMenu(m);
     },
     [openMenu],
@@ -2310,12 +2320,55 @@ export default function ChatScreen() {
   // menu itself (not the gesture), so a long-press the menu guard rejects never leaves a bubble
   // lifted. Cleared at the START of the close (`onClosing`) so it settles while the card collapses.
   const heldIdSV = useSharedValue('');
+  // The message the menu shows as a snapshot instead (one that could not be seen whole where it is,
+  // see "THE WHOLE ITEM, ALWAYS" in ActionMenu): its bubble is hidden, not lifted. `previewingRef`
+  // is set by the menu's 'planned', which runs in the menu's mount effect, before the effect below.
+  const hiddenIdSV = useSharedValue('');
+  const previewingRef = useRef(false);
   useEffect(() => {
-    heldIdSV.value = actionMessage ? actionMessage.id : '';
+    if (!actionMessage) previewingRef.current = false;
+    heldIdSV.value = actionMessage && !previewingRef.current ? actionMessage.id : '';
   }, [actionMessage, heldIdSV]);
   const releaseHeld = useCallback(() => {
     heldIdSV.value = '';
-  }, [heldIdSV]);
+    hiddenIdSV.value = '';
+  }, [heldIdSV, hiddenIdSV]);
+  // The bubble's Reanimated animated ref is a FUNCTION carrying `getTag()` and `current`; the native
+  // tag is what view-shot resolves most directly. (Treating it as an object handed view-shot the
+  // function itself, which it could not resolve, so every snapshot failed back to the cut-out.)
+  const captureHeld = useCallback(() => {
+    const target = heldTargetRef.current as { getTag?: () => unknown; current?: unknown } | null;
+    if (!target || (typeof target !== 'object' && typeof target !== 'function')) return target;
+    try {
+      const tag = typeof target.getTag === 'function' ? target.getTag() : null;
+      if (typeof tag === 'number') return tag;
+    } catch {}
+    return 'current' in target ? target.current : target;
+  }, []);
+  const dismissKeyboardIfWaiting = useCallback(() => {
+    if (!keyboardWaitRef.current) return;
+    keyboardWaitRef.current = false;
+    Keyboard.dismiss();
+  }, []);
+  const onHeldPreview = useCallback((state: 'planned' | 'shown' | 'failed' | 'gone', messageId: string) => {
+    if (state === 'planned') {
+      previewingRef.current = true;
+      heldIdSV.value = '';
+    } else if (state === 'shown') {
+      hiddenIdSV.value = messageId;
+      dismissKeyboardIfWaiting();
+    } else if (state === 'failed') {
+      // Back to the lit cut-out over the live bubble, lifted as before.
+      previewingRef.current = false;
+      hiddenIdSV.value = '';
+      heldIdSV.value = messageId;
+      dismissKeyboardIfWaiting();
+    } else {
+      previewingRef.current = false;
+      hiddenIdSV.value = '';
+      dismissKeyboardIfWaiting();
+    }
+  }, [heldIdSV, hiddenIdSV, dismissKeyboardIfWaiting]);
   // Imperative handle to replay the menu's slide-down when a drag fires an action.
   const menuRef = useRef<MessageContextMenuHandle>(null);
   // Emoji "dissolve" burst overlay + the per-message window rect captured on
@@ -6862,6 +6915,7 @@ export default function ChatScreen() {
         hoveredAction={hoveredActionSV}
         actionZones={actionZonesSV}
         heldId={heldIdSV}
+        hiddenId={hiddenIdSV}
         onFireDragAction={fireDragAction}
       />
       </>
@@ -6872,7 +6926,7 @@ export default function ChatScreen() {
     // NOTE: `scrollToMessageId` and `dayLabels` are deliberately absent too — both
     // change identity on every data/window change and are reached through refs
     // (`stableJumpToMessage`, `dayLabelsRef`) for exactly that reason.
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, heldIdSV, fireDragAction, visTracker, imagesReady, glassActive, theme]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, heldIdSV, hiddenIdSV, fireDragAction, visTracker, imagesReady, glassActive, theme]);
 
   // Stable list header / footer elements. Passing INLINE JSX to FlashList's
   // ListHeaderComponent / ListFooterComponent handed it a fresh element
@@ -7977,6 +8031,8 @@ export default function ChatScreen() {
                 // The composer rises by the panel height less its resting padding (`barWrapStyle`).
                 (emojiOpen || gifOpen || keepLifted ? Math.max(0, emojiPanelHeight - padDelta) : 0),
             }}
+            captureHeld={captureHeld}
+            onHeldPreview={onHeldPreview}
             onClosing={releaseHeld}
             onClose={closeMenu}
             onAction={handleMenuAction}
