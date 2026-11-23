@@ -13,7 +13,7 @@
     "optimize:icons": "node scripts/optimize-pixel-icons.mjs",
     "optimize:previews": "node scripts/optimize-mini-app-previews.mjs",
     "verify:theme-assets": "node scripts/verify-theme-assets.js",
-    "postinstall": "node -e \"const fs=require('fs');['node_modules/react-native/ReactCommon/fmt/include/fmt/base.h'].forEach(p=>{if(fs.existsSync(p)){let c=fs.readFileSync(p,'utf8');if(c.includes('define FMT_USE_CONSTEVAL 1')){c=c.replace(/#  define FMT_USE_CONSTEVAL 1/g,'#  define FMT_USE_CONSTEVAL 0');fs.writeFileSync(p,c);console.log('Patched:',p)}}});console.log('postinstall: fmt patch check done')\"",
+    "postinstall": "node scripts/patch-native-deps.js",
     "eas-build-pre-install": "node scripts/eas-build-pre-install.js",
     "eas-build-post-install": "bash eas-build-post-install.sh"
   },
