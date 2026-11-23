@@ -56,6 +56,13 @@ AuthKey_*.p8
 .expo
 .github
 
+# ── Generated native projects ────────────────────────────────────────────────────
+# `expo prebuild` writes these (locally, for an emulator build). The build workers generate their own,
+# from app.json and the config plugins. Uploaded, they made EAS treat the project as a bare workflow,
+# which refuses the `appVersion` runtime policy ("runtime version policies are not supported"), and
+# android/ with its build outputs was most of a 560 MB archive.
+/android
+/ios
 # ── Backend, deployed separately ────────────────────────────────────────────────
 # The Cloudflare Worker is its own deploy target with its own node_modules; the
 # mobile build never imports from it.
