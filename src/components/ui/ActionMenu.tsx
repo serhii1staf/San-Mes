@@ -12,10 +12,10 @@
  * item that cannot be seen whole where it is gets a snapshot of its own view instead, an image (see
  * "THE WHOLE ITEM, ALWAYS").
  *
- * Surfaces: native liquid glass on iOS 26 with glass enabled, the theme's elevated surface
- * elsewhere. Glass rule of this codebase: no alpha on a glass view or any of its ancestors
- * (expo/expo#41024). So with glass the card opens AND closes by scale only: it grows out of the
- * corner nearest the held item and collapses back into it.
+ * Surfaces: glass with glass enabled (ours, or Apple's on older binaries), the theme's elevated
+ * surface elsewhere. The card appears and disappears in place, scaling a little about its centre
+ * and fading (see `cardStyle`). Apple's glass cannot take an alpha (expo/expo#41024), so with it the
+ * card scales about its centre without fading.
  *
  * With `spotlightRadius`, the backdrop dims everything except a rounded cut-out around the held
  * item, so it is clear what the menu acts on.
@@ -53,6 +53,7 @@ import Reanimated, {
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { GlassBg, useLiquidGlassActive } from './LiquidGlass';
+import { useGlassSurfacesActive } from './SanGlassSurface';
 import { triggerHaptic } from '../../utils/haptics';
 
 export type ActionMenuIcon =
@@ -231,8 +232,8 @@ const PREVIEW_RETURN = { duration: 230, easing: Easing.out(Easing.cubic) };
 // and faded with the card it stayed whole for the first 100 ms beside the item it copies, which
 // showed both (emulator). So it fades at once instead.
 const PREVIEW_FADE = { duration: 140, easing: Easing.out(Easing.quad) };
-// The open run backwards: the card collapses into the corner it grew out of, accelerating as it
-// goes, so it ends small and fast instead of vanishing at full size.
+// The open run backwards: the card shrinks a little about its centre and fades, accelerating as it
+// goes, so it dissolves where it stood instead of vanishing at full size.
 const CLOSE_TIMING = { duration: 230, easing: Easing.bezier(0.55, 0, 0.75, 0.2) };
 // Gap between the held item and the edge of its cut-out in the dim.
 const SPOT_PAD = 6;
@@ -396,6 +397,8 @@ function ActionMenuInner<Id extends string>(
   const insets = useSafeAreaInsets();
   const { width: W, height: H } = useWindowDimensions();
   const glassActive = useLiquidGlassActive();
+  // Our own glass (modules/san-glass) rather than Apple's: it can fade. See `cardStyle`.
+  const ourGlass = useGlassSurfacesActive();
   const p = useSharedValue(0);
   const cp = useSharedValue(0);
   const c = useSharedValue(0);
@@ -449,7 +452,6 @@ function ActionMenuInner<Id extends string>(
   });
 
   let menuTop: number;
-  let below = true;
   // The lifted item grows about its centre, so the card keeps its gap from the grown edge.
   const liftPad = anchor ? (anchor.height * (spotlightLift - 1)) / 2 : 0;
   if (plan) {
@@ -460,15 +462,12 @@ function ActionMenuInner<Id extends string>(
     menuTop = anchor.y + anchor.height + liftPad + GAP;
   } else if (anchor.y - liftPad - GAP - menuH >= minTop) {
     menuTop = anchor.y - liftPad - GAP - menuH;
-    below = false;
   } else {
     // Taller than the free space on either side and no snapshot to show instead: pin to the bottom.
     menuTop = Math.max(minTop, maxBottom - menuH);
-    below = false;
   }
   const rawLeft = !anchor ? (W - menuW) / 2 : align === 'right' ? anchor.x + anchor.width - menuW : anchor.x;
   const menuLeft = clamp(rawLeft, 12, W - menuW - 12);
-  const origin = `${below ? 'top' : 'bottom'} ${align === 'right' && anchor ? 'right' : 'left'}`;
 
   // ── Open / close ─────────────────────────────────────────────────────────
   // `p` is the dim, `cp` the card. They open together, except when a snapshot is taken: then the card
@@ -702,17 +701,31 @@ function ActionMenuInner<Id extends string>(
   );
 
   // ── Styles ───────────────────────────────────────────────────────────────
-  // Glass keeps its glass for the whole close as well: it shrinks back into its corner by scale
-  // alone, which is the open played backwards. (It used to switch to a flat surface and fade, and the
-  // swap from glass to flat at the start of the close was the "strange" close.) An alpha on a glass
-  // view or its ancestor switches its glass off (expo/expo#41024), so glass never fades.
+  // ── IN PLACE, NOT OUT OF A CORNER (Nov 2026) ───────────────────────────────
+  //
+  // Asked: the card "появляется с левой стороны или справа", and it should instead appear out of
+  // nothing and disappear into nothing. It grew out of the corner nearest the held item (origin
+  // `top left` / `top right`, from 60 % or 35 % of its size), which reads as flying in from a side.
+  //
+  // Now it scales about its own centre and only a little (88 % to 100 %), and fades in and out, so it
+  // materialises where it will stay. The exception is Apple's system glass: an alpha on it or on an
+  // ancestor switches the glass off (expo/expo#41024), so with that glass the card still opens and
+  // closes by scale alone, but about its centre too. Our own glass takes an alpha fine (see
+  // `OurGlassDissolve` in LiquidGlass.tsx), so with it the card fades like the flat one.
   const surfaceGlass = glassActive;
+  const canFade = !glassActive || ourGlass;
   const cardStyle = useAnimatedStyle(() => {
     const open = cp.value;
     const shut = c.value;
+    if (canFade) {
+      return {
+        opacity: interpolate(open, [0, 0.55], [0, 1], Extrapolation.CLAMP) * (1 - shut),
+        transform: [{ scale: interpolate(open, [0, 1], [0.88, 1]) * (1 - 0.1 * shut) }],
+      };
+    }
     return {
-      opacity: surfaceGlass ? 1 : interpolate(open, [0, 0.45], [0, 1], Extrapolation.CLAMP) * (1 - shut),
-      transform: [{ scale: interpolate(open, [0, 1], [surfaceGlass ? 0.35 : 0.6, 1]) * (1 - 0.92 * shut) }],
+      opacity: 1,
+      transform: [{ scale: interpolate(open, [0, 1], [0.3, 1]) * (1 - 0.95 * shut) }],
     };
   });
   const dimStyle = useAnimatedStyle(() => ({ opacity: Math.min(1, Math.max(0, p.value)) * (1 - c.value) }));
@@ -772,13 +785,13 @@ function ActionMenuInner<Id extends string>(
       </Reanimated.View>
       <Pressable style={StyleSheet.absoluteFill} onPress={() => dismiss()} accessibilityRole="button" accessibilityLabel="Close" />
 
-      {/* A card waiting for the snapshot (`cp` at 0) is invisible by its alpha. Glass has none to
-          spare (it never fades, see above) and would sit there small, so it mounts as it opens. */}
-      {cardOpen || !surfaceGlass ? (
+      {/* A card waiting for the snapshot (`cp` at 0) is invisible by its alpha. Apple's glass has none
+          to spare (it never fades, see above) and would sit there small, so it mounts as it opens. */}
+      {cardOpen || canFade ? (
         <Reanimated.View
           style={[
             styles.card,
-            { top: menuTop, left: menuLeft, width: menuW, height: menuH, transformOrigin: origin },
+            { top: menuTop, left: menuLeft, width: menuW, height: menuH, transformOrigin: 'center' },
             surfaceGlass ? null : styles.cardShadow,
             cardStyle,
           ]}

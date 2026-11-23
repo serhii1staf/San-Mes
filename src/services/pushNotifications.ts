@@ -448,7 +448,14 @@ export function routeForNotificationData(data: unknown): string | null {
   switch (d.type) {
     case 'message': {
       const id = str(d.conversation_id);
-      return id ? `/chat/${encodeURIComponent(id)}` : null;
+      if (!id) return null;
+      // The sender is the peer of a 1:1 chat. Passing it is what the chat list does, and it lets the
+      // chat screen settle its conversation id and its header on the first render, without waiting
+      // for the cached conversation list (still loading on a cold start from a push).
+      const sender = str(d.sender_id);
+      return sender
+        ? `/chat/${encodeURIComponent(id)}?participantId=${encodeURIComponent(sender)}`
+        : `/chat/${encodeURIComponent(id)}`;
     }
     case 'comment': {
       // The post's thread, where the new comment is.

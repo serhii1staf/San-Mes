@@ -374,7 +374,13 @@ function InAppAlertHostInner() {
   const navigate = useCallback((alert: InAppAlert) => {
     try {
       if (alert.kind === 'message' && alert.targetId) {
-        router.push(`/chat/${alert.targetId}`);
+        // The sender is the 1:1 peer; passing it settles the chat's id and header on its first
+        // render, the way the chat list's own navigation does.
+        router.push(
+          alert.actorId
+            ? `/chat/${alert.targetId}?participantId=${encodeURIComponent(alert.actorId)}`
+            : `/chat/${alert.targetId}`,
+        );
         return;
       }
       if ((alert.kind === 'comment' || alert.kind === 'like') && alert.targetId) {
@@ -392,6 +398,11 @@ function InAppAlertHostInner() {
   const onPress = useCallback(() => {
     clearTimer();
     const target = current;
+    // The chat's history request starts now rather than after the pill's exit and the slide-in.
+    // See src/services/chatHistorySync.ts.
+    if (target?.kind === 'message' && target.targetId) {
+      try { require('../../services/chatHistorySync').prefetchChatHistory(target.targetId); } catch {}
+    }
     opacity.value = withTiming(0, { duration: 140 }, (done) => {
       if (done) {
         runOnJS(finish)();
