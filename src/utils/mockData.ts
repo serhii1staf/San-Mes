@@ -502,19 +502,29 @@ export function formatTimeAgo(dateString: string): string {
 // opening a chat): that formatting was the largest single cost inside MessageBubble. One instance
 // with the same default locale and options produces the same text.
 let _timeFmt: Intl.DateTimeFormat | null = null;
+// And each text once per local minute of the day: it depends only on the hour and the minute (one
+// formatter, one locale), and on Android every `format` is a call into Java. Measured on the emulator
+// (Hermes CPU profile, opening a chat): 13.7 ms of the open went to it. At most 1,440 short strings.
+const _timeByMinute = new Map<number, string>();
 
 export function formatMessageTime(dateString: string): string {
   const ms = Date.parse(dateString);
   // `format(NaN)` throws where `toLocaleTimeString` returned "Invalid Date"; keep the old output.
   if (!Number.isFinite(ms)) return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const local = new Date(ms);
+  const minute = local.getHours() * 60 + local.getMinutes();
+  const known = _timeByMinute.get(minute);
+  if (known !== undefined) return known;
   if (_timeFmt === null) {
     try {
       _timeFmt = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' });
     } catch {
-      return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return local.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
   }
-  return _timeFmt.format(ms);
+  const text = _timeFmt.format(ms);
+  _timeByMinute.set(minute, text);
+  return text;
 }
 
 export function formatMessageDate(dateString: string): string {
