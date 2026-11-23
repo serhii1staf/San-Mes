@@ -139,7 +139,13 @@ export const useAuthStore = create<AuthStoreState>()(
               is_verified: !!profile.is_verified,
               bannerUrl: profile.banner_url || undefined,
               themeId: profile.theme_id || undefined,
-              screenshots_disabled: !!(profile as any).screenshots_disabled,
+              // Kept as it is when the answer does not carry the field. A Worker that did not
+              // project it is exactly why the switch kept turning itself off: this ran on every
+              // launch and foreground and wrote `false` over the owner's choice.
+              screenshots_disabled:
+                (profile as any).screenshots_disabled != null
+                  ? !!(profile as any).screenshots_disabled
+                  : !!existing?.screenshots_disabled,
               links: (profile.links || undefined) as any,
               // Preserve the in-memory PIN if the user already entered
               // one this session — the Worker doesn't send it back.

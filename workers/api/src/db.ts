@@ -112,5 +112,9 @@ export function normalizeProfile<T extends Row>(row: T | null): (T & { is_verifi
     ...row,
     is_verified: asBool(row.is_verified),
     links: asJson(row.links),
+    // Only when the projection selected it. Embedded profiles (feed, conversation lists) do not
+    // carry the column, and inventing `false` for them would tell a client that a locked account is
+    // unlocked.
+    ...('screenshots_disabled' in row ? { screenshots_disabled: asBool(row.screenshots_disabled) } : null),
   } as T & { is_verified: boolean; links: unknown };
 }

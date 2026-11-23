@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS profiles (
   badge         TEXT,
   is_verified   INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  -- Owner-controlled: viewers may not screenshot or record this profile and chats with it. Present
+  -- in the live table (INTEGER NOT NULL DEFAULT 0) but was missing from this file.
+  screenshots_disabled INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_username    ON profiles(username);
 CREATE        INDEX IF NOT EXISTS idx_profiles_device_key  ON profiles(device_key);

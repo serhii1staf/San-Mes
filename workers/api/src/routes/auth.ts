@@ -59,7 +59,9 @@ import { asStr, readJson } from '../validate';
 // That needs an API token with Account → D1 → Edit. Verify with
 // `SELECT name FROM pragma_table_info('profiles') WHERE name='header_scene'` before re-adding —
 // re-adding it without the column reintroduces exactly this outage.
-const PROFILE_AUTH_COLUMNS = `id, username, display_name, emoji, bio, device_key, banner_url, theme_id, links, badge, is_verified, created_at, updated_at`;
+// `screenshots_disabled` is the owner's own setting; `/me` has to return it or the app resets the
+// toggle to off on every launch. See `PROFILE_PUBLIC_COLUMNS` in routes/profiles.ts.
+const PROFILE_AUTH_COLUMNS = `id, username, display_name, emoji, bio, device_key, banner_url, theme_id, links, badge, is_verified, created_at, updated_at, screenshots_disabled`;
 
 // Mirror of `hashPin` in `src/lib/supabase.ts`. Keeps the on-the-wire
 // PIN hash compatible with any client build that still computes it

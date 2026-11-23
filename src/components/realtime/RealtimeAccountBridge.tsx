@@ -404,6 +404,7 @@ export function RealtimeAccountBridge(): null {
           if ('theme_id' in payload) updates.themeId = payload.theme_id;
           if ('badge' in payload) updates.badge = payload.badge;
           if ('is_verified' in payload) updates.is_verified = !!payload.is_verified;
+          if ('screenshots_disabled' in payload) updates.screenshots_disabled = !!payload.screenshots_disabled;
           if ('username' in payload) updates.username = payload.username;
           if ('links' in payload) updates.links = payload.links;
           if (Object.keys(updates).length > 0) {

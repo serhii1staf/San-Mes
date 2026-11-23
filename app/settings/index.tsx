@@ -235,6 +235,38 @@ export default function SettingsScreen() {
     return () => handle.cancel();
   }, []);
 
+  // The account's screenshot lock. Optimistic: the switch moves at once, the PATCH follows, and a
+  // failed save puts it back with a toast. `saveSeq` drops the answer to an older tap so a quick
+  // on-off-on cannot be undone by the first request finishing last.
+  const screenshotsDisabled = useAuthStore((s) => !!s.user?.screenshots_disabled);
+  const saveSeq = React.useRef(0);
+  const toggleScreenshots = React.useCallback(
+    (next: boolean) => {
+      const auth = useAuthStore.getState();
+      const uid = auth.user?.id;
+      if (!uid) return;
+      auth.updateProfile({ screenshots_disabled: next });
+      const seq = ++saveSeq.current;
+      void (async () => {
+        let failed = false;
+        try {
+          const { updateProfile: patchProfile } = await import('../../src/lib/supabase');
+          const { error } = await patchProfile(uid, { screenshots_disabled: next });
+          failed = !!error;
+        } catch {
+          failed = true;
+        }
+        if (!failed || seq !== saveSeq.current) return;
+        useAuthStore.getState().updateProfile({ screenshots_disabled: !next });
+        try {
+          const { showToast } = await import('../../src/store/toastStore');
+          showToast(t('toast.error_generic'), 'alert-circle');
+        } catch {}
+      })();
+    },
+    [t],
+  );
+
   // Hidden admin access: tap the "Безопасность" section title 6 times quickly.
   const adminTapCount = React.useRef(0);
   const adminLastTap = React.useRef(0);
@@ -602,9 +634,33 @@ export default function SettingsScreen() {
             iconTint="blue"
             label={t('settings.device_key')}
             onPress={() => router.push('/settings/device-key')}
+          />
+          {/* The screenshot lock, moved here from the profile editor: it is an account setting, not
+              profile content. It saves when switched, with no "Готово" to forget. The label is short
+              so it stays on one line on narrow phones; the explanation is the footer below. */}
+          <SettingsRow
+            icon="no-photography"
+            iconTint="red"
+            label={t('settings.screenshots_disabled')}
+            showChevron={false}
+            rightElement={
+              <Switch
+                value={screenshotsDisabled}
+                onValueChange={toggleScreenshots}
+                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                thumbColor="#FFFFFF"
+              />
+            }
             isLast
           />
         </View>
+        <Text
+          variant="caption"
+          color={theme.colors.text.tertiary}
+          style={{ marginTop: -16, marginBottom: 24, paddingHorizontal: 16 }}
+        >
+          {t('settings.screenshots_disabled_desc')}
+        </Text>
 
         {/* ── LEGAL: the two hosted documents, on their own ─────────────────────
             They were the bottom half of the Security card, directly under the in-app privacy
