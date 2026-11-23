@@ -235,7 +235,9 @@ export function NativeGlassView({
     if (name === 'none') return <View style={style} {...rest}>{children}</View>;
     const dark = colorScheme === 'dark' ? true : colorScheme === 'light' ? false : theme.isDark;
     return (
-      <SanGlassBox style={style} kind={name === 'clear' ? 'clear' : 'frosted'} dark={dark} tintColor={tintColor} {...rest}>
+      // Every `NativeGlassView` is a control (a button, a pill, a field): on Android its frosted look is
+      // glass too, see `SanGlassLayerProps.control`.
+      <SanGlassBox style={style} kind={name === 'clear' ? 'clear' : 'frosted'} dark={dark} tintColor={tintColor} control {...rest}>
         {children}
       </SanGlassBox>
     );
@@ -318,7 +320,7 @@ export function GlassSurface({ fallback, ...glassProps }: GlassSurfaceProps) {
 }
 
 /** The look of our glass for a `GlassBg`, mapped from its system-glass props. */
-function OurGlassBg({ borderRadius, glassStyle, colorScheme, tintColor }: Pick<GlassBgProps, 'borderRadius' | 'glassStyle' | 'colorScheme' | 'tintColor'>) {
+function OurGlassBg({ borderRadius, glassStyle, colorScheme, tintColor, control }: Pick<GlassBgProps, 'borderRadius' | 'glassStyle' | 'colorScheme' | 'tintColor' | 'control'>) {
   const theme = useTheme();
   const dark = colorScheme === 'dark' ? true : colorScheme === 'light' ? false : theme.isDark;
   const dissolving = typeof glassStyle === 'object' && glassStyle.style === 'none';
@@ -326,7 +328,7 @@ function OurGlassBg({ borderRadius, glassStyle, colorScheme, tintColor }: Pick<G
   if (name === 'none' && !(typeof glassStyle === 'object' && glassStyle.animate)) return null;
   // While dissolving, keep the look it had (the menus dissolve from `regular`).
   const kind = name === 'clear' ? 'clear' : 'frosted';
-  const layer = <SanGlassLayer kind={kind} dark={dark} tintColor={tintColor} cornerRadius={borderRadius ?? 0} />;
+  const layer = <SanGlassLayer kind={kind} dark={dark} tintColor={tintColor} cornerRadius={borderRadius ?? 0} control={control} />;
   if (typeof glassStyle === 'object' && glassStyle.animate) {
     return (
       <OurGlassDissolve dissolving={dissolving} durationS={glassStyle.animationDuration ?? 0.25}>
@@ -368,6 +370,12 @@ interface GlassBgProps {
    * control over imagery. No effect on iOS, where real glass is rendered.
    */
   role?: AppSurfaceRole;
+  /**
+   * The surface is a small control (a header pill, a button), not a panel, a menu or a sheet: on
+   * Android with our glass, its frosted look is glass too instead of the flat fill (see
+   * `SanGlassLayerProps.control`). No effect on iOS.
+   */
+  control?: boolean;
 }
 
 /**
@@ -392,14 +400,14 @@ interface GlassBgProps {
  * Returns null when glass is off, so the container simply falls back to its
  * own backgroundColor/border.
  */
-export function GlassBg({ borderRadius, glassStyle = 'clear', colorScheme, interactive = true, tintColor, role }: GlassBgProps) {
+export function GlassBg({ borderRadius, glassStyle = 'clear', colorScheme, interactive = true, tintColor, role, control }: GlassBgProps) {
   const active = useLiquidGlassActive();
   const ours = useGlassSurfacesActive();
   // Called unconditionally, before the branch below — the Android surface needs to know which way to go
   // when the caller has not pinned a `colorScheme`, and a hook cannot live inside a conditional.
   const theme = useTheme();
   if (ours) {
-    return <OurGlassBg borderRadius={borderRadius} glassStyle={glassStyle} colorScheme={colorScheme} tintColor={tintColor} />;
+    return <OurGlassBg borderRadius={borderRadius} glassStyle={glassStyle} colorScheme={colorScheme} tintColor={tintColor} control={control} />;
   }
   // ── ON ANDROID THIS RENDERED NOTHING, AND THAT LEFT CHROME TRANSPARENT ────
   //

@@ -1176,7 +1176,7 @@ const HeaderPillButton = React.memo(function HeaderPillButton({
       ]}
     >
       {glassActive ? (
-        <GlassBg borderRadius={17} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
+        <GlassBg borderRadius={17} glassStyle="regular" control colorScheme={theme.isDark ? 'dark' : 'light'} />
       ) : null}
       {children}
     </Pressable>
@@ -1214,7 +1214,7 @@ const HeaderIconButton = React.memo(function HeaderIconButton({
       ]}
     >
       {glassActive ? (
-        <GlassBg borderRadius={17} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
+        <GlassBg borderRadius={17} glassStyle="regular" control colorScheme={theme.isDark ? 'dark' : 'light'} />
       ) : null}
       <MaterialIcons name={icon as any} size={17} color={theme.colors.text.primary} />
     </Pressable>

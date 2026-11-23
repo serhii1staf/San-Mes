@@ -5,12 +5,15 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.RenderEffect
 import android.graphics.RenderNode
 import android.graphics.RuntimeShader
 import android.graphics.Shader
+import android.graphics.SweepGradient
 import android.os.Build
 import android.os.SystemClock
 import android.view.View
@@ -20,8 +23,10 @@ import androidx.annotation.RequiresApi
 import com.facebook.react.uimanager.ReactZIndexedViewGroup
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.views.ExpoView
+import kotlin.math.abs
 import kotlin.math.asin
 import kotlin.math.atan
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -219,6 +224,8 @@ class SanGlassView(context: Context, appContext: AppContext) : ExpoView(context,
 
   private fun capture() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || failed || recording) return
+    // The lit rim alone is drawn in onDraw from this view's own props: nothing beneath to record.
+    if (rimOnly) return
     // Off screen, collapsed, covered by a pushed screen's window, or faded out: nothing to bend, and no
     // reason to re-record anything.
     if (!isShown || width < 2 || height < 2 || !getGlobalVisibleRect(visible) || faded()) return
@@ -514,9 +521,92 @@ class SanGlassView(context: Context, appContext: AppContext) : ExpoView(context,
     uniformsDirty = false
   }
 
+  // ── NO BEND, NO BLUR: THE LIT RIM ALONE, AS PLAIN STROKES ──────────────────────────────────────
+  //
+  // That is how small controls are drawn on Android (SanGlassSurface.tsx, "control"): a fill of their
+  // own with glisse's lit rim on top. With nothing bent or blurred the glass needs nothing from beneath,
+  // and a runtime shader would still cost an offscreen layer per view every frame: measured on the
+  // emulator, a chat scroll with its six controls drawn that way had about 20 more frames over 17 ms
+  // in 120 than with flat controls. So the rim is drawn here with the shader's own formula
+  // (`rimLight`): brightness pow(min(1, |n.x + n.y|), 1.5) for the edge normal n, so full on the
+  // straight sides and on the top-left and bottom-right curves, fading out towards the other two, over
+  // a band of 1.22 pt that is brightest at the edge (two strokes, its outer and inner halves). It is
+  // recorded once into this view's display list and re-recorded only when a prop or the size changes.
+  private val rimOnly: Boolean
+    get() = bend <= 0f && blurDp <= 0f
+
+  private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    strokeCap = Paint.Cap.BUTT
+  }
+  private val rimFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+  private val rimRect = RectF()
+  private val rimPath = Path()
+
+  private fun drawRim(canvas: Canvas) {
+    val w = width.toFloat()
+    val h = height.toFloat()
+    if (w < 2f || h < 2f) return
+    val d = resources.displayMetrics.density
+    val half = min(w, h) / 2f
+    val tl = min(cornerRadiiDp[0] * d, half)
+    val tr = min(cornerRadiiDp[1] * d, half)
+    val br = min(cornerRadiiDp[2] * d, half)
+    val bl = min(cornerRadiiDp[3] * d, half)
+    if (Color.alpha(tintColor) > 0) {
+      rimPath.reset()
+      rimRect.set(0f, 0f, w, h)
+      rimPath.addRoundRect(rimRect, floatArrayOf(tl, tl, tr, tr, br, br, bl, bl), Path.Direction.CW)
+      rimFill.color = tintColor
+      canvas.drawPath(rimPath, rimFill)
+    }
+    val s = shine.coerceIn(0f, 1f)
+    if (s <= 0f) return
+    // 1 - along^1.5 averaged over each half of the band: 0.86 for the outer half, 0.36 for the inner.
+    val band = RIM_BAND_PT * d
+    rimStroke(canvas, w, h, tl, tr, br, bl, band * 0.25f, band * 0.5f, s * 0.86f)
+    rimStroke(canvas, w, h, tl, tr, br, bl, band * 0.75f, band * 0.5f, s * 0.36f)
+  }
+
+  /** One stroke, `stroke` wide, its centre line `inset` inside the edge, `alpha` where the edge is fully lit. */
+  private fun rimStroke(
+    canvas: Canvas, w: Float, h: Float, tl: Float, tr: Float, br: Float, bl: Float,
+    inset: Float, stroke: Float, alpha: Float,
+  ) {
+    rimPaint.strokeWidth = stroke
+    rimPaint.shader = null
+    rimPaint.color = Color.argb((alpha * 255f).roundToInt().coerceIn(0, 255), 255, 255, 255)
+    // The straight sides face straight out: |n.x + n.y| = 1, fully lit.
+    if (w - tr > tl) canvas.drawLine(tl, inset, w - tr, inset, rimPaint)
+    if (h - br > tr) canvas.drawLine(w - inset, tr, w - inset, h - br, rimPaint)
+    if (w - br > bl) canvas.drawLine(bl, h - inset, w - br, h - inset, rimPaint)
+    if (h - bl > tl) canvas.drawLine(inset, tl, inset, h - bl, rimPaint)
+    // The corners, each an arc around its own centre (angles clockwise from 3 o'clock, y down).
+    rimArc(canvas, tl, tl, tl, inset, 180f, alpha)
+    rimArc(canvas, w - tr, tr, tr, inset, 270f, alpha)
+    rimArc(canvas, w - br, h - br, br, inset, 0f, alpha)
+    rimArc(canvas, bl, h - bl, bl, inset, 90f, alpha)
+  }
+
+  private fun rimArc(canvas: Canvas, cx: Float, cy: Float, radius: Float, inset: Float, start: Float, alpha: Float) {
+    val rr = radius - inset
+    if (rr <= 0.5f) return
+    val colors = IntArray(RIM_LIGHT.size) { i ->
+      Color.argb((alpha * RIM_LIGHT[i] * 255f).roundToInt().coerceIn(0, 255), 255, 255, 255)
+    }
+    rimPaint.shader = SweepGradient(cx, cy, colors, RIM_STOPS)
+    rimPaint.color = Color.WHITE
+    canvas.drawArc(cx - rr, cy - rr, cx + rr, cy + rr, start, 90f, false, rimPaint)
+    rimPaint.shader = null
+  }
+
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || failed) return
+    if (rimOnly) {
+      drawRim(canvas)
+      return
+    }
     val n = node ?: return
     if (!canvas.isHardwareAccelerated || !n.hasDisplayList()) return
     canvas.drawRenderNode(n)
@@ -539,6 +629,18 @@ class SanGlassView(context: Context, appContext: AppContext) : ExpoView(context,
      * recording (and holding references to) views elsewhere on screen.
      */
     const val REACH_MARGIN_DP = 48f
+
+    /** Width of glisse's lit rim band, pt (the 1.22 of `rimLight` in the shader below). */
+    const val RIM_BAND_PT = 1.22f
+
+    /** Where the rim's brightness is sampled around a corner: fractions of a turn, clockwise from 3 o'clock. */
+    val RIM_STOPS: FloatArray = FloatArray(25) { it / 24f }
+
+    /** The rim's brightness for an edge whose normal points at each of [RIM_STOPS] (y down). */
+    val RIM_LIGHT: FloatArray = FloatArray(25) { i ->
+      val a = i / 24.0 * 2.0 * Math.PI
+      min(1.0, abs(cos(a) + sin(a))).pow(1.5).toFloat()
+    }
 
     @Volatile
     var lastError: String? = null
