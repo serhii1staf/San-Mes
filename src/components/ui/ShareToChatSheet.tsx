@@ -1,13 +1,16 @@
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { View, Pressable, FlatList, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Pressable, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { Avatar } from './Avatar';
 import { SlideUpSheet } from './SlideUpSheet';
 import { VerifiedBadge } from './VerifiedBadge';
-import { GlassBg, useLiquidGlassActive } from './LiquidGlass';
 import { useEntityStore } from '../../services/entityStore';
+import { useAuthStore } from '../../store/authStore';
+import { useChatStore } from '../../store/chatStore';
+import { filterTombstoned } from '../../services/messageTombstones';
+import { CHAT_TAIL_ROWS, readChatDiskSeed } from '../../utils/chatDiskSeed';
 import { useT } from '../../i18n/store';
 import { showToast } from '../../store/toastStore';
 import { triggerHaptic } from '../../utils/haptics';
@@ -33,15 +36,34 @@ import { compareIso } from '../../utils/compareIso';
  * for a list of fifteen names. "People you have talked to recently" is what the user means by recent,
  * and the conversation list already knows it exactly.
  *
- * ── HORIZONTAL, DELIBERATELY ────────────────────────────────────────────────
+ * ── THE LAYOUT (Nov 2026 redesign) ──────────────────────────────────────────
  *
- * A vertical list of names would push the buttons off a short sheet and turn a two-tap action into a
- * scroll-hunt. Horizontal keeps the whole sheet at a fixed height: the row of faces, then the actions,
- * always in the same place.
+ * Asked for: "более современный ... без лишних контейнеров". It had a bordered copy-link button in the
+ * header, a horizontal strip of small faces, and two boxed buttons, Cancel and Send.
+ *
+ * Now it is a title, a grid of faces, and ONE action at the bottom, the way Telegram's sheet works: it
+ * reads "Скопировать ссылку" while nobody is picked and becomes "Отправить" once someone is. Cancel is
+ * gone because the sheet already closes from its backdrop and its grabber. A pick is an accent ring
+ * around the face plus a small tick on the ring's edge, so the face itself is never covered. The grid
+ * scrolls inside a fixed maximum height, so the sheet's size does not depend on how many people there
+ * are.
+ *
+ * ── THE SENT MESSAGE IS IN THE CHAT AT ONCE ─────────────────────────────────
+ *
+ * Reported: after sending, the chat showed nothing; the message appeared a few seconds later. The
+ * sheet posted the message and wrote nothing locally, so the chat could only learn about it from its
+ * history request (which a recent reopen with realtime connected even skipped). Now the server's row
+ * goes into the chat store, and the conversation's list row, as soon as the POST answers; see
+ * `recordSentMessage`.
  */
 
-/** How many people to offer. Fifteen fills several swipes without making the row a search problem. */
+/** How many people to offer. Fifteen fills a few rows without making the grid a search problem. */
 const MAX_PEOPLE = 15;
+const COLUMNS = 4;
+/** Avatar 64 + ring. The cell is wider than this; the face is centred in it. */
+const RING = 74;
+/** A bit over two and a half rows, so a longer list visibly continues below. */
+const GRID_MAX_H = 290;
 
 export interface ShareToChatSheetProps {
   visible: boolean;
@@ -62,13 +84,127 @@ interface Person {
   verified?: boolean;
 }
 
+/**
+ * Put a message this device just sent (from outside the chat screen) into that chat, so opening the
+ * chat shows it immediately.
+ *
+ * Same rule as the realtime bridge's backstop (RealtimeAccountBridge, "NEVER START A TRANSCRIPT FROM
+ * A PING"): a bucket that does not exist yet is first filled from the disk tail, because the chat
+ * screen treats a non-empty bucket as the whole transcript and would otherwise open on this one
+ * message. `addMessage` then keeps the chat list's preview in step.
+ */
+function recordSentMessage(
+  conversationId: string,
+  peerId: string,
+  row: { id?: unknown; text?: unknown; created_at?: unknown } | null | undefined,
+  fallbackText: string,
+): void {
+  const myId = useAuthStore.getState().user?.id;
+  if (!myId || !row || typeof row.id !== 'string' || !row.id) return;
+  const createdAt = typeof row.created_at === 'string' ? row.created_at : new Date().toISOString();
+  const text = typeof row.text === 'string' ? row.text : fallbackText;
+  try {
+    const chat = useChatStore.getState();
+    let existing = chat.messages[conversationId] || [];
+    if (existing.length === 0) {
+      try {
+        const tail = readChatDiskSeed<any>(conversationId, CHAT_TAIL_ROWS);
+        if (tail.length > 0) {
+          const healed = tail.map((m) => {
+            if (m?.senderId === 'current') return { ...m, senderId: myId };
+            if (m?.senderId === 'peer' && peerId) return { ...m, senderId: peerId };
+            return m;
+          });
+          const kept = filterTombstoned(conversationId, healed) as any[];
+          if (kept.length > 0) {
+            chat.setMessages(conversationId, kept as any);
+            existing = kept;
+          }
+        }
+      } catch {}
+    }
+    if (!existing.some((m: any) => m.id === row.id || m.serverId === row.id)) {
+      chat.addMessage(conversationId, {
+        id: row.id,
+        serverId: row.id,
+        conversationId,
+        senderId: myId,
+        text,
+        createdAt,
+        isRead: true,
+      } as any);
+    }
+  } catch {}
+  // The chat list's own row: newest first, with us as the author (the unread logic reads that).
+  try {
+    const store = useEntityStore.getState();
+    const rows = (store.conversations || []) as any[];
+    const idx = rows.findIndex((c) => c?.id === conversationId);
+    if (idx >= 0) {
+      const next = rows.slice();
+      next[idx] = { ...rows[idx], lastMessage: text, lastMessageAt: createdAt, lastSenderId: myId };
+      store.setConversations(next as any);
+    }
+  } catch {}
+}
+
+const PersonCell = memo(function PersonCell({
+  person,
+  selected,
+  onToggle,
+  accent,
+  ringGap,
+  nameColor,
+}: {
+  person: Person;
+  selected: boolean;
+  onToggle: (userId: string) => void;
+  accent: string;
+  /** The sheet's own colour, for the tick's outline. */
+  ringGap: string;
+  nameColor: string;
+}) {
+  return (
+    <Pressable
+      onPress={() => onToggle(person.userId)}
+      style={styles.cell}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel={person.name}
+    >
+      {/* The ring is always laid out (transparent when unpicked), so picking moves nothing. */}
+      <View style={[styles.ring, { borderColor: selected ? accent : 'transparent' }]}>
+        <Avatar emoji={person.emoji || '😊'} name={person.name} size="lg" tint />
+        {selected ? (
+          <View style={[styles.tick, { backgroundColor: accent, borderColor: ringGap }]}>
+            <Feather name="check" size={11} color="#FFFFFF" />
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.nameRow}>
+        <Text
+          variant="caption"
+          numberOfLines={1}
+          weight={selected ? 'semibold' : undefined}
+          color={selected ? accent : nameColor}
+          style={styles.name}
+        >
+          {person.name}
+        </Text>
+        {person.verified ? <VerifiedBadge size={10} /> : null}
+      </View>
+    </Pressable>
+  );
+});
+
 function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, excludeUserIds }: ShareToChatSheetProps) {
   const theme = useTheme();
   const t = useT();
-  const glassActive = useLiquidGlassActive();
   const conversations = useEntityStore((s) => s.conversations);
   const [selected, setSelected] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const accent = theme.colors.accent.primary;
+  const sheetColor = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
 
   const people = useMemo<Person[]>(() => {
     const excluded = new Set((excludeUserIds || []).filter(Boolean) as string[]);
@@ -95,6 +231,12 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
     onClose();
   }, [onClose]);
 
+  const toggle = useCallback((userId: string) => {
+    triggerHaptic('selection');
+    // Tapping the picked face clears it, so a mis-tap does not force a send.
+    setSelected((prev) => (prev === userId ? null : userId));
+  }, []);
+
   const copyLink = useCallback(async () => {
     if (!shareUrl) return;
     triggerHaptic('light');
@@ -110,6 +252,7 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
 
   const send = useCallback(async () => {
     if (!selected || sending) return;
+    const peerId = selected;
     setSending(true);
     try {
       const { apiPost } = await import('../../services/apiClient');
@@ -117,7 +260,7 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
       // otherwise creates it. So sharing to somebody you have never messaged works without a separate
       // "start chat" step.
       const { data: conv } = await apiPost<{ conversation_id: string }>('/v1/conversations', {
-        otherUserId: selected,
+        otherUserId: peerId,
       });
       const convId = conv?.conversation_id;
       if (!convId) {
@@ -130,13 +273,15 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
       const text = caption?.trim() || '';
       const body = text && shareUrl ? `${text}\n${shareUrl}` : text || shareUrl;
       if (!body) return;
-      const { error } = await apiPost(`/v1/conversations/${encodeURIComponent(convId)}/messages`, {
-        text: body,
-      });
+      const { data: sent, error } = await apiPost<{ id: string; text: string; created_at: string }>(
+        `/v1/conversations/${encodeURIComponent(convId)}/messages`,
+        { text: body },
+      );
       if (error) {
         showToast(t('toast.error_generic'), 'alert-circle');
         return;
       }
+      recordSentMessage(convId, peerId, sent, body);
       triggerHaptic('medium');
       showToast(t('share.sent', 'Отправлено'), 'check');
       close();
@@ -147,125 +292,75 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
     }
   }, [selected, sending, caption, shareUrl, t, close]);
 
-  const renderPerson = useCallback(
-    ({ item }: { item: Person }) => {
-      const isSelected = selected === item.userId;
-      return (
-        <Pressable
-          onPress={() => {
-            triggerHaptic('selection');
-            // Tapping the selected face clears it, so a mis-tap does not force a send.
-            setSelected((prev) => (prev === item.userId ? null : item.userId));
-          }}
-          style={styles.person}
-        >
-          {/* SELECTION IS THE AVATAR DIMMING, not a badge stuck on top of it.
-   
-              A tick is a second object that has to be placed somewhere, and wherever it goes it covers
-              part of the face you are identifying the person by. Dimming uses the avatar itself as the
-              indicator: nothing is added, nothing is hidden, and the change reads at a glance across a
-              row of faces because the selected one is the only one that is not at full strength.
-   
-              Nothing about the layout moves either, which is what keeps a picker feeling reliable
-              under the finger — the same reason the tick had been placed on the avatar rather than
-              replacing it. */}
-          <View style={[styles.avatarWrap, isSelected ? styles.avatarSelected : null]}>
-            <Avatar emoji={item.emoji || '😊'} name={item.name} size="md" tint />
-          </View>
-          <View style={styles.nameRow}>
-            <Text variant="caption" numberOfLines={1} style={styles.name} color={isSelected ? theme.colors.accent.primary : theme.colors.text.secondary}>
-              {item.name}
-            </Text>
-            {item.verified ? <VerifiedBadge size={9} /> : null}
-          </View>
-        </Pressable>
-      );
-    },
-    [selected, theme.colors.accent.primary, theme.colors.text.secondary],
-  );
-
-  const keyExtractor = useCallback((p: Person) => p.userId, []);
+  // One action. Picked somebody: send to them. Nobody yet: copy the link (when there is one; a
+  // forwarded message has none, so it waits for a pick).
+  const canAct = !sending && (!!selected || !!shareUrl);
+  const actionIsSend = !!selected || !shareUrl;
+  const actionLabel = actionIsSend ? t('share.send', 'Отправить') : t('post_menu.copy_link');
+  const actionFilled = !!selected;
 
   return (
     <SlideUpSheet visible={visible} onClose={close}>
-      <View style={styles.header}>
-        <Feather name="send" size={16} color={theme.colors.accent.primary} />
-        <Text variant="body" weight="semibold" style={styles.headerLabel}>
-          {t('share.title', 'Поделиться')}
-        </Text>
-        {/* Copy-link, top right. The fastest thing you can want from a share sheet is the link
-            itself, and reaching it used to mean closing this and finding the menu item that opens
-            this. One tap, and the sheet closes — copying then hunting for a second action is not a
-            flow anyone runs. */}
-        {/* Nothing to copy when forwarding a message (no link). */}
-        {shareUrl ? (
-          <Pressable
-            onPress={copyLink}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={t('post_menu.copy_link')}
-            style={[styles.copyBtn, { borderColor: theme.colors.border.light }]}
-          >
-            <Feather name="link" size={15} color={theme.colors.text.secondary} />
-          </Pressable>
-        ) : null}
-      </View>
+      <Text variant="body" weight="semibold" align="center" style={styles.title}>
+        {t('share.title', 'Поделиться')}
+      </Text>
 
       {people.length === 0 ? (
         <View style={styles.empty}>
-          <Text variant="caption" color={theme.colors.text.tertiary}>
+          <Text variant="caption" color={theme.colors.text.tertiary} align="center">
             {t('share.no_chats', 'Пока некому отправить — начните переписку')}
           </Text>
         </View>
       ) : (
-        <FlatList
-          data={people}
-          horizontal
-          keyExtractor={keyExtractor}
-          renderItem={renderPerson}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.listContent}
-          // Fifteen items at most, so the whole list is cheaper to mount than the virtualization
-          // bookkeeping would be — but the window is still bounded in case the cap ever grows.
-          initialNumToRender={6}
-          maxToRenderPerBatch={4}
-          windowSize={5}
-        />
+        <ScrollView
+          style={{ maxHeight: GRID_MAX_H }}
+          contentContainerStyle={styles.grid}
+          showsVerticalScrollIndicator={false}
+          // Fifteen cells at most: a plain map is cheaper than list virtualisation would be.
+        >
+          {people.map((p) => (
+            <PersonCell
+              key={p.userId}
+              person={p}
+              selected={selected === p.userId}
+              onToggle={toggle}
+              accent={accent}
+              ringGap={sheetColor}
+              nameColor={theme.colors.text.secondary}
+            />
+          ))}
+        </ScrollView>
       )}
 
-      <View style={styles.actions}>
-        <Pressable onPress={close} style={[styles.btn, styles.btnFlat, { borderColor: theme.colors.border.light }]}>
-          <Text variant="body" color={theme.colors.text.secondary}>{t('common.cancel')}</Text>
-        </Pressable>
+      <View style={styles.footer}>
         <Pressable
-          onPress={send}
-          // Disabled until somebody is picked: a share button that does nothing when tapped reads as
-          // broken, and one that sends to a default recipient is worse.
-          disabled={!selected || sending}
-          style={[
-            styles.btn,
-            glassActive ? null : { backgroundColor: selected ? theme.colors.accent.primary : theme.colors.background.tertiary },
-            // `selected ? 1 : 0.5`, NOT `selected && !sending`.
-            //
-            // The `GlassBg` below only mounts once somebody is selected, so the disabled-state alpha is
-            // harmless — but dropping to 0.5 for the duration of `sending` put an alpha on a live
-            // GlassView's parent, and `expo-glass-effect` discards the glass entirely when that happens
-            // (expo/expo#41024). The button came back flat for the rest of the sheet's life.
-            //
-            // Nothing is lost by removing it: the spinner that replaces the label below already says
-            // "sending", which is a clearer signal than a dimmed button anyway.
-            { opacity: selected ? 1 : 0.5 },
+          onPress={actionIsSend ? send : copyLink}
+          disabled={!canAct}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canAct }}
+          style={({ pressed }) => [
+            styles.action,
+            {
+              backgroundColor: actionFilled
+                ? accent
+                : theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+              opacity: canAct || sending ? (pressed ? 0.85 : 1) : 0.5,
+            },
           ]}
         >
-          {glassActive && selected ? (
-            <GlassBg borderRadius={14} glassStyle="regular" interactive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.colors.accent.primary + '55'} />
-          ) : null}
           {sending ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
-            <Text variant="body" weight="semibold" color={selected ? '#FFFFFF' : theme.colors.text.tertiary}>
-              {t('share.send', 'Отправить')}
-            </Text>
+            <View style={styles.actionRow}>
+              <Feather
+                name={actionIsSend ? 'send' : 'link'}
+                size={17}
+                color={actionFilled ? '#FFFFFF' : theme.colors.text.primary}
+              />
+              <Text variant="body" weight="semibold" color={actionFilled ? '#FFFFFF' : theme.colors.text.primary}>
+                {actionLabel}
+              </Text>
+            </View>
           )}
         </Pressable>
       </View>
@@ -274,43 +369,47 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: 8, paddingBottom: 10 },
-  headerLabel: { marginLeft: 8, flex: 1 },
-  // Pushed to the right edge by the label's `flex: 1`, so the button stays pinned there whatever the
-  // translated title's length turns out to be.
-  copyBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
+  title: { paddingTop: 6, paddingBottom: 14 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 8 },
+  cell: { width: `${100 / COLUMNS}%`, alignItems: 'center', paddingBottom: 14 },
+  ring: {
+    width: RING,
+    height: RING,
+    borderRadius: RING / 2,
+    borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  listContent: { paddingHorizontal: 14, paddingBottom: 6 },
-  person: { width: 72, alignItems: 'center', marginHorizontal: 3 },
-  avatarWrap: { width: 44, height: 44 },
-  // Selected = dimmed. Slightly inset as well, so the state is legible even to someone who cannot
-  // distinguish the opacity change — an indicator carried by opacity alone is not an accessible one.
-  avatarSelected: { opacity: 0.45, transform: [{ scale: 0.92 }] },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 6, maxWidth: 70 },
-  name: { fontSize: 11, flexShrink: 1 },
-  empty: { paddingHorizontal: 20, paddingVertical: 22, alignItems: 'center' },
-  actions: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 },
-  btn: {
-    flex: 1,
-    height: 46,
-    borderRadius: 14,
+  // On the ring's lower right edge, outside the face. Outlined in the sheet colour so it reads as
+  // sitting on top of the ring rather than merging with it.
+  tick: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden',
   },
-  btnFlat: { borderWidth: 1 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 6, maxWidth: '90%' },
+  name: { fontSize: 12, flexShrink: 1 },
+  empty: { paddingHorizontal: 24, paddingVertical: 28, alignItems: 'center' },
+  footer: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 6 },
+  action: {
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });
 
 /**
  * Memoized on primitives plus the two callbacks. The screens that host this sheet are heavy and
- * re-render often; without this the horizontal list would be handed fresh props on every one of those
- * renders while the sheet is open.
+ * re-render often; without this the grid would be handed fresh props on every one of those renders
+ * while the sheet is open.
  */
 export const ShareToChatSheet = memo(
   ShareToChatSheetComponent,

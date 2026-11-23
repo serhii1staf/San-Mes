@@ -62,8 +62,6 @@ interface CachedPost {
   id: string;
   content: string;
   image_url: string | null;
-  likes_count: number;
-  comments_count: number;
   authorName: string;
   authorUsername: string;
   authorEmoji: string;
@@ -109,8 +107,6 @@ function fromRow(row: any): CachedPost | null {
     id: row.id,
     content: typeof row.content === 'string' ? row.content : '',
     image_url: row.image_url ?? null,
-    likes_count: Number(row.likes_count) || 0,
-    comments_count: Number(row.comments_count) || 0,
     authorName: p?.display_name || p?.username || 'User',
     authorUsername: p?.username || '',
     authorEmoji: p?.emoji || '😊',
@@ -164,8 +160,6 @@ export const PostPreviewCard = React.memo(function PostPreviewCard({
       id: storePost.id,
       content: storePost.content || '',
       image_url: storePost.image_url ?? null,
-      likes_count: storePost.likes_count || 0,
-      comments_count: storePost.comments_count || 0,
       authorName: storeProfile?.display_name || storeProfile?.username || 'User',
       authorUsername: storeProfile?.username || '',
       authorEmoji: storeProfile?.emoji || '😊',
@@ -324,12 +318,8 @@ export const PostPreviewCard = React.memo(function PostPreviewCard({
               {images.length > 0 ? t('post.preview.photo', 'Фото') : t('post.preview.empty', 'Публикация')}
             </Text>
           )}
-          <View style={styles.metaRow}>
-            <Feather name="heart" size={10} color={subColor} />
-            <Text variant="caption" color={subColor} style={styles.metaText}>{resolved.likes_count}</Text>
-            <Feather name="message-circle" size={10} color={subColor} style={styles.metaGap} />
-            <Text variant="caption" color={subColor} style={styles.metaText}>{resolved.comments_count}</Text>
-          </View>
+          {/* No like / comment counts. Asked: "иконка ... лайка и комментария, это старая фишка" —
+              likes went with the public feed, and a count frozen into a chat bubble is stale anyway. */}
         </View>
       </View>
 
@@ -384,9 +374,6 @@ const styles = StyleSheet.create({
   thumb: { width: THUMB, height: THUMB, borderRadius: 12 },
   textCol: { flex: 1, justifyContent: 'center', gap: 4 },
   bodyText: { fontSize: 12.5, lineHeight: 17 },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  metaText: { fontSize: 10.5 },
-  metaGap: { marginLeft: 6 },
   openBtn: {
     alignSelf: 'flex-start',
     flexDirection: 'row',

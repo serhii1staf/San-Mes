@@ -65,6 +65,14 @@ import { addTombstones, filterTombstoned, isTombstoned } from '../../src/service
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
 import { typingChatChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
 import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
+import {
+  CHAT_HISTORY_PAGE_LIMIT,
+  hasChatHistoryPrefetch,
+  historyCursorByConv,
+  historyFetchedAtByConv,
+  lastBackgroundedAt,
+  takeChatHistoryPrefetch,
+} from '../../src/services/chatHistorySync';
 import { useChatUnread } from '../../src/store/chatUnreadStore';
 import { markConversationRead, markConversationReadIfNewer } from '../../src/services/readState';
 import { toSceneText } from '../../src/services/syncService';
@@ -372,24 +380,13 @@ function schedulePersist(conversationId: string, write: () => void): void {
 // divergence on one crash. During normal use it never fires: leaving the chat or switching apps
 // happens first, and both flush.
 const FULL_PERSIST_DEBOUNCE_MS = 120000;
+// The history poll's per-conversation watermark and last-answer time live in
+// src/services/chatHistorySync.ts now, next to the head start a notification tap gives the first
+// request (`prefetchChatHistory`). Imported as `historyCursorByConv` / `historyFetchedAtByConv`.
 /**
- * The history poll's server watermark per conversation, for this app session.
- *
- * The cursor used to be a local of the poll effect, so every open of a chat started from nothing
- * and its first tick re-read a full 200-row page: a network round trip plus a parse, map, prune and
- * merge measured at 167-193 ms on the JS thread, about a second after the chat appeared, on every
- * open. The first open of a session still reads the full page (it is the only one that can notice
- * messages deleted on another device); reopening the chat later in the session resumes from here
- * and an idle reopen transfers an empty array.
+ * A reopen within this long of the last poll answer skips the immediate fetch (realtime connected,
+ * and the app has not been in the background since that answer).
  */
-const historyCursorByConv = new Map<string, string>();
-/**
- * When the history poll last got an answer for each conversation, this session. Closing a chat and
- * opening it again a few seconds later used to cost a fetch on every open; with realtime connected
- * everything since then has already arrived live, so a recent answer is skipped. See the poll effect.
- */
-const historyFetchedAtByConv = new Map<string, number>();
-/** A reopen within this long of the last poll answer skips the immediate fetch (realtime connected only). */
 const HISTORY_REOPEN_FRESH_MS = 60_000;
 
 /**
@@ -3576,7 +3573,7 @@ export default function ChatScreen() {
   // length against it: a page that came back SHORT of the limit was not truncated, which is what
   // makes "the server did not return this row" mean "the row is gone" rather than "the row is on
   // another page". A literal in two places would let those two drift apart silently.
-  const POLL_PAGE_LIMIT = 200;
+  const POLL_PAGE_LIMIT = CHAT_HISTORY_PAGE_LIMIT;
   useEffect(() => {
     if (!conversationId) return;
     // Wait for the id to be settled — see `convIdSettled`. Without this the first tick fires under the
@@ -3596,9 +3593,14 @@ export default function ChatScreen() {
     // is while the next chat is opening. Quickly going through several chats used to leave one such
     // page in flight per chat.
     const pageAbort = new AbortController();
+    // A notification tap started this chat's first request already (`prefetchChatHistory`), so its
+    // answer is usually here by the time the slide ends. See src/services/chatHistorySync.ts.
+    const headStart = hasChatHistoryPrefetch(conversationId);
+    let appStateSub: { remove: () => void } | null = null;
     // Off the open frame: this is a network round trip plus a store write, and first paint is
-    // already served from cache.
-    const handle = InteractionManager.runAfterInteractions(() => {
+    // already served from cache. Not after a notification tap, though: the new message is why the
+    // chat was opened, and waiting for `runAfterInteractions` on top of the slide only delays it.
+    const start = () => {
       // Cursor for the polls AFTER the first one. The first fetch of a session deliberately
       // has none: the local tail may have gaps (messages that arrived while the app was
       // closed land after whatever is cached), so a cursor built from it could skip them. Once
@@ -3615,12 +3617,20 @@ export default function ChatScreen() {
       let isFirstPage = !resumedCursor;
       const runFetch = async () => {
         try {
-          const { getMessages } = await import('../../src/lib/supabase');
-          const { messages, error } = await getMessages(conversationId, {
-            limit: POLL_PAGE_LIMIT,
-            ...(sinceCursor ? { since: sinceCursor } : {}),
-            signal: pageAbort.signal,
-          });
+          // The tap's head start, when it was made with this same cursor (consumed once). A failed
+          // one falls through to the ordinary request rather than leaving the chat to the next tick.
+          const pre = takeChatHistoryPrefetch(conversationId, sinceCursor);
+          let page = pre ? await pre : null;
+          if (cancelled) return;
+          if (!page || page.error) {
+            const { getMessages } = await import('../../src/lib/supabase');
+            page = await getMessages(conversationId, {
+              limit: POLL_PAGE_LIMIT,
+              ...(sinceCursor ? { since: sinceCursor } : {}),
+              signal: pageAbort.signal,
+            });
+          }
+          const { messages, error } = page;
           if (cancelled || error) return;
           historyFetchedAtByConv.set(conversationId, Date.now());
           // Advance the watermark even when the page is empty — nothing new means the cursor
@@ -3809,9 +3819,17 @@ export default function ChatScreen() {
 
       // A reopen seconds after the last answer, with realtime connected, has nothing to catch up on:
       // everything since then arrived live. Every open used to cost this request.
+      //
+      // But not across a stay in the background. Realtime's `connected` is stale then (iOS suspends
+      // the socket and Ably only notices when it next tries), so this skip dropped exactly the
+      // request that would have found the messages that came in meanwhile. And never after a
+      // notification tap, whose message is the reason for the open.
       const fetchedAt = historyFetchedAtByConv.get(conversationId) ?? 0;
       const realtimeUp = getRealtime()?.connection?.state === 'connected';
-      if (!(resumedCursor && realtimeUp && Date.now() - fetchedAt < HISTORY_REOPEN_FRESH_MS)) {
+      const answeredSinceBackground = fetchedAt > lastBackgroundedAt();
+      const fresh =
+        !!resumedCursor && realtimeUp && answeredSinceBackground && Date.now() - fetchedAt < HISTORY_REOPEN_FRESH_MS;
+      if (headStart || !fresh) {
         void runFetch();
       }
       // While the realtime socket is connected every message already arrives live, so the poll
@@ -3832,12 +3850,32 @@ export default function ChatScreen() {
         if (getRealtime()?.connection?.state === 'connected' && tick % 10 !== 0) return;
         void runFetch();
       }, HISTORY_POLL_MS);
-    });
+
+      // Back from the background with this chat on screen. Whatever arrived meanwhile is only on
+      // the server until realtime reconnects and replays it, which takes seconds, and the poll
+      // above may be minutes away. Tapping this chat's own push lands here too: the tap handler
+      // does not navigate to the chat that is already open. The cursor makes this a small request.
+      let wentToBackground = false;
+      appStateSub = AppState.addEventListener('change', (next) => {
+        if (next === 'background') {
+          wentToBackground = true;
+          return;
+        }
+        if (next !== 'active' || !wentToBackground) return;
+        wentToBackground = false;
+        if (cancelled || !chatFocusedRef.current) return;
+        if (!useConnectivityStore.getState().isOnline) return;
+        void runFetch();
+      });
+    };
+    const handle = headStart ? null : InteractionManager.runAfterInteractions(start);
+    if (headStart) start();
     return () => {
       cancelled = true;
       pageAbort.abort();
-      handle.cancel();
+      handle?.cancel();
       if (timer) clearInterval(timer);
+      try { appStateSub?.remove(); } catch {}
     };
   }, [conversationId, convIdSettled, transitionSettled, setMessages]);
 

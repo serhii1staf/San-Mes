@@ -329,9 +329,17 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
         dispose = m.installNotificationTapHandler((path) => {
           try {
             const current = pathnameRef.current;
-            let target = path;
-            try { target = decodeURIComponent(path); } catch {}
+            // The pathname carries no query, and a chat route now does (`?participantId=`).
+            const pathOnly = path.split('?')[0];
+            let target = pathOnly;
+            try { target = decodeURIComponent(pathOnly); } catch {}
             if (current === target) return;
+            // Start the chat's history request now, so it runs during the slide instead of after
+            // it. See src/services/chatHistorySync.ts.
+            const chat = /^\/chat\/([^/?]+)$/.exec(target);
+            if (chat) {
+              try { require('../src/services/chatHistorySync').prefetchChatHistory(chat[1]); } catch {}
+            }
             router.push(path as any);
           } catch {}
         });
