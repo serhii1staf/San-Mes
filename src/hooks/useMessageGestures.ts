@@ -22,7 +22,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   useAnimatedRef,
-
+  makeMutable,
   withSpring,
   measure,
   runOnJS,
@@ -37,6 +37,44 @@ import type { ActionZone } from '../components/ui/MessageContextMenu';
 // Pixels of left-swipe (on release) that commit a reply. Matches the legacy
 // MessageBubble constant exactly.
 export const REPLY_THRESHOLD = 60;
+
+// ── LETTING GO WITHOUT MOVING CHOOSES NOTHING (Nov 2026) ─────────────────────
+//
+// Reported, with a recording: hold a message, the menu opens, the finger is now on "Копировать" or
+// "Переслать", and letting go runs it ("оно думает, что я нажимаю"). The recording shows the share
+// sheet opening right after a plain hold. The card opens beside the item, and for an item near the
+// composer that is under the finger; the finger's own jitter then counted as a drag onto that row,
+// and the release fired it.
+//
+// Now a release chooses an action only once the finger has moved this far from where the hold
+// began. Sliding onto an action and letting go still works; holding still and letting go leaves the
+// menu open, to tap.
+//
+// ── AND THE HOLD LASTS UNTIL THE FINGER LIFTS ────────────────────────────────
+//
+// The hold used `maxDistance(20)` on the belief that it limits the finger only until the menu opens.
+// RNGH 2.28 applies it for the whole gesture: past 20 pt an ACTIVE long press is cancelled (Android
+// `LongPressGestureHandler.onHandle`, iOS `RNBetterLongPressGestureRecognizer.shouldCancelGesture`),
+// and so is one whose finger leaves the bubble (`shouldCancelWhenOutside`, on by default for a long
+// press). A cancel still runs `onEnd`, with `success` false, and `onEnd` fired whatever row was under
+// the finger at that moment. So sliding towards an action could fire a row on the way, before the
+// finger lifted, and it never reached a row further than 20 pt away.
+//
+// Both limits are now off for the gesture, and the 20 pt one applies only before the menu opens, in
+// `onTouchesMove` (`HOLD_SLOP`), which fails the hold the way `maxDistance` used to. After the menu
+// opens the finger can go anywhere on screen, and only a release (`success`) runs an action.
+//
+// The points and the flag are module-level, not per bubble: only one hold can be in progress, and
+// every bubble's hook already avoids shared values it does not need (see the notes below).
+const DRAG_ARM_DISTANCE = 12;
+const HOLD_SLOP = 20;
+// For RNGH's own distance check, which must never cancel an open hold (see above).
+const NO_DISTANCE_LIMIT = 100000;
+const holdDownX = makeMutable(0);
+const holdDownY = makeMutable(0);
+const holdStartX = makeMutable(0);
+const holdStartY = makeMutable(0);
+const holdArmed = makeMutable(false);
 
 export interface MessageGestureParams<T extends { id: string }> {
   /** The message this bubble renders — passed back to the reply/menu callbacks. */
@@ -233,16 +271,25 @@ export function useMessageGestures<T extends { id: string }>({
     () =>
       Gesture.LongPress()
         .minDuration(300)
-        // maxDistance gates ACTIVATION only (cancel if the finger travels past
-        // it BEFORE 300 ms). Kept small so a real scroll cancels the hold while
-        // minor jitter still opens the menu; post-activation drag onto the
-        // action rows is never restricted.
-        .maxDistance(20)
-        .onStart(() => {
+        // RNGH would cancel the open hold past either of these; the limit before the menu opens is
+        // `HOLD_SLOP`, in `onTouchesMove` (see "THE HOLD LASTS UNTIL THE FINGER LIFTS").
+        .maxDistance(NO_DISTANCE_LIMIT)
+        .shouldCancelWhenOutside(false)
+        .onTouchesDown((e) => {
+          'worklet';
+          const touch = e.allTouches[0];
+          if (!touch) return;
+          holdDownX.value = touch.absoluteX;
+          holdDownY.value = touch.absoluteY;
+        })
+        .onStart((e) => {
           'worklet';
           dragActive.value = true;
           dragFingerY.value = -1;
           hoveredAction.value = '';
+          holdStartX.value = e.absoluteX;
+          holdStartY.value = e.absoluteY;
+          holdArmed.value = false;
           if (measures) {
             const m = measure(bubbleRef);
             if (m) runOnJS(fireMeasured)(m.pageX, m.pageY, m.width, m.height);
@@ -250,14 +297,27 @@ export function useMessageGestures<T extends { id: string }>({
           runOnJS(triggerHaptic)('medium');
           runOnJS(fireLongPress)();
         })
-        .onTouchesMove((e) => {
+        .onTouchesMove((e, manager) => {
           'worklet';
-          if (!dragActive.value) return;
           const touch = e.allTouches[0];
           if (!touch) return;
           const y = touch.absoluteY;
           const x = touch.absoluteX;
+          if (!dragActive.value) {
+            // The menu is not open yet: a finger that travels is a scroll or a swipe, not a hold.
+            const dx = x - holdDownX.value;
+            const dy = y - holdDownY.value;
+            if (dx * dx + dy * dy > HOLD_SLOP * HOLD_SLOP) manager.fail();
+            return;
+          }
           dragFingerY.value = y;
+          // Not choosing anything until the finger has actually moved (see `DRAG_ARM_DISTANCE`).
+          if (!holdArmed.value) {
+            const dx = x - holdStartX.value;
+            const dy = y - holdStartY.value;
+            if (dx * dx + dy * dy < DRAG_ARM_DISTANCE * DRAG_ARM_DISTANCE) return;
+            holdArmed.value = true;
+          }
           const zones = actionZones.value;
           let found = '';
           for (let i = 0; i < zones.length; i++) {
@@ -273,8 +333,11 @@ export function useMessageGestures<T extends { id: string }>({
             if (found !== '') runOnJS(triggerHaptic)('light');
           }
         })
-        .onEnd(() => {
+        .onEnd((_e, success) => {
           'worklet';
+          // A release over a row, after the finger moved. A cancelled hold (the system took the touch)
+          // chooses nothing.
+          if (!success || !holdArmed.value) return;
           const action = hoveredAction.value;
           if (action !== '') runOnJS(fireDragAction)(action);
         })
@@ -283,6 +346,7 @@ export function useMessageGestures<T extends { id: string }>({
           dragActive.value = false;
           dragFingerY.value = -1;
           hoveredAction.value = '';
+          holdArmed.value = false;
         }),
     [fireLongPress, fireMeasured, measures, bubbleRef, fireDragAction, dragActive, dragFingerY, hoveredAction, actionZones],
   );
