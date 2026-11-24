@@ -9,8 +9,8 @@
  * slide distance stays right after a rotation or a window resize.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Pressable, Image, Modal, Animated, Alert, PanResponder, useWindowDimensions } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { View, Pressable, Modal, Animated, Alert, PanResponder, useWindowDimensions } from 'react-native';
+import { Feather, MaterialIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
@@ -25,6 +25,7 @@ import { useBlockedUsersStore, useIsBlocked } from '../../store/blockedUsersStor
 import { submitReport } from '../../services/moderation';
 import { useT } from '../../i18n/store';
 import { profileUrl } from './ProfileLayout';
+import { openProfileQr } from '../../store/profileQrStore';
 
 // Report category KEYS — labels come from the dictionary at render time.
 const REPORT_CATEGORIES: { key: string; labelKey: string }[] = [
@@ -53,7 +54,6 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
   const slideAnim = useRef(new Animated.Value(windowHeight)).current;
   const dragY = useRef(new Animated.Value(0)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
-  const [showQR, setShowQR] = useState(false);
   const [mode, setMode] = useState<'menu' | 'report'>('menu');
   const isClosing = useRef(false);
   // Action to run once this sheet has fully closed — two overlapping RN Modals on iOS end with the
@@ -68,7 +68,6 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
       Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
     ]).start(() => {
       setTimeout(() => {
-        setShowQR(false);
         setMode('menu');
         onClose();
         const next = afterCloseRef.current;
@@ -181,20 +180,16 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
 
   if (!profile) return null;
   const translateY = Animated.add(slideAnim, dragY);
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(profileUrl(profile.id))}`;
 
-  if (showQR) {
-    return (
-      <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setShowQR(false)} statusBarTranslucent>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }} onPress={() => setShowQR(false)}>
-          <View style={{ backgroundColor: '#FFF', borderRadius: 20, padding: 20 }}>
-            <Image source={{ uri: qrUrl }} style={{ width: 200, height: 200 }} resizeMode="contain" />
-          </View>
-          <Text variant="caption" color="#FFFFFF" style={{ marginTop: 16 }}>{t('profile.qr_close_hint')}</Text>
-        </Pressable>
-      </Modal>
-    );
-  }
+  // The QR screen is the root-level one (ProfileQrHost), opened once this sheet has gone: it is not a
+  // Modal, so it would otherwise be drawn under this one.
+  const openQr = () => {
+    triggerHaptic('light');
+    const p = profile;
+    afterCloseRef.current = () =>
+      openProfileQr({ id: p.id, username: p.username, displayName: p.display_name, emoji: p.emoji });
+    handleClose();
+  };
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={handleClose} statusBarTranslucent>
@@ -223,8 +218,16 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
                         </View>
                         <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{profile.username || ''}</Text>
                       </View>
-                      <Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ backgroundColor: '#FFF', borderRadius: 8, padding: 4 }}>
-                        <Image source={{ uri: qrUrl }} style={{ width: 44, height: 44 }} resizeMode="contain" />
+                      {/* A QR glyph, not this profile's code: the thumbnail was an image fetched from a
+                          QR service on every open of this sheet, and the code itself is shown, made on
+                          the device, by the screen this opens. */}
+                      <Pressable
+                        onPress={openQr}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('profile.qr_title')}
+                        style={{ backgroundColor: '#FFF', borderRadius: 12, width: 50, height: 50, alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <MaterialIcons name="qr-code-2" size={36} color="#15151B" />
                       </Pressable>
                     </View>
                   </View>

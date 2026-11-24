@@ -17,8 +17,6 @@ import {
   Pressable,
   Animated,
   StyleSheet,
-  Image,
-  Modal,
   Platform,
   InteractionManager,
   useWindowDimensions,
@@ -379,21 +377,8 @@ export function profileUrl(profileId: string): string {
   return `https://san-m-app.com/profile/${profileId}`;
 }
 
-export function ProfileQRModal({ visible, onClose, profileId, title }: { visible: boolean; onClose: () => void; profileId: string; title: string }) {
-  const t = useT();
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(profileUrl(profileId))}`;
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }} onPress={onClose}>
-        <Text variant="body" weight="bold" color="#FFFFFF" style={{ marginBottom: 20 }}>{title}</Text>
-        <View style={{ backgroundColor: '#FFF', borderRadius: 20, padding: 20 }}>
-          {visible ? <Image source={{ uri: qrUrl }} style={{ width: 200, height: 200 }} resizeMode="contain" /> : null}
-        </View>
-        <Text variant="caption" color="#FFFFFF" style={{ marginTop: 20, opacity: 0.7 }}>{t('profile.qr_close_hint')}</Text>
-      </Pressable>
-    </Modal>
-  );
-}
+// `ProfileQRModal` lived here: an `<Image>` of api.qrserver.com inside a Modal. It is replaced by the
+// root-level QR screen (src/components/profile/ProfileQrOverlay.tsx), opened with `openProfileQr`.
 
 const styles = StyleSheet.create({
   chrome: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
