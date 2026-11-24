@@ -11,6 +11,8 @@ export interface LocalPost {
   comments_count: number;
   shares_count: number;
   created_at: string;
+  /** The author closed the comments. Absent from copies cached before the setting existed. */
+  comments_off?: boolean;
   status?: 'synced' | 'pending' | 'failed';
   localImageUris?: string[];
 }

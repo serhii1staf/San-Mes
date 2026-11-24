@@ -14,17 +14,20 @@ import {
   StyleSheet,
   ActivityIndicator,
   Platform,
+  Switch,
+  Keyboard,
 } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import Reanimated from 'react-native-reanimated';
 import { useKeyboardRiseStyle } from '../../src/hooks/useKeyboardFrames';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { useAuthStore } from '../../src/store';
 import { createPost, joinImageUrls, parseImageUrls, updatePost, uploadPostImage } from '../../src/lib/supabase';
 // `moderation/index` explicitly: `services/moderation` resolves to the sibling moderation.ts (reports).
@@ -51,6 +54,29 @@ export default function NewPostScreen() {
   const [text, setText] = useState(() => editing?.content || '');
   const [photos, setPhotos] = useState<string[]>(() => (editing ? parseImageUrls(editing.image_url) : []));
   const [busy, setBusy] = useState(false);
+  // ── THE POST'S SETTINGS (Nov 2026) ─────────────────────────────────────────────────────────────
+  //
+  // Requested: closing a post's comments, when publishing and later from Изменить. Everyone still
+  // sees the post and the comments already there; nobody adds one, the author included, and the
+  // thread says so where its composer was (app/comments/[id].tsx). The Worker refuses the comment
+  // too (403 `comments_off`), so an install without this update cannot get round it.
+  //
+  // Behind one button that opens a sheet, so the next setting has a place without another button in
+  // the toolbar. The button shows a crossed-out bubble while comments are off, so a closed post is
+  // not a surprise at the moment of publishing.
+  const [commentsOff, setCommentsOff] = useState(() => !!editing?.comments_off);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = useCallback(() => {
+    triggerHaptic('light');
+    // The sheet is a modal: with the keyboard left up it would sit on top of the sheet.
+    Keyboard.dismiss();
+    setSettingsOpen(true);
+  }, []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const toggleComments = useCallback(() => {
+    triggerHaptic('selection');
+    setCommentsOff((v) => !v);
+  }, []);
 
   // Asked to edit a post this screen cannot find: close rather than turn into a new-post screen,
   // where pressing the button would publish a duplicate.
@@ -106,7 +132,7 @@ export default function NewPostScreen() {
         urls.push(url);
       }
       if (editing) {
-        const { error } = await updatePost(editing.id, body, urls.length > 0 ? joinImageUrls(urls) : null);
+        const { error } = await updatePost(editing.id, body, urls.length > 0 ? joinImageUrls(urls) : null, commentsOff);
         if (error) {
           showToast(error, 'alert-circle');
           setBusy(false);
@@ -117,7 +143,7 @@ export default function NewPostScreen() {
         router.back();
         return;
       }
-      const { post, error } = await createPost(userId, body, urls.length > 0 ? joinImageUrls(urls) : undefined);
+      const { post, error } = await createPost(userId, body, urls.length > 0 ? joinImageUrls(urls) : undefined, commentsOff);
       if (error || !post) {
         showToast(error || t('post.publish_failed'), 'alert-circle');
         setBusy(false);
@@ -130,7 +156,7 @@ export default function NewPostScreen() {
       showToast(e?.message || t('post.publish_failed'), 'alert-circle');
       setBusy(false);
     }
-  }, [canPublish, userId, text, photos, t, editing]);
+  }, [canPublish, userId, text, photos, t, editing, commentsOff]);
 
   // ── THE PHOTO BUTTON WAS UNDER THE KEYBOARD ─────────────────────────────────
   // Reported on iPhone: the field autofocuses, the keyboard comes up, and the toolbar with «Фото»
@@ -220,10 +246,58 @@ export default function NewPostScreen() {
             {t('create.photos_count', undefined, { n: photos.length, max: MAX_PHOTOS })}
           </Text>
         </Pressable>
+        {/* Icon only: with a label the row ran past the screen's edge on a 390 pt phone (the counter
+            was pushed off it on the emulator). The icon itself says when comments are off. */}
+        <Pressable
+          onPress={openSettings}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel={commentsOff ? `${t('post.settings')}, ${t('post.comments_off_short')}` : t('post.settings')}
+          style={[styles.tool, styles.settingsTool, { backgroundColor: theme.colors.background.elevated }]}
+        >
+          {commentsOff ? (
+            <MaterialCommunityIcons name="comment-off-outline" size={19} color={theme.colors.accent.primary} />
+          ) : (
+            <Feather name="sliders" size={18} color={theme.colors.text.secondary} />
+          )}
+        </Pressable>
         <View style={{ flex: 1 }} />
         <Text variant="caption" color={theme.colors.text.tertiary}>{text.length}/{MAX_CHARS}</Text>
       </View>
       </Reanimated.View>
+
+      <SlideUpSheet visible={settingsOpen} onClose={closeSettings} expandable={false}>
+        <View style={styles.sheet}>
+          <Text variant="body" weight="semibold" style={styles.sheetTitle}>{t('post.settings')}</Text>
+          <Pressable
+            onPress={toggleComments}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: !commentsOff }}
+            accessibilityLabel={t('post.comments')}
+            style={[styles.settingRow, { backgroundColor: theme.colors.background.elevated }]}
+          >
+            <View style={[styles.settingIcon, { backgroundColor: theme.colors.accent.primary + '1F' }]}>
+              <Feather name="message-circle" size={18} color={theme.colors.accent.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text variant="body" weight="semibold" style={{ fontSize: 15 }}>{t('post.comments')}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>
+                {commentsOff ? t('post.comments_off_hint') : t('post.comments_on_hint')}
+              </Text>
+            </View>
+            {/* The row takes the tap, the switch only shows the state: a native switch inside a
+                Pressable would toggle twice, once for each. Hidden from screen readers, since the
+                row itself is the switch for them. */}
+            <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+              <Switch
+                value={!commentsOff}
+                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+          </Pressable>
+        </View>
+      </SlideUpSheet>
     </View>
   );
 }
@@ -264,4 +338,9 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   tool: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, height: 38, borderRadius: 19 },
+  settingsTool: { marginLeft: 8, width: 44, paddingHorizontal: 0, justifyContent: 'center' },
+  sheet: { paddingHorizontal: 16, paddingBottom: 8 },
+  sheetTitle: { fontSize: 16, marginBottom: 12, marginLeft: 2 },
+  settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 16 },
+  settingIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
 });

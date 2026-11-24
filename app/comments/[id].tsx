@@ -43,7 +43,7 @@ import { leaseChannel } from '../../src/services/realtime/channelLease';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
 import { typingPostChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
 import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
-import { getComments, createComment, updateComment, deleteComment, deletePost, isRepost, parseImageUrls } from '../../src/lib/supabase';
+import { getComments, createComment, updateComment, deleteComment, deletePost, isRepost, parseImageUrls, COMMENTS_OFF_ERROR } from '../../src/lib/supabase';
 import { submitReport } from '../../src/services/moderation';
 import { invalidateProfilePosts, invalidateProfileReplies } from '../../src/services/profilePosts';
 import { generateClientMutationId, queueMutation } from '../../src/services/offlineQueue';
@@ -240,10 +240,45 @@ function mergeCommentPages(prev: any[], page: any[]): any[] {
 type CommentRowProps = {
   item: any;
   onLongPress: (c: any) => void;
-  onReply: (c: any) => void;
+  /** Absent while the post's comments are closed: no «Ответить», no swipe to reply. */
+  onReply?: (c: any) => void;
   onImagePress: (uri: string, comment?: any) => void;
   gifTracker: GifVisTracker;
 };
+
+/** What the swipe hook calls on a row that cannot be replied to (it is disabled there anyway). */
+const NO_REPLY = () => {};
+
+// Where the composer was, on a thread whose comments the author closed (see "A THREAD WHOSE
+// COMMENTS ARE CLOSED"). One quiet line in the field's own capsule and height (44 pt), so the list
+// keeps the bottom padding it has with the composer.
+const CommentsClosedNotice = React.memo(function CommentsClosedNotice({ own, glassActive }: { own: boolean; glassActive: boolean }) {
+  const theme = useTheme();
+  const t = useT();
+  const label = own ? t('comments.off_own') : t('comments.off');
+  const content = (
+    <>
+      <MaterialIcons name="lock-outline" size={16} color={theme.colors.text.tertiary} />
+      <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} numberOfLines={1} style={closedNoticeStyles.label}>
+        {label}
+      </Text>
+    </>
+  );
+  return glassActive ? (
+    <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} accessible accessibilityLabel={label} style={closedNoticeStyles.pill}>
+      {content}
+    </NativeGlassView>
+  ) : (
+    <View accessible accessibilityLabel={label} style={[closedNoticeStyles.pill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, borderWidth: 1 }]}>
+      {content}
+    </View>
+  );
+});
+
+const closedNoticeStyles = StyleSheet.create({
+  pill: { flex: 1, minHeight: 44, borderRadius: 22, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  label: { fontSize: 13, marginLeft: 6, flexShrink: 1 },
+});
 
 // Swipe-to-reply affordance. Module-level StyleSheet so the objects are created once for the whole
 // list rather than per row per render. `position: absolute` means the icon adds ZERO layout, so a
@@ -281,7 +316,8 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
   // blocked-author branch below returns a placeholder, and hooks cannot be skipped.
   const { gesture: swipeGesture, rowAnimStyle, translateX: swipeTranslateX, replyIconArmed } = useSwipeToReply({
     item,
-    onReply,
+    onReply: onReply ?? NO_REPLY,
+    enabled: !!onReply,
   });
   // Parsed body + GIF detection are computed BEFORE the early return so the
   // staggered-reveal hook below is always called (rules of hooks). Cheap.
@@ -416,9 +452,11 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
             <LinkPreview url={link} onLongPress={openMenuHere} delayLongPress={300} />
           </Pressable>
         ) : null}
-        <Pressable onPress={() => onReply(item)} onLongPress={openMenuHere} delayLongPress={300} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('comments.reply')}</Text>
-        </Pressable>
+        {onReply ? (
+          <Pressable onPress={() => onReply(item)} onLongPress={openMenuHere} delayLongPress={300} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('comments.reply')}</Text>
+          </Pressable>
+        ) : null}
       </View>
     </Pressable>
         </Reanimated.View>
@@ -724,6 +762,18 @@ export default function CommentsScreen() {
   const [isLoading, setIsLoading] = useState(initialCommentsRef.current.length === 0);
   const [isSending, setIsSending] = useState(false);
   const [postData, setPostData] = useState<any>(null);
+  // ── A THREAD WHOSE COMMENTS ARE CLOSED (Nov 2026) ──────────────────────────────────────────────
+  //
+  // The author can close a post's comments (app/post/new.tsx, «Настройки публикации»). The thread
+  // stays readable, and where the composer was it says who closed it. No «Ответить», no swipe to
+  // reply, no Reply or Edit in the hold menu; Copy, Delete and Report stay (App Review 1.2).
+  //
+  // `postData.comments_off` is what the post said when it was read. `commentsOffLive` is newer when
+  // set: the author's edit arriving over realtime (`post.edit`), or the Worker refusing a send with
+  // `comments_off` because it was closed after this screen read the post.
+  const [commentsOffLive, setCommentsOffLive] = useState<boolean | null>(null);
+  const commentsOff = commentsOffLive ?? postData?.comments_off === true;
+  const ownPost = !!user?.id && (postData?.author_id === user.id || postData?.profiles?.id === user.id);
   // A comment changes the commenter's «Ответы». It used to refetch the post author's posts page as
   // well, for the comment counter on the card; the cards no longer show counters, so that was a
   // Worker request per comment that could not change anything on screen.
@@ -996,7 +1046,8 @@ export default function CommentsScreen() {
     }
     const handle = InteractionManager.runAfterInteractions(() => {
       loadComments();
-      if (!cached) loadPost();
+      // A copy cached before posts carried `comments_off` cannot say whether the thread is closed.
+      if (!cached || typeof cached.comments_off !== 'boolean') loadPost();
     });
     return () => handle.cancel();
   }, [postId]);
@@ -1251,6 +1302,13 @@ export default function CommentsScreen() {
       setComments((prev) => prev.filter((c) => String(c?.id) !== String(p.id)));
     };
 
+    // The author edited the post: only its comment setting is read here (the composer and the
+    // notice swap at once). A Worker older than the setting sends no `comments_off`.
+    const onPostEdit = (msg: { data?: any }) => {
+      const p = msg?.data;
+      if (typeof p?.comments_off === 'boolean') setCommentsOffLive(p.comments_off);
+    };
+
     // Rejections are surfaced rather than discarded. A silently dead subscription here is
     // indistinguishable from "nobody commented", which is the state this screen was in.
     const onErr = (event: string) => (err: unknown) => {
@@ -1261,10 +1319,12 @@ export default function CommentsScreen() {
     channel.subscribe('comment.new', onNew).catch(onErr('comment.new'));
     channel.subscribe('comment.edit', onEdit).catch(onErr('comment.edit'));
     channel.subscribe('comment.delete', onDelete).catch(onErr('comment.delete'));
+    channel.subscribe('post.edit', onPostEdit).catch(onErr('post.edit'));
     return () => {
       try { channel.unsubscribe('comment.new', onNew); } catch {}
       try { channel.unsubscribe('comment.edit', onEdit); } catch {}
       try { channel.unsubscribe('comment.delete', onDelete); } catch {}
+      try { channel.unsubscribe('post.edit', onPostEdit); } catch {}
       lease.release();
     };
   }, [postId]);
@@ -1320,6 +1380,15 @@ export default function CommentsScreen() {
     };
   }, [postId]);
 
+  // The Worker refused the comment because the author closed the comments after this screen read
+  // the post. Show the notice instead of queueing a comment that can never be sent.
+  const refusedAsClosed = (error: string | null): boolean => {
+    if (error !== COMMENTS_OFF_ERROR) return false;
+    setCommentsOffLive(true);
+    showToast(t('comments.off'), 'lock');
+    return true;
+  };
+
   const handleSend = async () => {
     // RE-ENTRY GUARD: prevent a double-send if invoked again while a send is
     // already in flight (the button is also disabled, but this is belt-and-braces).
@@ -1371,6 +1440,8 @@ export default function CommentsScreen() {
       refreshProfileCaches();
       await landSentComment(created);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    } else if (refusedAsClosed(error)) {
+      // Nothing is queued; the composer gives way to the notice.
     } else {
       // OFFLINE / TRANSIENT FAILURE FALLBACK: queue with the SAME cmid so a
       // later retry shares the idempotency key (server dedupes → no double
@@ -1435,6 +1506,8 @@ export default function CommentsScreen() {
       refreshProfileCaches();
       await landSentComment(created);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    } else if (refusedAsClosed(error)) {
+      // Nothing is queued.
     } else {
       // OFFLINE / TRANSIENT FALLBACK: queue with the SAME cmid (server dedupes).
       await queueMutation('create_comment', { postId, content }, cmid);
@@ -1463,6 +1536,8 @@ export default function CommentsScreen() {
       refreshProfileCaches();
       await landSentComment(created);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    } else if (refusedAsClosed(error)) {
+      // Nothing is queued.
     } else {
       // OFFLINE / TRANSIENT FALLBACK: queue with the SAME cmid (server dedupes).
       await queueMutation('create_comment', { postId, content: sendText }, cmid);
@@ -1553,6 +1628,16 @@ export default function CommentsScreen() {
     setPanelTab(null);
     setKeepLifted(false);
   }, []);
+
+  // Closed while the reader was writing (realtime or a refused send): the composer is replaced by
+  // the notice, so nothing it opened may stay up over the thread.
+  useEffect(() => {
+    if (!commentsOff) return;
+    setReplyTo(null);
+    setEditing(null);
+    dismissPanel();
+    Keyboard.dismiss();
+  }, [commentsOff, dismissPanel]);
 
   // Tap-to-dismiss that yields to scrolling — a Tap fails the moment the finger
   // moves, so the comment list scrolls freely with the panel open; a plain tap
@@ -1652,9 +1737,9 @@ export default function CommentsScreen() {
   }, []);
   const renderComment = useCallback(
     ({ item }: { item: any }) => (
-      <CommentRow item={item} onLongPress={openCommentMenu} onReply={startReply} onImagePress={openImageViewer} gifTracker={gifTracker} />
+      <CommentRow item={item} onLongPress={openCommentMenu} onReply={commentsOff ? undefined : startReply} onImagePress={openImageViewer} gifTracker={gifTracker} />
     ),
-    [openCommentMenu, startReply, openImageViewer, gifTracker],
+    [openCommentMenu, startReply, openImageViewer, gifTracker, commentsOff],
   );
   const keyExtractor = useCallback((item: any) => item.id, []);
   // Recycle pools by comment row SHAPE so FlashList v2 reuses a text cell only
@@ -1691,10 +1776,11 @@ export default function CommentsScreen() {
     () => (
       <View style={{ alignItems: 'center', paddingTop: 40 }}>
         <RNText style={{ fontSize: 32 }} allowFontScaling={false}>💬</RNText>
-        <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>{t('comments.empty')}</Text>
+        {/* "Пока нет" promises comments that a closed thread will not get. */}
+        <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>{commentsOff ? t('comments.none') : t('comments.empty')}</Text>
       </View>
     ),
-    [theme, t],
+    [theme, t, commentsOff],
   );
 
   // Memoized post-header element. Previously an inline IIFE that ran on EVERY
@@ -2015,6 +2101,11 @@ export default function CommentsScreen() {
               </Pressable>
             </View>
           ) : null}
+          {commentsOff ? (
+          <Reanimated.View style={[{ flexDirection: 'row', paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
+            <CommentsClosedNotice own={ownPost} glassActive={glassActive} />
+          </Reanimated.View>
+          ) : (
           <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
             {/* Input wrap → interactive liquid glass holding the TextInput +
                 GIF button as CHILDREN (matches ChatInputBar). NO visible border
@@ -2080,6 +2171,7 @@ export default function CommentsScreen() {
               </Pressable>
             )}
           </Reanimated.View>
+          )}
         </Reanimated.View>
 
         {/* Media panel (emoji / GIF) — twin of the chat composer's. Mounted
@@ -2125,6 +2217,7 @@ export default function CommentsScreen() {
               visible={!!actionComment}
               comment={actionComment}
               isOwn={isOwnComment}
+              readOnly={commentsOff}
               displayBody={parsed.body}
               replyUser={parsed.replyUser}
               replyText={parsed.replyText}

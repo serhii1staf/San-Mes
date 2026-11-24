@@ -188,7 +188,12 @@ export interface DBPost {
   comments_count: number;
   shares_count: number;
   created_at: string;
+  /** The author closed the comments: the thread is read-only. Absent from servers before it existed. */
+  comments_off?: boolean;
 }
+
+/** The Worker's refusal of a comment on a post whose comments are closed (403). */
+export const COMMENTS_OFF_ERROR = 'comments_off';
 
 const REPOST_PREFIX = '::repost::';
 
@@ -369,20 +374,23 @@ export async function isFollowing(followerId: string, followingId: string): Prom
 
 // ─── Writes ────────────────────────────────────────────────────────────
 
-export async function createPost(_authorId: string, content: string, imageUrl?: string): Promise<{ post: DBPost | null; error: string | null }> {
+export async function createPost(_authorId: string, content: string, imageUrl?: string, commentsOff = false): Promise<{ post: DBPost | null; error: string | null }> {
   const { data, error } = await apiPost<DBPost>('/v1/posts', {
     content,
     image_url: imageUrl ?? null,
+    // Only when set, so the body of an ordinary post is unchanged.
+    ...(commentsOff ? { comments_off: true } : {}),
   });
   if (error) return { post: null, error };
   return { post: data, error: null };
 }
 
-/** Author-only edit of a post's text and photos (Worker `PATCH /v1/posts/:id`). */
-export async function updatePost(postId: string, content: string, imageUrl: string | null): Promise<{ error: string | null }> {
+/** Author-only edit of a post's text, photos and comment setting (Worker `PATCH /v1/posts/:id`). */
+export async function updatePost(postId: string, content: string, imageUrl: string | null, commentsOff?: boolean): Promise<{ error: string | null }> {
   const { error } = await apiPatch<DBPost>(`/v1/posts/${encodeURIComponent(postId)}`, {
     content,
     image_url: imageUrl,
+    ...(typeof commentsOff === 'boolean' ? { comments_off: commentsOff } : {}),
   });
   return { error };
 }

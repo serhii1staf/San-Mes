@@ -33,6 +33,8 @@ export interface ProfilePost {
   likes_count: number;
   comments_count: number;
   created_at: string;
+  /** The author closed the comments (see `DBPost.comments_off`). */
+  comments_off?: boolean;
   profiles?: ProfilePostAuthor | null;
 }
 
