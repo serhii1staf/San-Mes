@@ -19,6 +19,15 @@ import { isQrCached, qrPaths } from '../../utils/qrMatrix';
 /** The hole in the middle, as a fraction of the side, when there is something to put in it. */
 const CENTER_FRACTION = 0.23;
 
+/**
+ * Make the code for `value` now, synchronously, so that a `QrCodeView` mounted after this draws it on
+ * its first frame instead of drawing an empty square and fading the code in. For a caller that can
+ * hold its own appearance until the code exists (the QR screen does).
+ */
+export function warmQrCode(value: string, withCenter: boolean): void {
+  qrPaths(value, 'H', withCenter ? CENTER_FRACTION : 0);
+}
+
 export const QrCodeView = memo(function QrCodeView({
   value,
   size,

@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Pressable, StyleSheet, Dimensions, FlatList, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { View, Pressable, StyleSheet, Dimensions, FlatList, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
@@ -7,13 +7,17 @@ import Reanimated, {
   useAnimatedStyle,
   withTiming,
   withSpring,
+  withDecay,
+  cancelAnimation,
   runOnJS,
   interpolate,
   Extrapolation,
   Easing,
 } from 'react-native-reanimated';
+import type { ImageLoadEventData } from 'expo-image';
 import { CachedImage } from '../ui/CachedImage';
 import { ModalStatusBar } from '../ui/ModalStatusBar';
+import { getImageDims } from '../../services/imageDimsCache';
 import { useTabBarStore } from '../../store/tabBarStore';
 import { GlassBg, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { AppBlurView } from '../ui/AppBlurView';
@@ -173,6 +177,49 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const DISMISS_DISTANCE = 120;
 const DISMISS_VELOCITY = 900;
 
+// ── ZOOM THAT STAYS UNDER THE FINGERS (Nov 2026) ─────────────────────────────
+//
+// Reported: pinching a photo or a GIF "начинает прыгать", and moving it with two fingers it can get
+// stuck somewhere on the screen. Asked: zoom in and out smoothly; a tap hides the buttons (the bottom
+// ones down, the top ones up) and a second tap brings them back.
+//
+// Three causes, all in the gestures below as they were:
+//   - The pinch set the zoom to the gesture's own scale, which starts at 1 on every pinch, so a
+//     second pinch on an enlarged photo first snapped it back to 1x.
+//   - It zoomed about the middle of the screen, not between the fingers, so the part being looked at
+//     slid away under them.
+//   - Panning had no bounds, and a zoomed pan only started after 12 pt of VERTICAL travel (a
+//     multi-photo viewer even failed it after 40 pt sideways), so a photo could be left off screen
+//     and a sideways drag would not move it back.
+//
+// Now the pinch scales from where the photo already is, about the point between the fingers, and
+// moving both fingers moves the photo; past 1x or 4x it gives a little and springs back. A one-finger
+// drag moves an enlarged photo in any direction, never further than its own edges (past them it
+// resists, and it glides to a stop when let go). A double tap zooms to 2.5x at the tapped point and
+// back. A single tap slides the controls off their edges and back.
+
+/** The most a photo can be enlarged, and where a double tap takes it. */
+const MAX_ZOOM = 4;
+const DOUBLE_TAP_ZOOM = 2.5;
+/** Settling after a pinch or after a drag past an edge: quick, no overshoot. */
+const SNAP_SPRING = { damping: 26, stiffness: 300, mass: 0.8 };
+const ZOOM_TIMING = { duration: 280, easing: Easing.bezier(0.25, 0.1, 0.25, 1) };
+const CHROME_TOGGLE = { duration: 240, easing: Easing.out(Easing.cubic) };
+
+/**
+ * How far a photo shown `fit` points wide at 1x, enlarged to `scale`, may move from the centre along
+ * one axis of a `view`-point screen: until its edge meets the screen's. 0 while it is not larger.
+ */
+function panLimit(scale: number, fit: number, view: number): number {
+  'worklet';
+  return Math.max(0, (fit * scale - view) / 2);
+}
+
+function clampTo(v: number, limit: number): number {
+  'worklet';
+  return Math.min(limit, Math.max(-limit, v));
+}
+
 /**
  * ── NO DETENTS HERE. REMOVED ON REQUEST. ──────────────────────────────────────
  *
@@ -224,9 +271,8 @@ export interface ImageViewerModalProps {
   /** Bottom safe-area inset, for the footer's padding. */
   bottomInset?: number;
   /**
-   * Allow pinch-to-zoom. Off for the chat (bubbles open a pager, not a zoomable canvas) and on
-   * for the profile viewers, which had `maximumZoomScale` before this component replaced them —
-   * losing that would have been a regression, so it is a capability of the shared viewer now.
+   * Allow pinch-to-zoom and double-tap zoom. Every caller passes it now (chat, comments, profiles);
+   * see "ZOOM THAT STAYS UNDER THE FINGERS".
    */
   zoomable?: boolean;
   /**
@@ -300,11 +346,64 @@ function ImageViewerModalComponent({
   const zoom = useSharedValue(1);
   const zoomPanX = useSharedValue(0);
   const zoomPanY = useSharedValue(0);
-  // JS mirror of "is the photo enlarged", used only to switch the pager off. A shared value cannot
-  // drive a plain prop, and this flips at most twice per zoom gesture (in, then out) rather than
-  // per frame, so it is not a render cost. Without it, the horizontal FlatList keeps its own scroll
-  // gesture while zoomed and competes with dragging the enlarged photo sideways.
+  // JS mirror of "is the photo enlarged", used to switch the pager off and to give the drag its
+  // zoomed activation (any direction). A shared value cannot drive a plain prop, and this flips at
+  // most twice per zoom gesture (in, then out) rather than per frame, so it is not a render cost.
+  // Without it, the horizontal FlatList keeps its own scroll gesture while zoomed and competes with
+  // dragging the enlarged photo sideways.
   const [zoomedJS, setZoomedJS] = useState(false);
+  // The screen the gestures are measured against, and the photo's size on it at 1x (`contain`), for
+  // the pan bounds. The photo's size comes from its load (or the chat's remembered dimensions); until
+  // it is known the bounds assume it fills the screen, which can only ever allow too much, never
+  // leave it stuck.
+  const viewW = useSharedValue(SCREEN_W);
+  const viewH = useSharedValue(SCREEN_H);
+  const fitW = useSharedValue(SCREEN_W);
+  const fitH = useSharedValue(SCREEN_H);
+  // A pinch in progress, and what it started from: the zoom, the offset and the point between the
+  // fingers (relative to the centre).
+  const pinching = useSharedValue(false);
+  const pinchStartZoom = useSharedValue(1);
+  const pinchStartX = useSharedValue(0);
+  const pinchStartY = useSharedValue(0);
+  const pinchOriginX = useSharedValue(0);
+  const pinchOriginY = useSharedValue(0);
+  const lastFocalX = useSharedValue(0);
+  const lastFocalY = useSharedValue(0);
+  // A drag that a pinch joined: it is left alone until the fingers lift (its translation includes the
+  // pinch, and the count of fingers changes under it).
+  const panTainted = useSharedValue(false);
+  // 0 = controls in place, 1 = off their edges (a single tap toggles it).
+  const chromeHidden = useSharedValue(0);
+  // ── Each page's photo size, for `fitW` / `fitH` ──
+  const dimsRef = useRef(new Map<string, { w: number; h: number }>());
+  const pageRef = useRef(payload?.index ?? 0);
+  const imagesRef = useRef<string[]>(payload?.images ?? []);
+  const applyFit = useCallback((uri: string | undefined) => {
+    const vw = viewW.value;
+    const vh = viewH.value;
+    const d = uri ? dimsRef.current.get(uri) ?? getImageDims(uri) : undefined;
+    if (!d || !(d.w > 0) || !(d.h > 0)) {
+      fitW.value = vw;
+      fitH.value = vh;
+      return;
+    }
+    const ar = d.w / d.h;
+    fitW.value = Math.min(vw, vh * ar);
+    fitH.value = Math.min(vh, vw / ar);
+  }, [viewW, viewH, fitW, fitH]);
+  const onPageSize = useCallback((uri: string, w: number, h: number) => {
+    dimsRef.current.set(uri, { w, h });
+    if (imagesRef.current[pageRef.current] === uri) applyFit(uri);
+  }, [applyFit]);
+  const onStageLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    if (width > 0 && height > 0) {
+      viewW.value = width;
+      viewH.value = height;
+      applyFit(imagesRef.current[pageRef.current]);
+    }
+  }, [viewW, viewH, applyFit]);
 
   useEffect(() => {
     if (payload) {
@@ -319,6 +418,12 @@ function ImageViewerModalComponent({
       zoom.value = 1;
       zoomPanX.value = 0;
       zoomPanY.value = 0;
+      setZoomedJS(false);
+      // Controls shown again, and the bounds for the photo it opens on.
+      chromeHidden.value = 0;
+      imagesRef.current = payload.images;
+      pageRef.current = Math.min(payload.index, Math.max(0, payload.images.length - 1));
+      applyFit(payload.images[pageRef.current]);
       // Rise from the bottom edge. `Easing.out` for an arrival, and a touch longer than the exit
       // because coming in is the moment the user is looking at — 300 ms reads as a glide, while the
       // old 220 ms fade read as a pop.
@@ -585,7 +690,8 @@ function ImageViewerModalComponent({
         translateY:
           interpolate(enter.value, [0, 1], [-22, 0], Extrapolation.CLAMP) +
           interpolate(Math.abs(dragY.value), [0, 80], [0, CHROME_EXIT_UP], Extrapolation.CLAMP) +
-          chromeExit.value * CHROME_EXIT_UP,
+          // A single tap on the photo parks it off the same edge (and back).
+          Math.max(chromeExit.value, chromeHidden.value) * CHROME_EXIT_UP,
       },
     ],
   }));
@@ -597,7 +703,7 @@ function ImageViewerModalComponent({
         translateY:
           interpolate(enter.value, [0, 1], [22, 0], Extrapolation.CLAMP) +
           interpolate(Math.abs(dragY.value), [0, 80], [0, CHROME_EXIT_DOWN], Extrapolation.CLAMP) +
-          chromeExit.value * CHROME_EXIT_DOWN,
+          Math.max(chromeExit.value, chromeHidden.value) * CHROME_EXIT_DOWN,
       },
     ],
   }));
@@ -629,22 +735,57 @@ function ImageViewerModalComponent({
         //
         // `activeOffsetY` tightened 14 → 12 so the drag takes hold slightly sooner, which makes
         // the photo feel attached to the finger from the start rather than after a dead zone.
-        .activeOffsetY([-12, 12])
+        .onStart(() => {
+          panTainted.value = pinching.value;
+          // Catching a photo that is still gliding stops it where it is.
+          if (zoom.value > 1.01) {
+            cancelAnimation(zoomPanX);
+            cancelAnimation(zoomPanY);
+          }
+        })
         // `onChange`, not `onUpdate`: its payload carries the per-frame deltas (`changeX/changeY`)
         // as well as the cumulative translation, and the zoomed branch below needs deltas so the
         // photo accumulates movement instead of snapping back to the gesture's origin each frame.
         .onChange((e) => {
+          // The pinch moves the photo while two fingers are down; see `panTainted`.
+          if (pinching.value) {
+            panTainted.value = true;
+            return;
+          }
+          if (panTainted.value) return;
           // While zoomed, a drag MOVES THE PHOTO instead of dismissing — otherwise inspecting an
-          // enlarged photo would throw the viewer away under the user's finger.
+          // enlarged photo would throw the viewer away under the user's finger. Past its own edge it
+          // follows at a third of the speed, so the edge is felt rather than hit.
           if (zoom.value > 1.01) {
-            zoomPanX.value += e.changeX;
-            zoomPanY.value += e.changeY;
+            const limX = panLimit(zoom.value, fitW.value, viewW.value);
+            const limY = panLimit(zoom.value, fitH.value, viewH.value);
+            const x = zoomPanX.value;
+            const y = zoomPanY.value;
+            const outX = (x >= limX && e.changeX > 0) || (x <= -limX && e.changeX < 0);
+            const outY = (y >= limY && e.changeY > 0) || (y <= -limY && e.changeY < 0);
+            zoomPanX.value = x + e.changeX * (outX ? 0.33 : 1);
+            zoomPanY.value = y + e.changeY * (outY ? 0.33 : 1);
             return;
           }
           dragY.value = e.translationY;
         })
         .onEnd((e) => {
-          if (zoom.value > 1.01) return;
+          if (panTainted.value) return;
+          if (zoom.value > 1.01) {
+            // Back inside its edges if it was pulled past them; otherwise it glides on and stops at
+            // them.
+            const limX = panLimit(zoom.value, fitW.value, viewW.value);
+            const limY = panLimit(zoom.value, fitH.value, viewH.value);
+            const x = zoomPanX.value;
+            const y = zoomPanY.value;
+            zoomPanX.value = Math.abs(x) > limX
+              ? withSpring(clampTo(x, limX), SNAP_SPRING)
+              : withDecay({ velocity: e.velocityX, clamp: [-limX, limX] });
+            zoomPanY.value = Math.abs(y) > limY
+              ? withSpring(clampTo(y, limY), SNAP_SPRING)
+              : withDecay({ velocity: e.velocityY, clamp: [-limY, limY] });
+            return;
+          }
 
           const far = Math.abs(e.translationY) > DISMISS_DISTANCE;
           const fast = Math.abs(e.velocityY) > DISMISS_VELOCITY;
@@ -688,58 +829,134 @@ function ImageViewerModalComponent({
             dragY.value = withSpring(0, { damping: 20, stiffness: 260, mass: 0.7 });
           }
         });
-      // Only guard against the pager when a pager actually exists — see the note above.
-      if (isPager) g.failOffsetX([-40, 40]);
+      // Enlarged: a drag in any direction moves the photo, so it takes hold on any 6 pt of travel and
+      // nothing fails it. At 1x it is the dismiss, as before (vertical, and only guarded against the
+      // pager when a pager actually exists — see the note above).
+      if (zoomedJS) {
+        g.minDistance(6);
+      } else {
+        g.activeOffsetY([-12, 12]);
+        if (isPager) g.failOffsetX([-40, 40]);
+      }
       return g;
     },
-    [dragY, enter, notifyClosed, zoom, zoomPanX, zoomPanY, isPager],
+    [dragY, enter, notifyClosed, zoom, zoomPanX, zoomPanY, isPager, zoomedJS, pinching, panTainted, fitW, fitH, viewW, viewH],
   );
 
   /**
    * Pinch to zoom, composed SIMULTANEOUSLY with the pan so a two-finger gesture is not swallowed by
-   * the drag. Snaps back to 1 (and recentres) when released below a threshold, so the photo cannot
-   * be left slightly and permanently off-centre — and clamps at 4x so a hard pinch cannot blow the
-   * bitmap up past anything useful.
+   * the drag. It scales from the zoom the photo already has, about the point between the fingers,
+   * and moving the fingers moves the photo. Past 1x or `MAX_ZOOM` it gives a little and springs back
+   * when released (below 1x all the way back and centred), and it always ends inside its bounds.
    */
   const pinchGesture = useMemo(
     () =>
       Gesture.Pinch()
-        .onUpdate((e) => {
-          zoom.value = Math.min(Math.max(e.scale, 0.6), 4);
+        .onStart((e) => {
+          pinching.value = true;
+          cancelAnimation(zoom);
+          cancelAnimation(zoomPanX);
+          cancelAnimation(zoomPanY);
+          // A dismiss drag the second finger interrupted goes back.
+          if (dragY.value !== 0) dragY.value = withSpring(0, SNAP_SPRING);
+          pinchStartZoom.value = zoom.value;
+          pinchStartX.value = zoomPanX.value;
+          pinchStartY.value = zoomPanY.value;
+          pinchOriginX.value = e.focalX - viewW.value / 2;
+          pinchOriginY.value = e.focalY - viewH.value / 2;
+          lastFocalX.value = pinchOriginX.value;
+          lastFocalY.value = pinchOriginY.value;
         })
-        .onEnd(() => {
-          if (zoom.value < 1.05) {
-            zoom.value = withSpring(1, { damping: 20, stiffness: 240 });
-            zoomPanX.value = withSpring(0, { damping: 20, stiffness: 240 });
-            zoomPanY.value = withSpring(0, { damping: 20, stiffness: 240 });
+        .onUpdate((e) => {
+          const raw = pinchStartZoom.value * e.scale;
+          const s = raw < 1 ? 1 - (1 - raw) * 0.4 : raw > MAX_ZOOM ? MAX_ZOOM + (raw - MAX_ZOOM) * 0.25 : raw;
+          const fx = e.focalX - viewW.value / 2;
+          const fy = e.focalY - viewH.value / 2;
+          // The point of the photo that was under the fingers when the pinch began stays under them:
+          // screen = offset + scale * point, solved for the offset.
+          const k = s / pinchStartZoom.value;
+          zoomPanX.value = fx - k * (pinchOriginX.value - pinchStartX.value);
+          zoomPanY.value = fy - k * (pinchOriginY.value - pinchStartY.value);
+          zoom.value = s;
+          lastFocalX.value = fx;
+          lastFocalY.value = fy;
+        })
+        // On finalize rather than end, so a cancelled pinch settles too.
+        .onFinalize(() => {
+          if (!pinching.value) return;
+          pinching.value = false;
+          const s = zoom.value;
+          if (s <= 1.02) {
+            zoom.value = withSpring(1, SNAP_SPRING);
+            zoomPanX.value = withSpring(0, SNAP_SPRING);
+            zoomPanY.value = withSpring(0, SNAP_SPRING);
             runOnJS(setZoomedJS)(false);
-          } else {
-            runOnJS(setZoomedJS)(true);
+            return;
           }
+          let target = s;
+          let x = zoomPanX.value;
+          let y = zoomPanY.value;
+          if (s > MAX_ZOOM) {
+            // Back to the limit about the same point between the fingers.
+            const k = MAX_ZOOM / s;
+            x = lastFocalX.value - k * (lastFocalX.value - x);
+            y = lastFocalY.value - k * (lastFocalY.value - y);
+            target = MAX_ZOOM;
+          }
+          zoom.value = withSpring(target, SNAP_SPRING);
+          zoomPanX.value = withSpring(clampTo(x, panLimit(target, fitW.value, viewW.value)), SNAP_SPRING);
+          zoomPanY.value = withSpring(clampTo(y, panLimit(target, fitH.value, viewH.value)), SNAP_SPRING);
+          runOnJS(setZoomedJS)(true);
         }),
-    [zoom, zoomPanX, zoomPanY],
+    [zoom, zoomPanX, zoomPanY, dragY, pinching, pinchStartZoom, pinchStartX, pinchStartY, pinchOriginX, pinchOriginY, lastFocalX, lastFocalY, fitW, fitH, viewW, viewH],
   );
 
   /**
-   * Double-tap toggles between fit and 2x. The gesture people reach for before they try to pinch,
-   * and it costs one composed recogniser.
+   * Double-tap: to `DOUBLE_TAP_ZOOM` at the tapped point (as far as the photo's edges allow), and
+   * back to fit. The gesture people reach for before they try to pinch.
    */
   const doubleTapGesture = useMemo(
     () =>
       Gesture.Tap()
         .numberOfTaps(2)
-        .onEnd(() => {
+        .maxDistance(24)
+        // The single tap waits this long for a second one (RNGH's default is 500 ms).
+        .maxDelay(250)
+        .onEnd((e, success) => {
+          if (!success) return;
           if (zoom.value > 1.01) {
-            zoom.value = withSpring(1, { damping: 20, stiffness: 240 });
-            zoomPanX.value = withSpring(0, { damping: 20, stiffness: 240 });
-            zoomPanY.value = withSpring(0, { damping: 20, stiffness: 240 });
+            zoom.value = withTiming(1, ZOOM_TIMING);
+            zoomPanX.value = withTiming(0, ZOOM_TIMING);
+            zoomPanY.value = withTiming(0, ZOOM_TIMING);
             runOnJS(setZoomedJS)(false);
-          } else {
-            zoom.value = withSpring(2, { damping: 20, stiffness: 240 });
-            runOnJS(setZoomedJS)(true);
+            return;
           }
+          const s = DOUBLE_TAP_ZOOM;
+          const fx = e.x - viewW.value / 2;
+          const fy = e.y - viewH.value / 2;
+          zoom.value = withTiming(s, ZOOM_TIMING);
+          zoomPanX.value = withTiming(clampTo(fx * (1 - s), panLimit(s, fitW.value, viewW.value)), ZOOM_TIMING);
+          zoomPanY.value = withTiming(clampTo(fy * (1 - s), panLimit(s, fitH.value, viewH.value)), ZOOM_TIMING);
+          runOnJS(setZoomedJS)(true);
         }),
-    [zoom, zoomPanX, zoomPanY],
+    [zoom, zoomPanX, zoomPanY, fitW, fitH, viewW, viewH],
+  );
+
+  /**
+   * A single tap slides the controls off their edges, the top ones up and the bottom ones down, and
+   * the next brings them back: asked for, so a photo can be looked at without them. It waits for the
+   * double tap to fail (see the composition below), which is what tells the two apart.
+   */
+  const singleTapGesture = useMemo(
+    () =>
+      Gesture.Tap()
+        // No further than the zoomed drag's 6 pt: a touch that moved the photo is not also a tap.
+        .maxDistance(6)
+        .onEnd((_e, success) => {
+          if (!success) return;
+          chromeHidden.value = withTiming(chromeHidden.value > 0.5 ? 0 : 1, CHROME_TOGGLE);
+        }),
+    [chromeHidden],
   );
 
   // ── ALL THREE SIMULTANEOUS — NOT Exclusive ────────────────────────────────
@@ -759,12 +976,16 @@ function ImageViewerModalComponent({
   // fight, because their activation conditions are disjoint by construction — the pan needs 12 pt of
   // vertical travel before it activates, and a double-tap that moved 12 pt is not a double-tap. The
   // pinch needs a second finger, which neither of the others accepts.
+  //
+  // The single tap is the one thing that must wait, for the double tap to fail, or every double tap
+  // would also toggle the controls. That wait is inside the tap pair only (`Exclusive` of the two
+  // taps), so the pan and the pinch are still never held up by it.
   const composedGesture = useMemo(
     () =>
       zoomable
-        ? Gesture.Simultaneous(dismissGesture, pinchGesture, doubleTapGesture)
-        : dismissGesture,
-    [zoomable, doubleTapGesture, dismissGesture, pinchGesture],
+        ? Gesture.Simultaneous(dismissGesture, pinchGesture, Gesture.Exclusive(doubleTapGesture, singleTapGesture))
+        : Gesture.Simultaneous(dismissGesture, singleTapGesture),
+    [zoomable, doubleTapGesture, singleTapGesture, dismissGesture, pinchGesture],
   );
 
   // ── Stable pager callbacks ────────────────────────────────────────────────
@@ -778,16 +999,19 @@ function ImageViewerModalComponent({
   );
 
   const renderItem = useCallback(
-    ({ item }: { item: string }) => <ViewerPage uri={item} proxyWidth={proxyWidth} />,
-    [proxyWidth],
+    ({ item }: { item: string }) => <ViewerPage uri={item} proxyWidth={proxyWidth} onSize={onPageSize} />,
+    [proxyWidth, onPageSize],
   );
 
   // Through a ref so the pager's handler stays stable whatever the caller passes.
   const onIndexChangeRef = useRef(onIndexChange);
   onIndexChangeRef.current = onIndexChange;
   const handlePageSettled = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    onIndexChangeRef.current?.(Math.round(e.nativeEvent.contentOffset.x / SCREEN_W));
-  }, []);
+    const index = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
+    pageRef.current = index;
+    applyFit(imagesRef.current[index]);
+    onIndexChangeRef.current?.(index);
+  }, [applyFit]);
 
   if (!mounted || !shown) return null;
 
@@ -801,7 +1025,11 @@ function ImageViewerModalComponent({
       <ModalStatusBar />
       <Reanimated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]} />
 
+      {/* The gestures sit on a view that never moves, so their coordinates (the point between the
+          fingers, the tapped point) are screen coordinates. On the transformed view itself they
+          would come back in its own scaled and shifted space. */}
       <GestureDetector gesture={composedGesture}>
+        <View style={StyleSheet.absoluteFill} onLayout={onStageLayout} collapsable={false}>
         <Reanimated.View style={[StyleSheet.absoluteFill, contentStyle]}>
           <FlatList
             data={images}
@@ -831,6 +1059,7 @@ function ImageViewerModalComponent({
             removeClippedSubviews
           />
         </Reanimated.View>
+        </View>
       </GestureDetector>
 
       {/* Caller-supplied top chrome (author, date). Sits BELOW the close button in z-order and is
@@ -871,7 +1100,21 @@ function ImageViewerModalComponent({
  * and `contain` inside a full-screen box so tall and wide photos both fit without
  * the caller having to know the aspect ratio.
  */
-const ViewerPage = memo(function ViewerPage({ uri, proxyWidth }: { uri: string; proxyWidth: number }) {
+const ViewerPage = memo(function ViewerPage({
+  uri,
+  proxyWidth,
+  onSize,
+}: {
+  uri: string;
+  proxyWidth: number;
+  /** The photo's pixel size once it has loaded, for the zoom's pan bounds. */
+  onSize?: (uri: string, width: number, height: number) => void;
+}) {
+  const handleLoad = useCallback((e: ImageLoadEventData) => {
+    const w = e?.source?.width ?? 0;
+    const h = e?.source?.height ?? 0;
+    if (w > 0 && h > 0) onSize?.(uri, w, h);
+  }, [uri, onSize]);
   return (
     <View style={styles.page}>
       {/* ── `progressive`: THE VIEWER PAINTS WHAT IS ALREADY DECODED ──────────────
@@ -892,7 +1135,7 @@ const ViewerPage = memo(function ViewerPage({ uri, proxyWidth }: { uri: string; 
           Nothing here needs to know which derivative that is: every surface records its completed loads
           through `CachedImage`, so this works for chat, comments and both profile screens at once. See
           `src/services/mediaVariants.ts`. */}
-      <CachedImage uri={uri} style={styles.image} resizeMode="contain" proxyWidth={proxyWidth} progressive />
+      <CachedImage uri={uri} style={styles.image} resizeMode="contain" proxyWidth={proxyWidth} progressive onLoad={handleLoad} />
     </View>
   );
 });

@@ -25,6 +25,7 @@ import { BOTTOM_CHROME_SPRING } from '../../src/theme/motion';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import type { ChatPeekAction } from '../../src/components/chat/ChatPeekMenu';
 import { openChatPeek } from '../../src/store/chatPeekStore';
+import { historyCursorByConv, prefetchChatHistory } from '../../src/services/chatHistorySync';
 import { markConversationRead } from '../../src/services/readState';
 import { toPreviewText } from '../../src/utils/previewText';
 import { compareIso } from '../../src/utils/compareIso';
@@ -628,6 +629,16 @@ function ConversationItemBase({
       router.push({ pathname: '/profile/[id]', params: { id: userIdFromSyntheticId(item.id) } });
       return;
     }
+    // ── THE FIRST OPEN OF A SESSION STARTS ITS REQUEST HERE (Nov 2026) ──────────
+    //
+    // Recorded on iPhone: a chat with nothing on disk yet slid in empty and stayed empty for about
+    // 600 ms after the tap (the in-app log showed `chat.seed.diskRead` and then `chat.reverse(0)`),
+    // because its history request only started once the slide had ended. A chat's first open of the
+    // session always makes that request, so making it at the tap costs nothing extra: the screen uses
+    // this answer instead of asking again (src/services/chatHistorySync.ts), and it is usually back by
+    // the time the slide ends. A later open in the same session may skip its request, so it gets no
+    // head start: that would be a request for nothing.
+    if (!historyCursorByConv.has(item.id)) prefetchChatHistory(item.id);
     router.push(`/chat/${item.id}?participantId=${item.participantId}` as any);
   };
 

@@ -37,6 +37,16 @@ jest.mock('../../store/settingsStore', () => ({
   },
 }));
 
+// The hook also tells the launch splash when the first screen has been drawn (see
+// src/services/firstScreenPaint.ts). Reported as already drawn here, so the frame counts these tests
+// pin are only the perf monitor's.
+let mockFirstPainted = true;
+const mockMarkFirstPainted = jest.fn();
+jest.mock('../../services/firstScreenPaint', () => ({
+  isFirstScreenPainted: () => mockFirstPainted,
+  markFirstScreenPainted: () => mockMarkFirstPainted(),
+}));
+
 import { useScreenMountMark } from '../useScreenMountMark';
 
 // ─── rAF shim ────────────────────────────────────────────────────────────────
@@ -61,7 +71,9 @@ beforeAll(() => {
 
 beforeEach(() => {
   mockPerfEnabled = true;
+  mockFirstPainted = true;
   mockMarkScreenMount.mockClear();
+  mockMarkFirstPainted.mockClear();
   rafCallbacks = [];
   rafSeq = 0;
 });
@@ -187,3 +199,4 @@ describe('useScreenMountMark — the perf-monitor flag', () => {
     act(() => renderer.unmount());
   });
 });
+
