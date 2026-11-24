@@ -33,6 +33,11 @@ interface FormattedTextProps {
    * fine for non-modal callers.
    */
   onLinkPress?: (url: string) => void;
+  /**
+   * Whether the text of a fenced code block can be selected natively. Default true. A chat bubble
+   * passes false on Android, where a hold opens the message menu (see `CodeBlock`).
+   */
+  selectableCode?: boolean;
 }
 
 /**
@@ -48,7 +53,7 @@ interface FormattedTextProps {
  * ```fenced``` — Telegram-style multi-line code block (only when not
  *   truncating, see the block-split path below)
  */
-export const FormattedText = memo(function FormattedText({ children, style, color, linkColor, numberOfLines, onLinkPress }: FormattedTextProps) {
+export const FormattedText = memo(function FormattedText({ children, style, color, linkColor, numberOfLines, onLinkPress, selectableCode = true }: FormattedTextProps) {
   const theme = useTheme();
   // Revealed spoilers are keyed by their ORDINAL position in this text, so the set is only meaningful
   // for the exact string it was built against. A plain `useState` initialised once per mount was fine
@@ -259,7 +264,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
     <View style={{ width: '100%' }}>
       {blockSegments!.map((seg, i) => {
         if (seg.kind === 'code') {
-          return <CodeBlock key={i} code={seg.value} lang={seg.lang} />;
+          return <CodeBlock key={i} code={seg.value} lang={seg.lang} selectable={selectableCode} />;
         }
         const segParts = parseFormatting(seg.value);
         return (
@@ -347,8 +352,14 @@ const CodeBackdrop = memo(function CodeBackdrop({ seed, isDark }: { seed: string
  * rounded corners, optional language header + copy affordance, and a
  * horizontal ScrollView so long lines extend off-screen and scroll rather
  * than wrap. Memoized — the code/lang only change when the source string does.
+ *
+ * `selectable` false: in a chat bubble on Android. A hold there opens the message menu, and it also
+ * started the TextView's own selection: the word or run of spaces under the finger stayed
+ * highlighted after the menu had closed, and starting the selection scrolled the inverted chat list
+ * by about 320 px, out from under the menu's cut-out (emulator, holding a JSON message). The code
+ * can still be copied with the button here and with "Копировать" in the menu.
  */
-const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string; lang: string }) {
+const CodeBlock = memo(function CodeBlock({ code, lang, selectable }: { code: string; lang: string; selectable: boolean }) {
   const theme = useTheme();
   const t = useT();
   const textColor = theme.colors.text.primary;
@@ -413,7 +424,7 @@ const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string; lang: 
       )}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ backgroundColor: 'transparent' }} contentContainerStyle={{ padding: 10 }}>
         <RNText
-          selectable
+          selectable={selectable}
           style={{
             fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
             fontSize: 13 * (theme.fontScale || 1),

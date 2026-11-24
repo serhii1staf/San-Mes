@@ -1,7 +1,16 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Pressable, FlatList, Text as RNText, StyleSheet, InteractionManager } from 'react-native';
+import React, { memo, useCallback, useMemo, useRef } from 'react';
+import {
+  View,
+  Pressable,
+  FlatList,
+  Text as RNText,
+  StyleSheet,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+} from 'react-native';
 import { useT, useI18nStore } from '../../i18n/store';
 import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
+import { useScreenReaderEnabled } from '../../hooks/useScreenReaderEnabled';
 
 // ── Inline emoji panel ─────────────────────────────────────────────────────
 //
@@ -115,38 +124,106 @@ const EMOJI_CATEGORY_KEY = (it: { titleKey: string }) => it.titleKey;
  * mounted is never reconciled again — previously every render of the panel walked
  * all mounted categories and rebuilt ~40 Pressables each.
  */
+// ── ONE TOUCH TARGET PER CATEGORY, NOT ONE PER EMOJI (Nov 2026) ──────────────────────────────────
+//
+// Reported: the button that opens this panel "пролагивает", even on an iPhone. On the emulator the tap
+// that opens it was one 250-380 ms JS task, followed by a 150-170 ms task for each category the list
+// added after it (`maxToRenderPerBatch={1}`), most of each in the Fabric commit. Every emoji was its own
+// `Pressable`: a native view, a responder and the Pressable's hooks, 32 per category, for cells that
+// show no pressed state and differ only in which emoji they pass on.
+//
+// Now the category's grid is one `Pressable` and the cell is worked out from where the finger is (eight
+// square cells to a row, `COLS`). The cells are plain views with only layout styles, which Fabric does
+// not create natively at all, so a category adds 32 text views instead of 64 views and 32 responders.
+// `box-only`: the touch's target is then the grid itself, which is what `locationX`/`locationY` are
+// measured from. With a screen reader on, each emoji stays its own button (`EmojiCell`), so VoiceOver
+// and TalkBack can still reach them one by one.
+const COLS = 8;
+
 const EmojiCategory = memo(function EmojiCategory({
   title,
   titleColor,
   emojis,
   onSelect,
   onLongPress,
+  cellButtons,
 }: {
   title: string;
   titleColor: string;
   emojis: string[];
   onSelect: (emoji: string) => void;
   onLongPress?: (emoji: string) => void;
+  /** Each emoji its own button (a screen reader is on). */
+  cellButtons: boolean;
 }) {
+  // The grid's width, for the cell under a touch. Measured, not derived: the panel's paddings decide it.
+  const gridWidthRef = useRef(0);
+  const onGridLayout = useCallback((e: LayoutChangeEvent) => {
+    gridWidthRef.current = e.nativeEvent.layout.width;
+  }, []);
+  const emojiAt = useCallback((e: GestureResponderEvent): string | null => {
+    const width = gridWidthRef.current;
+    if (width <= 0) return null;
+    const size = width / COLS;
+    const col = Math.floor(e.nativeEvent.locationX / size);
+    const row = Math.floor(e.nativeEvent.locationY / size);
+    if (col < 0 || col >= COLS || row < 0) return null;
+    // A touch in the empty end of a short last row picks nothing.
+    return emojis[row * COLS + col] ?? null;
+  }, [emojis]);
+  const handlePress = useCallback((e: GestureResponderEvent) => {
+    const emoji = emojiAt(e);
+    if (emoji) onSelect(emoji);
+  }, [emojiAt, onSelect]);
+  const handleLongPress = useCallback((e: GestureResponderEvent) => {
+    const emoji = emojiAt(e);
+    if (emoji) onLongPress?.(emoji);
+  }, [emojiAt, onLongPress]);
+
+  if (cellButtons) {
+    return (
+      <View style={styles.category}>
+        <RNText style={[styles.catTitle, { color: titleColor }]}>{title}</RNText>
+        <View style={styles.grid}>
+          {emojis.map((e, i) => (
+            <EmojiCell
+              key={e + i}
+              emoji={e}
+              onSelect={onSelect}
+              onLongPress={onLongPress}
+            />
+          ))}
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={styles.category}>
       <RNText style={[styles.catTitle, { color: titleColor }]}>{title}</RNText>
-      <View style={styles.grid}>
+      <Pressable
+        onPress={handlePress}
+        onLongPress={onLongPress ? handleLongPress : undefined}
+        delayLongPress={280}
+        onLayout={onGridLayout}
+        pointerEvents="box-only"
+        accessible={false}
+        style={styles.grid}
+      >
         {emojis.map((e, i) => (
-          <EmojiCell
-            key={e + i}
-            emoji={e}
-            onSelect={onSelect}
-            onLongPress={onLongPress}
-          />
+          <View key={e + i} style={styles.cell}>
+            <RNText style={styles.cellText} allowFontScaling={false}>
+              {e}
+            </RNText>
+          </View>
         ))}
-      </View>
+      </Pressable>
     </View>
   );
 });
 
 /**
- * A single emoji cell.
+ * A single emoji cell, as its own button. Used only while a screen reader is on (see "ONE TOUCH TARGET
+ * PER CATEGORY"); otherwise the category's grid takes the touches.
  *
  * Exists so the per-emoji arrow functions (`() => onSelect(e)`) are no longer
  * allocated inside the parent's render — with ~40 cells per category that was 80
@@ -227,6 +304,7 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
   );
 
   const titleColor = theme.colors.text.tertiary;
+  const cellButtons = useScreenReaderEnabled();
   const renderCategory = useCallback(
     ({ item }: { item: { titleKey: string; title: string; emojis: string[] } }) => (
       <EmojiCategory
@@ -235,9 +313,10 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
         emojis={item.emojis}
         onSelect={onSelect}
         onLongPress={onLongPress}
+        cellButtons={cellButtons}
       />
     ),
-    [onSelect, onLongPress, titleColor],
+    [onSelect, onLongPress, titleColor, cellButtons],
   );
 
   // Content padding: base + the bottom safe-area inset so the final emoji row
