@@ -44,6 +44,20 @@ export function TranslationSheet({ visible, text, onClose }: TranslationSheetPro
   const [result, setResult] = useState<TranslationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  // ── THE SHEET KEEPS ITS CONTENT WHILE IT LEAVES (Nov 2026) ─────────────────────────────────────
+  //
+  // Reported: the translation looked buggy. On the emulator, closing with the × first shrank the sheet
+  // (the "original" card vanished and its top dropped by the card's height), and only then did it
+  // slide away: the × hands `onClose` straight to the chat, which clears `text` at once, while the
+  // sheet still has its 250 ms slide-down to run (SlideUpSheet's external close). The original was
+  // also hidden while loading, so a first translation opened as a spinner and then grew.
+  //
+  // So the text on show is the last one given until a new one comes, and the original is shown from
+  // the first frame. The sheet keeps one height from open to close, apart from the translation
+  // taking the spinner's place.
+  // State that follows the prop, set during render (React's documented pattern, as in SlideUpSheet).
+  const [shownText, setShownText] = useState(text);
+  if (text && text !== shownText) setShownText(text);
 
   // Reset + re-fetch each time the sheet opens with a new source text.
   // Re-opening for the same message hits the 7-day MMKV cache and renders
@@ -164,7 +178,7 @@ export function TranslationSheet({ visible, text, onClose }: TranslationSheetPro
           {/* Original text — secondary panel, dimmed. Even very long text
               stays inside the parent ScrollView so the user can scroll
               within the sheet rather than the whole sheet growing. */}
-          {text && !loading ? (
+          {shownText ? (
             <View
               style={{
                 marginTop: 14,
@@ -181,7 +195,7 @@ export function TranslationSheet({ visible, text, onClose }: TranslationSheetPro
                 {t('translation.original')}
               </Text>
               <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 14 }}>
-                {text}
+                {shownText}
               </Text>
             </View>
           ) : null}

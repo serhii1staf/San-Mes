@@ -53,7 +53,7 @@ interface MessageContextMenuProps {
   /** The held bubble's view, for a snapshot when it cannot be shown whole (see `ActionMenu`). */
   captureHeld?: () => unknown;
   /** The snapshot's progress, with the held message's id (see `ActionMenu.onHeldPreview`). */
-  onHeldPreview?: (state: 'planned' | 'shown' | 'failed' | 'gone', messageId: string) => void;
+  onHeldPreview?: (state: 'planned' | 'shown' | 'failed' | 'gone' | 'still', messageId: string) => void;
 }
 
 export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageContextMenuProps>(function MessageContextMenu(

@@ -132,9 +132,11 @@ interface ActionMenuProps<Id extends string> {
    * Progress of that snapshot: `planned` on mount when one will be taken (do not lift the item; the
    * keyboard may stay up until it is shown), `shown` once it covers the item (hide the item, dismiss
    * the keyboard), `failed` when it could not be taken (back to the lit cut-out), `gone` when the
-   * close starts (show the item again).
+   * close starts (show the item again). `still` on mount instead of `planned` for an item too tall
+   * to snapshot (see "AN ITEM TALLER THAN THE WINDOW IS NOT SNAPSHOTTED"): it stays lit where it
+   * is, not lifted.
    */
-  onHeldPreview?: (state: 'planned' | 'shown' | 'failed' | 'gone') => void;
+  onHeldPreview?: (state: 'planned' | 'shown' | 'failed' | 'gone' | 'still') => void;
 }
 
 // ── THE WHOLE ITEM, ALWAYS ───────────────────────────────────────────────────────────────────────
@@ -246,6 +248,9 @@ const CLOSE_TIMING = { duration: 230, easing: Easing.bezier(0.55, 0, 0.75, 0.2) 
 // surface follows, so neither is left over the chat (see "THE LABELS LEFT AFTER THE CARD HAD GONE").
 const CONTENT_OUT = { duration: 90, easing: Easing.out(Easing.quad) };
 const SURFACE_OUT = { duration: 170, easing: Easing.out(Easing.quad) };
+// The held bubble's lift in the chat (`liftStyle` in useMessageGestures), so a snapshot lifts the
+// same way the live bubble does in its cut-out.
+const LIFT_SPRING = { damping: 15, stiffness: 260, mass: 0.7 };
 // Gap between the held item and the edge of its cut-out in the dim.
 const SPOT_PAD = 6;
 
@@ -444,20 +449,49 @@ function ActionMenuInner<Id extends string>(
   const keyboardH = keyboardHeightNow();
   const minTop = insets.top + 8;
   const maxBottom = H - Math.max(insets.bottom, 10) - 8 - keyboardH;
+  // The band the held item can be seen in (see `spotlightBounds`).
+  const bandTop = spotlightBounds?.top ?? minTop;
+  const bandBottom = spotlightBounds?.bottom ?? maxBottom;
+  // The keyboard is dismissed once a snapshot is up, so the free space is then the whole screen.
+  const freeBottom = H - Math.max(insets.bottom, 10) - 8;
+  // The most of an item a snapshot window can show above the card.
+  const windowRoom = Math.max(80, freeBottom - minTop - GAP - menuH);
+
+  // ── AN ITEM TALLER THAN THE WINDOW IS NOT SNAPSHOTTED (Nov 2026) ─────────────────────────────
+  //
+  // Reported, holding long messages: the card came first, over the message, then the message shrank
+  // into its place above the card, and all of it took too long («какой-то другой вариант для очень
+  // длинных сообщений, вместе с фотографиями»). The snapshot is the whole item, up to 4 M pixels.
+  // Past `SHOT_DELAY_PIXELS` iOS waits `SHOT_DELAY_MS` before it starts, then draws it on the main
+  // thread; a 4,790 pt message took about a second to be shown on the emulator (see
+  // `SHOT_TIMEOUT_MS`). The card stops waiting after `CARD_WAIT_MS`, and the window then shows only
+  // its own height of the item. So for an item taller than the window the snapshot cost the most
+  // and could never show the item whole, which is what it exists for.
+  //
+  // Such an item now stays where it is: what of it is on screen stays lit in the cut-out, it does
+  // not lift (scaled about its middle, the part on screen would slide), and the card goes beside
+  // that part, or over its lower end when there is no room, with that end dimmed under the card
+  // (see `spotHole`). The menu opens at once, the way it does for a short message. Not with the
+  // keyboard up: dismissing it moves the item out from under its cut-out, which is what the
+  // snapshot exists for (see "THE WHOLE ITEM, ALWAYS").
+  const [longItem] = useState(
+    () => !!anchor && keyboardH === 0 && anchor.height * spotlightLift > windowRoom,
+  );
+  // How much the item is scaled while the menu is open (a long one is not).
+  const lift = longItem ? 1 : spotlightLift;
 
   // Decided once, on mount, from the item's rect: the parent hands a new anchor object on every
   // render, and the plan must not change under an open menu. See "THE WHOLE ITEM, ALWAYS".
   const [plan] = useState<PreviewPlan | null>(() => {
-    if (!captureHeld || !anchor || anchor.width < 1 || anchor.height < 1) return null;
-    const bandTop = spotlightBounds?.top ?? minTop;
-    const bandBottom = spotlightBounds?.bottom ?? maxBottom;
+    if (!captureHeld || !anchor || anchor.width < 1 || anchor.height < 1 || longItem) return null;
     const whollyVisible = anchor.y >= bandTop - 1 && anchor.y + anchor.height <= bandBottom + 1;
     const fitsBeside = anchor.y + anchor.height + GAP + menuH <= maxBottom || anchor.y - GAP - menuH >= minTop;
     if (whollyVisible && fitsBeside && keyboardH === 0) return null;
-    // The keyboard is dismissed once the snapshot is up, so the free space is the whole screen.
-    const freeBottom = H - Math.max(insets.bottom, 10) - 8;
-    const height = Math.min(anchor.height, Math.max(80, freeBottom - minTop - GAP - menuH));
-    const topY = clamp(anchor.y, minTop, Math.max(minTop, freeBottom - GAP - menuH - height));
+    // The snapshot lifts in its window the way a bubble lifts in its cut-out (see `previewLift`), so
+    // the window is sized and placed for its lifted size: `pad` is what the lift adds at each end.
+    const height = Math.min(anchor.height, windowRoom / lift);
+    const pad = (height * (lift - 1)) / 2;
+    const topY = clamp(anchor.y, minTop + pad, Math.max(minTop + pad, freeBottom - GAP - menuH - height - pad));
     const scroll = clamp(topY - anchor.y, 0, anchor.height - height);
     // What of the item could be seen below the window's top edge before the menu opened: down to
     // the band's bottom (the composer, the tab bar) or the item's own end. See `startHeight`.
@@ -471,22 +505,26 @@ function ActionMenuInner<Id extends string>(
       top: topY,
       scroll,
       startShift: anchor.y + scroll - topY,
-      menuTop: topY + height + GAP,
+      menuTop: topY + height + pad + GAP,
       keyboardUp: keyboardH > 0,
     };
   });
 
   let menuTop: number;
   // The lifted item grows about its centre, so the card keeps its gap from the grown edge.
-  const liftPad = anchor ? (anchor.height * (spotlightLift - 1)) / 2 : 0;
+  const liftPad = anchor ? (anchor.height * (lift - 1)) / 2 : 0;
+  // Beside the part of the item that can be seen: for an item running on past the header or the
+  // composer that is the band's edge, not the item's (an item seen whole is unchanged by this).
+  const seenTop = anchor ? Math.max(anchor.y - liftPad, bandTop) : 0;
+  const seenBottom = anchor ? Math.min(anchor.y + anchor.height + liftPad, bandBottom) : 0;
   if (plan) {
     menuTop = plan.menuTop;
   } else if (!anchor) {
     menuTop = clamp((H - menuH) / 2, minTop, Math.max(minTop, maxBottom - menuH));
-  } else if (anchor.y + anchor.height + liftPad + GAP + menuH <= maxBottom) {
-    menuTop = anchor.y + anchor.height + liftPad + GAP;
-  } else if (anchor.y - liftPad - GAP - menuH >= minTop) {
-    menuTop = anchor.y - liftPad - GAP - menuH;
+  } else if (seenBottom + GAP + menuH <= maxBottom) {
+    menuTop = seenBottom + GAP;
+  } else if (seenTop - GAP - menuH >= minTop) {
+    menuTop = seenTop - GAP - menuH;
   } else {
     // Taller than the free space on either side and no snapshot to show instead: pin to the bottom.
     menuTop = Math.max(minTop, maxBottom - menuH);
@@ -551,13 +589,25 @@ function ActionMenuInner<Id extends string>(
   // shrinks, to its height while it moves into place, on the same spring; the close returns it to that
   // height while it goes back. So it never covers what the item did not, at either end.
   const windowH = useSharedValue(plan ? plan.startHeight : 0);
+  // ── THE SNAPSHOT LIFTS TOO (Nov 2026) ───────────────────────────────────────────────────────────
+  //
+  // Reported: the open "иногда плавно приближает" what is held and "иногда очень резко без
+  // анимации". Both were right, for different items: a bubble seen whole lifts in its cut-out (the
+  // chat scales it by `spotlightLift`), a snapshot only moved. Now the snapshot scales by the same
+  // amount, on the bubble's spring, while it moves into place, and back to 1 while it goes back, so
+  // it still lands exactly on the bubble. Its window is sized for the lifted size (see `pad`).
+  const previewLift = useSharedValue(1);
   const fade = useSharedValue(1);
   const shotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewScroll = useRef<ScrollView>(null);
   const shownRef = useRef(false);
 
   useEffect(() => {
-    if (!plan) return;
+    if (!plan) {
+      // Before the screen's own effect lifts the item (effects run child first), as `planned` is.
+      if (longItem) onHeldPreviewRef.current?.('still');
+      return;
+    }
     onHeldPreviewRef.current?.('planned');
     let cancelled = false;
     const fail = () => {
@@ -628,9 +678,10 @@ function ActionMenuInner<Id extends string>(
       onHeldPreviewRef.current?.('shown');
       shift.value = withSpring(0, PREVIEW_SPRING);
       if (plan) windowH.value = withSpring(plan.height, PREVIEW_SPRING);
+      if (lift !== 1) previewLift.value = withSpring(lift, LIFT_SPRING);
       startCard();
     });
-  }, [shift, windowH, plan, startCard]);
+  }, [shift, windowH, previewLift, lift, plan, startCard]);
   const onShotError = useCallback(() => {
     if (shotSettled.current) return;
     shotSettled.current = true;
@@ -666,6 +717,7 @@ function ActionMenuInner<Id extends string>(
         if (shownRef.current && !plan.keyboardUp) {
           shift.value = withTiming(plan.startShift, PREVIEW_RETURN);
           windowH.value = withTiming(plan.startHeight, PREVIEW_RETURN);
+          previewLift.value = withTiming(1, PREVIEW_RETURN);
           if (plan.height < plan.fullHeight) previewScroll.current?.scrollTo({ y: plan.scroll, animated: true });
         } else if (shownRef.current) {
           fade.value = withTiming(0, PREVIEW_FADE);
@@ -677,7 +729,7 @@ function ActionMenuInner<Id extends string>(
         runOnJS(finish)();
       });
     },
-    [c, contentOut, surfaceOut, fade, finish, plan, shift, windowH],
+    [c, contentOut, surfaceOut, fade, finish, plan, shift, windowH, previewLift],
   );
   useImperativeHandle(ref, () => ({ dismiss }), [dismiss]);
 
@@ -811,21 +863,25 @@ function ActionMenuInner<Id extends string>(
     // The snapshot is above the dim: nothing of the list needs to show through.
     if (shotShown) return 'all';
     // The lifted item grows about its centre; the hole grows with it.
-    const growX = (anchor.width * (spotlightLift - 1)) / 2;
-    const growY = (anchor.height * (spotlightLift - 1)) / 2;
+    const growX = (anchor.width * (lift - 1)) / 2;
+    const growY = (anchor.height * (lift - 1)) / 2;
     const x = anchor.x - SPOT_PAD - growX;
     const w = anchor.width + (SPOT_PAD + growX) * 2;
     const rawTop = anchor.y - SPOT_PAD - growY;
     const rawBottom = anchor.y + anchor.height + SPOT_PAD + growY;
     // Clip to the band the item is visible in; see `spotlightBounds`.
     const y0 = Math.max(rawTop, boundsTop ?? -Infinity);
-    const y1 = Math.min(rawBottom, boundsBottom ?? Infinity);
+    let y1 = Math.min(rawBottom, boundsBottom ?? Infinity);
+    // A card pinned over the item's lower end (no room beside it, no snapshot): that end is dimmed
+    // with the rest, so the card lies over the dim as it does everywhere else. Lit, the text showed
+    // through the card's surface between its labels (emulator, a long message).
+    if (!plan && menuTop < y1 && menuTop + menuH > y0) y1 = Math.min(y1, menuTop - GAP + SPOT_PAD);
     // Next to nothing of it is on screen: dim everything rather than cut a sliver.
     if (y1 - y0 < 8) return 'all';
     const r = Math.max(0, Math.min(spotlightRadius + SPOT_PAD, w / 2, (y1 - y0) / 2));
     // A clipped edge is the header's or the composer's edge, not the item's: square it.
     return { x, w, y0, y1, rt: y0 > rawTop ? 0 : r, rb: y1 < rawBottom ? 0 : r };
-  }, [anchor, spotlightRadius, spotlightLift, shotShown, boundsTop, boundsBottom]);
+  }, [anchor, spotlightRadius, lift, shotShown, boundsTop, boundsBottom, plan, menuTop, menuH]);
 
   // Never taller than the item below the window's scroll position: the window would then show past
   // the item's end, and its scroll view would clamp the offset and shift the content.
@@ -833,7 +889,7 @@ function ActionMenuInner<Id extends string>(
   const previewStyle = useAnimatedStyle(() => ({
     opacity: Math.min(fade.value, 1 - c.value),
     height: Math.max(1, Math.min(windowH.value, windowMax)),
-    transform: [{ translateY: shift.value }],
+    transform: [{ translateY: shift.value }, { scale: previewLift.value }],
   }));
 
   const isDark = theme.isDark;

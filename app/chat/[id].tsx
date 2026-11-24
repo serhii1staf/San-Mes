@@ -232,6 +232,25 @@ function matchesEitherId(m: { id: string; serverId?: string }, candidate: string
   return m.id === candidate || (!!m.serverId && m.serverId === candidate);
 }
 
+/** The same emoji in the same order: the recents re-read on a panel open changed nothing. */
+function sameStringList(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** The same GIFs (by id) in the same order. */
+function sameIdList(a: readonly { id: string }[], b: readonly { id: string }[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i]?.id !== b[i]?.id) return false;
+  return true;
+}
+
+// A code block in a bubble is not natively selectable on Android: the hold that opens the message
+// menu also started the text's own selection there, which scrolled this list (see `CodeBlock` in
+// FormattedText.tsx). On iOS the hold recognises first (300 ms against the text's 500 ms).
+const CODE_SELECTABLE = Platform.OS !== 'android';
+
 // Hard cap on how many messages we keep in the durable `chat_messages:<id>`
 // blob. Without this, every send/receive grows the MMKV blob unbounded, and
 // each persist re-serializes the whole thing. 1000 is generous enough for
@@ -1818,7 +1837,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 duplication, and the elided label reads as a broken half-link. Third-party URLs keep
                 their text. See `isInAppCardUrl` in src/utils/appLinks.ts. */}
             {bubbleBodyText ? (
-              <FormattedText color={bodyTextColor} linkColor={linkTextColor} style={{ fontSize, fontFamily: fontFamilyStyle }}>{bubbleBodyText}</FormattedText>
+              <FormattedText color={bodyTextColor} linkColor={linkTextColor} style={{ fontSize, fontFamily: fontFamilyStyle }} selectableCode={CODE_SELECTABLE}>{bubbleBodyText}</FormattedText>
             ) : null}
             {previewLink ? (
               <View style={bubbleStyles.linkPreviewWrap}>
@@ -2199,12 +2218,19 @@ export default function ChatScreen() {
     // NO caller, so nothing ever marked a conversation read anywhere in the app. Clearing on the
     // registration effect also means re-foregrounding into an open chat re-clears anything that
     // arrived while away.
-    try {
-      for (const cid of ids) if (cid) useChatUnread.getState().clear(cid);
-    } catch {}
+    //
+    // ── THE CLEAR ON OPEN WAITS FOR THE SLIDE (Nov 2026) ──────────────────────────────────────
+    //
+    // It ran here, inside the task that opens the chat: a store write, an MMKV persist, and, for a
+    // chat with unread messages, a re-render of the still-mounted chat list and the tab bar's badge
+    // under the sliding screen. Neither is visible until the chat is left, so the first clear and the
+    // first server mark are in the effect below, once the push animation is over (the same reason
+    // `markChatOpened` waits). Nothing can be counted meanwhile: `setActiveThread` above is still
+    // immediate, and `bump` never counts a message for the thread on screen. The foreground and
+    // leave paths below are unchanged.
     // ── AND TELL THE SERVER, WHICH IS THE HALF THAT TRAVELS ──────────────────
     //
-    // `clear` above is local: it zeroes this device's count and stamps a watermark into per-install
+    // `clear` is local: it zeroes this device's count and stamps a watermark into per-install
     // MMKV. That is why reading a chat on the phone left it unread on the tablet, and why a
     // reinstall resurrected every conversation as unread — the watermark went with the install.
     //
@@ -2213,14 +2239,13 @@ export default function ChatScreen() {
     // is a guaranteed 403 on every chat open. `clear` is called for both because a local map keyed
     // by either id costs nothing to over-clear; a network call does.
     //
-    // Throttled and coalesced inside the service, so the three call sites in this effect plus the
-    // one in the send handler cannot turn into four round-trips.
+    // Throttled and coalesced inside the service, so the three call sites in this effect and the
+    // next plus the one in the send handler cannot turn into four round-trips.
     //
     // Not before the id is SETTLED. On a profile-entry open `conversationId` is still the peer's user
     // id at this point, which is exactly the guaranteed 403 described above; the effect runs again
     // the moment it settles (it is in the deps), and marks then.
     const markable = convIdSettled;
-    if (markable) markConversationRead(conversationId, newestPeerMessageKey(conversationId));
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'active') {
         setActiveThread('chat', ids);
@@ -2265,6 +2290,17 @@ export default function ChatScreen() {
       if (markable) markConversationReadIfNewer(conversationId, newestPeerMessageKey(conversationId));
     };
   }, [conversationId, id, convIdSettled]);
+  // The clear and the server mark of the open itself, once the slide is over (see "THE CLEAR ON
+  // OPEN WAITS FOR THE SLIDE" above). Runs again when the id settles or changes, as the registration
+  // does. A chat left before this runs is still cleared and marked by the leave path.
+  useEffect(() => {
+    if (!transitionSettled) return;
+    if (!conversationId && !id) return;
+    try {
+      for (const cid of [conversationId, id]) if (cid) useChatUnread.getState().clear(cid);
+    } catch {}
+    if (convIdSettled) markConversationRead(conversationId, newestPeerMessageKey(conversationId));
+  }, [transitionSettled, conversationId, id, convIdSettled]);
   // Mount-time marker — captures how long the chat screen took to commit
   // its first render so the perf-monitor panel can attribute open-the-chat freezes.
   //
@@ -2347,10 +2383,15 @@ export default function ChatScreen() {
     keyboardWaitRef.current = false;
     Keyboard.dismiss();
   }, []);
-  const onHeldPreview = useCallback((state: 'planned' | 'shown' | 'failed' | 'gone', messageId: string) => {
-    if (state === 'planned') {
+  const onHeldPreview = useCallback((state: 'planned' | 'shown' | 'failed' | 'gone' | 'still', messageId: string) => {
+    if (state === 'planned' || state === 'still') {
+      // `still`: a message too tall to snapshot stays lit where it is, not lifted (ActionMenu, "AN
+      // ITEM TALLER THAN THE WINDOW IS NOT SNAPSHOTTED"). Reset when the menu goes, like `planned`.
+      // The menu only says it with no keyboard height, so nothing is waiting on a snapshot to
+      // dismiss one.
       previewingRef.current = true;
       heldIdSV.value = '';
+      if (state === 'still') dismissKeyboardIfWaiting();
     } else if (state === 'shown') {
       hiddenIdSV.value = messageId;
       dismissKeyboardIfWaiting();
@@ -2495,20 +2536,30 @@ export default function ChatScreen() {
   // `chat/[id]` whose only named marks summed to 5 ms.
   //
   // Now empty until first needed. `ensureRecentsLoaded` is called from `openEmoji` (the only way the
-  // panel opens; GIFs are its second tab), which is the moment the values become visible, and it is one-shot via a ref so re-opening the panel
-  // does not re-read. Everything downstream is unchanged: the pushers still return the updated list
-  // and still write through to MMKV.
+  // panel opens; GIFs are its second tab), which is the moment the values become visible (see the
+  // note on it below). Everything downstream is unchanged: the pushers still return the updated
+  // list and still write through to MMKV.
   const [recentEmoji, setRecentEmoji] = useState<string[]>([]);
   const [recentGif, setRecentGif] = useState<GiphyItem[]>([]);
-  const recentsLoadedRef = useRef(false);
+  // ── READ ON EVERY OPEN OF THE PANEL, COMMITTED ONLY WHEN SOMETHING CHANGED (Nov 2026) ─────────
+  //
+  // This was one-shot, and two effects made up for it: one re-read both lists after every chat
+  // open (`kvWarm` resolves at once with MMKV, so its `.then` ran right after the open and, with
+  // any recents stored, set state: a full render of this screen on every open of every chat), and
+  // one re-read them on every `panelTab` change, which put a second full render into the tap that
+  // opens the panel (and into every tab switch). Both are gone. The panel's own open reads the
+  // lists, which also picks up what another screen added while this one was open, and sets state
+  // only when a list really differs, so the usual open renders once.
+  const recentEmojiRef = useRef(recentEmoji);
+  recentEmojiRef.current = recentEmoji;
+  const recentGifRef = useRef(recentGif);
+  recentGifRef.current = recentGif;
   const ensureRecentsLoaded = useCallback(() => {
-    if (recentsLoadedRef.current) return;
-    recentsLoadedRef.current = true;
     try {
       const e = getRecentEmoji();
-      if (e.length > 0) setRecentEmoji(e);
+      if (!sameStringList(e, recentEmojiRef.current)) setRecentEmoji(e);
       const g = getRecentGif();
-      if (g.length > 0) setRecentGif(g);
+      if (!sameIdList(g, recentGifRef.current)) setRecentGif(g);
     } catch {
       // A corrupt or unreadable cache means "no recents", which is what the empty initial state
       // already shows — never a reason to fail opening the panel.
@@ -3220,7 +3271,7 @@ export default function ChatScreen() {
         }),
       );
     }
-  }, [emojiPanelSV, liftSV, keyboardHeight]);
+  }, [emojiPanelSV, liftSV, keyboardHeight, ensureRecentsLoaded]);
 
   // There is no separate "open GIFs" entry any more: the composer's emoji button opens the panel on
   // the emoji tab and the panel's own switcher (`switchPanel`) leads to the GIFs.
@@ -3276,6 +3327,11 @@ export default function ChatScreen() {
     inputRef.current?.insert(e);
     setRecentEmoji(pushRecentEmoji(e));
   }, []);
+  // Stable, so the memoized panel is not re-rendered by every render of this screen while it is open
+  // (it was an inline arrow in the JSX).
+  const onPanelBackspace = useCallback(() => {
+    inputRef.current?.backspace();
+  }, []);
 
   // ── Recents hydration (emoji + GIF) ───────────────────────────────────────
   // `recentEmoji`/`recentGif` are seeded ONCE via the useState initializers
@@ -3308,33 +3364,16 @@ export default function ChatScreen() {
   //
   // The fallback path this exists for is unaffected: no MMKV means the initializers returned empty,
   // the guard passes, and the warm hydrates exactly as before.
+  // ── WARM ONLY; THE PANEL READS THE LISTS ITSELF (Nov 2026) ─────────────────────────────────────
+  //
+  // The guard above stopped holding when the initialisers became empty: both lists now start as
+  // `[]`, so this re-read the recents after every chat open and set state whenever any were stored,
+  // a full render of this screen right after the open. The values are read by `ensureRecentsLoaded`
+  // when the panel opens. What remains is the warm for the fallback path, where it fills the
+  // in-memory mirror those reads use; with MMKV `kvWarm` returns at once and does nothing.
   useEffect(() => {
-    if (recentEmoji.length > 0 || recentGif.length > 0) return;
-    let cancelled = false;
-    kvWarm(['recent_emoji', 'recent_gif'])
-      .then(() => {
-        if (cancelled) return;
-        const warmedEmoji = getRecentEmoji();
-        const warmedGifs = getRecentGif();
-        if (warmedEmoji.length > 0) setRecentEmoji(warmedEmoji);
-        if (warmedGifs.length > 0) setRecentGif(warmedGifs);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-    // Mount-only ON PURPOSE — see the guard note above. Listing the two state values would re-run
-    // the warm every time a recent is pushed, which is the opposite of what this is for.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    kvWarm(['recent_emoji', 'recent_gif']).catch(() => {});
   }, []);
-
-  // Whenever the media panel opens, refresh the recents from storage so the
-  // grid always reflects the latest persisted MRU (e.g. GIFs sent earlier this
-  // session, or items that hydrated after the initial mount read). Additive —
-  // does not touch the lift/slide/switch mechanics.
-  useEffect(() => {
-    if (!panelTab) return;
-    setRecentEmoji(getRecentEmoji());
-    setRecentGif(getRecentGif());
-  }, [panelTab]);
 
   // Entering search mode tears down the input bar, so drop any panel state to
   // keep the lift offsets sane.
@@ -7647,7 +7686,7 @@ export default function ChatScreen() {
               onTabChange={switchPanel}
               onSelectEmoji={onPickEmoji}
               onSelectGif={onPickGif}
-              onBackspace={() => inputRef.current?.backspace()}
+              onBackspace={onPanelBackspace}
               recentEmoji={recentEmoji}
               recentGifs={recentGif}
               theme={theme}
