@@ -433,6 +433,10 @@ describe('ChatInputBar composer behaviour', () => {
     expect(keys).toEqual(
       [
         'ITSAppUsesNonExemptEncryption',
+        // Back in Nov 2026, deliberately: the profile QR screen's "Сканировать QR-код" button reads
+        // QR codes with expo-camera. Used only while scanning; nothing is recorded or sent. The
+        // image-picker and expo-camera plugins carry the same string (app.json), with no microphone.
+        'NSCameraUsageDescription',
         'NSPhotoLibraryAddUsageDescription',
         'NSPhotoLibraryUsageDescription',
         // Not a permission: React Native's release level, read by ExpoReactNativeFactory. It turns
@@ -446,9 +450,8 @@ describe('ChatInputBar composer behaviour', () => {
     expect(keys).not.toContain('NSUserTrackingUsageDescription');
     expect(keys).not.toContain('NSMotionUsageDescription');
     expect(keys).not.toContain('NSMicrophoneUsageDescription');
-    // The camera was only used by the removed Create (publishing) screen. Nothing captures photos
-    // now, so the permission is gone and the image-picker plugin is configured to keep it gone.
-    expect(keys).not.toContain('NSCameraUsageDescription');
+    // The camera string must say what the camera is for: QR scanning, nothing recorded.
+    expect(String(appJson.expo.ios.infoPlist.NSCameraUsageDescription)).toMatch(/QR/);
   });
 
   // ── Property: one transition per emptiness flip, whatever is typed ────────

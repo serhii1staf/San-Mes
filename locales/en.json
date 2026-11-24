@@ -1,4 +1,5 @@
 {
   "NSPhotoLibraryUsageDescription": "San uses your photo library so you can attach images to posts, comments, and chat messages, and so you can set a profile picture, banner, or chat background.",
-  "NSPhotoLibraryAddUsageDescription": "San saves a photo from a chat to your photo library when you tap Save."
+  "NSPhotoLibraryAddUsageDescription": "San saves a photo from a chat, or a profile QR code, to your photo library when you tap Save.",
+  "NSCameraUsageDescription": "San uses the camera only to scan QR codes, such as someone's profile code. Nothing is recorded or sent."
 }

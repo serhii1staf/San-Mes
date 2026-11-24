@@ -37,6 +37,7 @@ import { GlassRim, type GlassRimShape } from '../ui/GlassRim';
 import { useTabBarStore } from '../../store/tabBarStore';
 import { useAuthStore } from '../../store';
 import { useChatUnread, totalChatUnread } from '../../store/chatUnreadStore';
+import { openProfileQr } from '../../store/profileQrStore';
 import { useT } from '../../i18n/store';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -1128,19 +1129,6 @@ const ProfileQuickDial = memo(function ProfileQuickDial({
   );
 });
 
-/**
- * The QR sheet, opened from the dial on any tab. `ProfileLayout` is required lazily so the tab bar —
- * mounted at launch — does not pull the whole profile header module into startup.
- */
-const TabBarProfileQR = memo(function TabBarProfileQR({ onClose }: { onClose: () => void }) {
-  const userId = useAuthStore((s) => s.user?.id);
-  const t = useT();
-  if (!userId) return null;
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { ProfileQRModal } = require('../profile/ProfileLayout') as typeof import('../profile/ProfileLayout');
-  return <ProfileQRModal visible onClose={onClose} profileId={userId} title={t('profile.qr_title')} />;
-});
-
 const dialStyles = StyleSheet.create({
   // Same width and centring as the row below, so the column lands exactly over the capsule.
   track: { width: DIAL_TRACK_WIDTH, alignSelf: 'center', alignItems: 'flex-end' },
@@ -1440,7 +1428,6 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const t = useT();
   const [dialOpen, setDialOpen] = useState(false);
   const [dialMounted, setDialMounted] = useState(false);
-  const [qrOpen, setQrOpen] = useState(false);
   const dialOpenRef = useRef(false);
   const dialOpenedAtRef = useRef(0);
   const lastProfileTapRef = useRef(0);
@@ -1459,17 +1446,19 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const onDialClosed = useCallback(() => {
     if (!dialOpenRef.current) setDialMounted(false);
   }, []);
+  // The QR screen is the root-level one (src/components/profile/ProfileQrHost.tsx), the same for your
+  // own profile and anyone else's.
   const onDialQR = useCallback(() => {
     closeDial();
     triggerHaptic('light');
-    setQrOpen(true);
+    const me = useAuthStore.getState().user;
+    if (me?.id) openProfileQr({ id: me.id, username: me.username, displayName: me.displayName, emoji: me.emoji });
   }, [closeDial]);
   const onDialSettings = useCallback(() => {
     closeDial();
     triggerHaptic('light');
     router.push('/settings');
   }, [closeDial]);
-  const closeQr = useCallback(() => setQrOpen(false), []);
   // Any tab change puts the dial away. The grace period covers a double-tap from another tab: the
   // first tap navigates, and its re-render may land just after the second tap opened the dial.
   const focusedKey = focusedRoute?.key;
@@ -1875,7 +1864,6 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         )}
       </View>
     </Animated.View>
-    {qrOpen ? <TabBarProfileQR onClose={closeQr} /> : null}
     </>
   );
 });

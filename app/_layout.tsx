@@ -44,6 +44,7 @@ import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor'
 import { installNotificationsBadgeForegroundRefresh } from '../src/store/notificationsBadgeStore';
 import { InAppAlertHost } from '../src/components/ui/InAppAlertHost';
 import { ChatPeekHost } from '../src/components/chat/ChatPeekMenu';
+import { ProfileQrHost } from '../src/components/profile/ProfileQrHost';
 import { RealtimeAccountBridge } from '../src/components/realtime/RealtimeAccountBridge';
 import { NavigationBarController } from '../src/components/system/NavigationBarController';
 
@@ -874,6 +875,10 @@ function RootLayout() {
         {/* The chat list's long-press peek menu. Drawn here, above the navigator, instead of as a
             Modal inside the held row — see src/store/chatPeekStore.ts. Renders null while closed. */}
         <ChatPeekHost />
+        {/* The profile QR screen, own and anyone else's, opened through `openProfileQr`. Drawn here
+            over the navigator rather than as a Modal (see src/store/profileQrStore.ts). Renders null
+            while closed, and loads the screen's code the first time it opens. */}
+        <ProfileQrHost />
         {/* App-wide realtime bridge — opens ONE Ably connection for the
             logged-in user, subscribes to the personal notifications
             channel so new conversations / messages show up the instant
