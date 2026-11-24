@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, AppState, Pressable, InteractionManager, Platform, Dimensions, Keyboard } from 'react-native';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
+import { View, StyleSheet, Animated, Easing, Text as RNText, Image as RNImage, AppState, Pressable, InteractionManager, Platform, Dimensions, Keyboard } from 'react-native';
 import { Stack, useRouter, useSegments, useNavigationContainerRef, usePathname } from 'expo-router';
 import { consumeSkipSplashOnce } from '../src/services/launchFlags';
+import { onFirstScreenPainted } from '../src/services/firstScreenPaint';
 import { compareIso } from '../src/utils/compareIso';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -216,18 +217,69 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   pathnameRef.current = pathname;
   const [showSplash, setShowSplash] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  // Skipped once right after an account switch: the switch already showed a cover and the native
+  // reload screen in the same colour, and a third full-screen beat on top of those is the flash.
+  const [skipSplash] = useState(() => consumeSkipSplashOnce());
 
   useEffect(() => {
     // Minimum time the branded JS splash stays up. Trimmed 800 → 450 ms so the
     // app reaches the feed faster after the native launch screen hands off —
     // the user perceived the combined native+JS splash as too long.
-    //
-    // Skipped once right after an account switch: the switch already showed a cover and the native
-    // reload screen in the same colour, and a third full-screen beat on top of those is the flash.
-    const minMs = consumeSkipSplashOnce() ? 0 : 450;
+    const minMs = skipSplash ? 0 : 450;
     const timer = setTimeout(() => setShowSplash(false), minMs);
     return () => clearTimeout(timer);
-  }, []);
+  }, [skipSplash]);
+
+  // ── THE SPLASH IS DRAWN OVER THE APP NOW, NOT INSTEAD OF IT (Nov 2026) ────
+  //
+  // Reported: at launch the bottom navigation sometimes has no icons, "как будто прогружается после
+  // экрана загрузки". The recording, frame by frame: the splash went, then ~85 ms of a bare tab bar
+  // on an empty screen (a cold start lands on the hidden `index` route, which renders nothing and
+  // redirects after its first commit), then the chat list, and only then the tab icons (their font
+  // loaded lazily; preloaded now, see src/theme/fonts.ts).
+  //
+  // The splash used to REPLACE the app, so the app could only start mounting once the splash had
+  // gone, and everything it does in its first frames was on screen. Now the app mounts under the
+  // splash, during its minimum time, and the splash lifts (a short fade) once the first screen has
+  // actually been drawn (`firstScreenPaint`), or after `COVER_CAP_MS` at the latest. Signed-out and
+  // logging-out states still render the splash INSTEAD of the app, synchronously, exactly as before:
+  // no protected screen may render with a null user for even one frame.
+  const [coverLeaving, setCoverLeaving] = useState(false);
+  const [coverGone, setCoverGone] = useState(skipSplash);
+  // Not in the guard's first commit: that commit is what lets the native launch screen go (see
+  // `SplashScreen.hideAsync` in RootLayout), and mounting the whole app in it would hold the launch
+  // screen for the length of that mount and only then start the splash's minimum time. One frame
+  // later, the app mounts under the splash while that time runs.
+  const [appMountAllowed, setAppMountAllowed] = useState(skipSplash);
+  useEffect(() => {
+    if (appMountAllowed) return;
+    const raf = requestAnimationFrame(() => setAppMountAllowed(true));
+    return () => cancelAnimationFrame(raf);
+  }, [appMountAllowed]);
+  const inAuthGroupNow = segments[0] === '(auth)';
+  const mountApp = appMountAllowed && hasHydrated && !isLoggingOut && (isAuthenticated || inAuthGroupNow);
+  useEffect(() => {
+    if (!mountApp || showSplash || coverGone || coverLeaving) return;
+    // Signed out (welcome, login): those screens do not report their first paint and have nothing
+    // that pops in, so the splash lifts after its minimum time, as it always did.
+    if (!isAuthenticated) {
+      setCoverLeaving(true);
+      return;
+    }
+    let done = false;
+    const leave = () => {
+      if (done) return;
+      done = true;
+      setCoverLeaving(true);
+    };
+    const unsubscribe = onFirstScreenPainted(leave);
+    const cap = setTimeout(leave, COVER_CAP_MS);
+    return () => {
+      unsubscribe();
+      clearTimeout(cap);
+    };
+  }, [mountApp, showSplash, coverGone, coverLeaving, isAuthenticated]);
+  const onCoverGone = useCallback(() => setCoverGone(true), []);
 
   useEffect(() => {
     if (!hasHydrated || showSplash) return;
@@ -366,24 +418,32 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     return () => { try { sub.remove(); } catch {} };
   }, []);
 
-  if (!hasHydrated || showSplash || isLoggingOut) {
-    return <CustomSplash />;
-  }
-  // Synchronous guard: the moment auth is cleared (logout / delete account),
-  // render the splash immediately so no protected screen re-renders with a null
-  // user for even a single frame (that race was crashing the app on logout).
-  const inAuthGroup = segments[0] === '(auth)';
-  if (!isAuthenticated && !inAuthGroup) {
-    return <CustomSplash />;
-  }
+  // Synchronous guard: until the auth store has hydrated, and the moment auth is cleared (logout /
+  // delete account), the app is not mounted at all and only the splash is drawn, so no protected
+  // screen re-renders with a null user for even a single frame (that race was crashing the app on
+  // logout). Otherwise the app is mounted and the splash, while it is up, is drawn over it (see
+  // "THE SPLASH IS DRAWN OVER THE APP NOW").
+  //
+  // The two children keep their positions, so the splash is the same element before and after the
+  // app mounts under it and its entrance animation is not restarted.
+  //
   // The whole tree is wrapped in a themed background so any 1-pixel layout
   // gap (e.g. between the Stack and the bottom-docked browser band when
   // its height animates) gets the app's real background colour rather than
   // whatever sits behind us (which can be the OS default white in some
   // edge cases — that was the "white seam" the user saw at the bottom of
   // the screen for a frame after dismissing the band).
-  return <ThemedShell>{children}</ThemedShell>;
+  const coverVisible = !mountApp || !coverGone;
+  return (
+    <View style={styles.guardRoot}>
+      {mountApp ? <ThemedShell>{children}</ThemedShell> : null}
+      {coverVisible ? <CustomSplash leaving={mountApp && coverLeaving} onGone={onCoverGone} /> : null}
+    </View>
+  );
 }
+
+/** The splash lifts by this long after its minimum time even if no screen reports being drawn. */
+const COVER_CAP_MS = 1500;
 
 function ThemedShell({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
@@ -464,7 +524,7 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-function CustomSplash() {
+function CustomSplash({ leaving = false, onGone }: { leaving?: boolean; onGone?: () => void }) {
   const t = useT();
   // Splash only needs the display name — subscribe to that field, not the
   // whole user object, so unrelated profile updates don't re-trigger the
@@ -473,6 +533,10 @@ function CustomSplash() {
   const logoAnim = useRef(new Animated.Value(-40)).current;
   const textAnim = useRef(new Animated.Value(40)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
+  // The whole splash, for lifting it off the app underneath (see AuthNavigationGuard).
+  const coverAnim = useRef(new Animated.Value(1)).current;
+  const onGoneRef = useRef(onGone);
+  onGoneRef.current = onGone;
 
   useEffect(() => {
     Animated.parallel([
@@ -482,6 +546,18 @@ function CustomSplash() {
     ]).start();
   }, []);
 
+  useEffect(() => {
+    if (!leaving) {
+      coverAnim.setValue(1);
+      return;
+    }
+    Animated.timing(coverAnim, { toValue: 0, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }).start(
+      ({ finished }) => {
+        if (finished) onGoneRef.current?.();
+      },
+    );
+  }, [leaving, coverAnim]);
+
   // Layout: ORIGINAL side-by-side branding (logo slides in from the left,
   // "San" + greeting from the right). The only thing kept from the splash
   // rework is the fixed dark #141414 background + light text, which matches
@@ -489,7 +565,11 @@ function CustomSplash() {
   // native→JS hand-off doesn't flash dark→light. The centered layout was a
   // misstep and is reverted here.
   return (
-    <View style={[styles.loadingContainer, { backgroundColor: '#141414' }]}>
+    <Animated.View
+      style={[styles.loadingContainer, { backgroundColor: '#141414', opacity: coverAnim }]}
+      // Taps on a splash that is lifting go to the app under it.
+      pointerEvents={leaving ? 'none' : 'auto'}
+    >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 32, maxWidth: '90%' }}>
         <Animated.View style={{ transform: [{ translateX: logoAnim }], opacity: opacityAnim }}>
           <RNImage source={require('../assets/icon.png')} style={{ width: 44, height: 44, borderRadius: 12 }} />
@@ -503,7 +583,7 @@ function CustomSplash() {
           )}
         </Animated.View>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -1000,7 +1080,9 @@ function AppStack() {
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#141414' },
+  // Over the app (see AuthNavigationGuard): above the navigator and every host in the guard's tree.
+  loadingContainer: { ...StyleSheet.absoluteFillObject, zIndex: 5000, elevation: 50, justifyContent: 'center', alignItems: 'center', backgroundColor: '#141414' },
+  guardRoot: { flex: 1 },
   errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
   rootColumn: { flex: 1 },
   stackWrapper: { flex: 1 },

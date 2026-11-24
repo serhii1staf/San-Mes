@@ -26,6 +26,32 @@
  *   Opening fades the background in and lifts the card from 90 % with a fade; closing is the same,
  *   backwards and quicker, and only then does the host unmount it. Everything starts at opacity 0, so
  *   no frame shows anything before the animation.
+ *
+ * ── THE OPEN WAS NEVER SEEN ON A FIRST OPEN, AND THE CLOSE WAS A CUT (Nov 2026) ──
+ *
+ *   Reported with a screen recording: the open animation "как будто плохая", the close "очень твёрдая,
+ *   сухая", and the round buttons have no liquid glass.
+ *
+ *   The recording, frame by frame (iPhone, 48 fps): after the tap the profile stood still for 14 frames
+ *   (290 ms), and the first frame of this screen already had the background and the card at full
+ *   opacity, the card empty; the code then faded in. So the open animation had run and finished
+ *   inside that stall. It started from the mount effect, and the native driver counts from the moment
+ *   it receives the animation, so a first frame that takes 290 ms to draw (about ninety emoji views,
+ *   each rasterised on the main thread the first time) lands with the animation all but over.
+ *   The close took 240 ms on `Easing.in(cubic)` with the background held at full until the value
+ *   fell under 0.6: nothing moved for 180 ms, then everything went in three frames.
+ *
+ *   Now:
+ *   - The open waits until the screen has been drawn: its own layout, then two frames, and the code
+ *     encoded first (`warmQrCode`), so the card never shows empty.
+ *   - The emoji field is mounted after the open, invisible, and fades in once it has been drawn, so
+ *     its first rasterisation can no longer swallow the open.
+ *   - Background, card and buttons each have their own value and curve. The card springs up out of a
+ *     small drop; the buttons slide in from their own edges (translation only, which keeps the system
+ *     glass alive: an alpha below 1 on a glass view's ancestor switches it off, expo/expo#41024).
+ *   - The close starts moving on its first frame and decelerates: everything dissolves together, the
+ *     card sinking a little, the buttons leaving through their edges.
+ *   - The four round buttons are glass (or a blur where glass is off), like the photo viewer's.
  */
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -51,8 +77,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { emojiTextStyle } from '../ui/emojiText';
-import { QrCodeView } from '../qr/QrCodeView';
+import { QrCodeView, warmQrCode } from '../qr/QrCodeView';
 import { QR_SCANNER_AVAILABLE, QrScanner } from '../qr/QrScanner';
+import { GlassBg, useLiquidGlassActive } from '../ui/LiquidGlass';
+import { AppBlurView } from '../ui/AppBlurView';
+import { isQrCached } from '../../utils/qrMatrix';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
 import { buildProfileShareUrl, resolveInAppHref } from '../../utils/appLinks';
@@ -142,13 +171,15 @@ interface FieldEmoji {
  */
 function buildField(width: number, height: number, seed: string, ownEmoji: string): { near: FieldEmoji[]; far: FieldEmoji[] } {
   const rnd = random(hashString(seed));
+  // Sizes in steps of 4 pt: an emoji is rasterised once per size the first time it is drawn (on iOS on
+  // the main thread), and with a size per point almost every emoji in the field was a new one.
   const layer = (cell: number, minSize: number, spread: number, minOpacity: number, opacitySpread: number, tag: string) => {
     const cols = Math.ceil(width / cell) + 1;
     const rows = Math.ceil(height / cell) + 1;
     const out: FieldEmoji[] = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        const size = minSize + Math.round(rnd() * spread);
+        const size = minSize + Math.round((rnd() * spread) / 4) * 4;
         const jx = (rnd() - 0.5) * cell * 0.6;
         const jy = (rnd() - 0.5) * cell * 0.6;
         // Every other row shifted by half a cell reads less like a grid.
@@ -168,7 +199,8 @@ function buildField(width: number, height: number, seed: string, ownEmoji: strin
     return out;
   };
   return {
-    far: layer(width / 4.2, 18, 8, 0.2, 0.12, 'f'),
+    // About 45 small faint ones (was 60) and 28 large ones.
+    far: layer(width / 3.6, 18, 8, 0.2, 0.12, 'f'),
     near: layer(width / 2.6, 30, 14, 0.36, 0.2, 'n'),
   };
 }
@@ -194,6 +226,10 @@ const EmojiField = memo(function EmojiField({ items }: { items: FieldEmoji[] }) 
 
 // ── Small round button ────────────────────────────────────────────────────
 
+// Asked: "почему кнопочка вот тут жидкость стекло не поддерживается?" It was a flat 16 % white disc.
+// Now the same surface the photo viewer's buttons use: glass where it is on, a dark blur where it is
+// off. The glass sits BEHIND the icon as a sibling (inside a glass view an icon is warped), the button
+// clips it round, and a press scales rather than fades (an alpha would switch the system glass off).
 function RoundButton({
   onPress,
   label,
@@ -205,6 +241,7 @@ function RoundButton({
   size?: number;
   children: React.ReactNode;
 }) {
+  const glassActive = useLiquidGlassActive();
   return (
     <Pressable
       onPress={onPress}
@@ -213,9 +250,14 @@ function RoundButton({
       accessibilityLabel={label}
       style={({ pressed }) => [
         styles.round,
-        { width: size, height: size, borderRadius: size / 2, opacity: pressed ? 0.7 : 1 },
+        { width: size, height: size, borderRadius: size / 2, transform: [{ scale: pressed ? 0.92 : 1 }] },
       ]}
     >
+      {glassActive ? (
+        <GlassBg borderRadius={size / 2} glassStyle="regular" control interactive colorScheme="dark" />
+      ) : (
+        <AppBlurView intensity={36} role="scrim" tint="dark" style={StyleSheet.absoluteFill} />
+      )}
       {children}
     </Pressable>
   );
@@ -253,8 +295,12 @@ function ProfileQrOverlay({
   const fieldH = H + OVERHANG_Y * 2;
   const field = useMemo(() => buildField(fieldW, fieldH, target.id, emoji), [fieldW, fieldH, target.id, emoji]);
 
-  // ── Motion ──
-  const appear = useRef(new Animated.Value(0)).current;
+  // ── Motion ── (see "THE OPEN WAS NEVER SEEN" at the top of the file)
+  const bg = useRef(new Animated.Value(0)).current;
+  const card = useRef(new Animated.Value(0)).current;
+  const cardFade = useRef(new Animated.Value(0)).current;
+  const chrome = useRef(new Animated.Value(0)).current;
+  const fieldFade = useRef(new Animated.Value(0)).current;
   const sway = useRef(new Animated.Value(0)).current;
   const menuAnim = useRef(new Animated.Value(0)).current;
   const noticeAnim = useRef(new Animated.Value(0)).current;
@@ -268,22 +314,85 @@ function ProfileQrOverlay({
     return () => loop.stop();
   }, [sway]);
 
-  // In on `visible`, out when it clears. Reopened during the close, it simply comes back: the new
-  // animation stops the old one, whose `finished` is then false, so the host is not told to unmount.
+  // The code is made before the screen shows, so the card never appears empty. A link already made
+  // (in memory or on disk) is ready at once; a new one is made on the next frame, while nothing shows.
+  const [codeReady, setCodeReady] = useState(() => isQrCached(url, 'H'));
   useEffect(() => {
-    if (visible) {
-      hidingRef.current = false;
-      Animated.timing(appear, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-      return;
-    }
-    if (hidingRef.current) return;
+    if (codeReady) return;
+    const raf = requestAnimationFrame(() => {
+      // Ready either way: if making the code failed here, the screen must still open (the code
+      // view then tries on its own), not sit invisible over the app taking its touches.
+      try {
+        warmQrCode(url, true);
+      } catch {}
+      setCodeReady(true);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [codeReady, url]);
+
+  const [laidOut, setLaidOut] = useState(false);
+  const onRootLayout = useCallback(() => setLaidOut(true), []);
+  // Mounted once the open has finished; see `onFieldLayout`.
+  const [fieldMounted, setFieldMounted] = useState(false);
+
+  const runOpen = useCallback(() => {
+    hidingRef.current = false;
+    Animated.parallel([
+      Animated.timing(bg, { toValue: 1, duration: 300, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(cardFade, { toValue: 1, duration: 220, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      // A little overshoot: the card settles rather than stops.
+      Animated.spring(card, { toValue: 1, damping: 17, stiffness: 180, mass: 0.9, useNativeDriver: true }),
+      Animated.spring(chrome, { toValue: 1, damping: 22, stiffness: 210, mass: 0.9, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) setFieldMounted(true);
+    });
+  }, [bg, cardFade, card, chrome]);
+
+  // In once it has been drawn: its own layout, then two frames. On iOS a frame callback waits for the
+  // main thread, so the second one runs after the first frame of this screen is on the glass, however
+  // long that frame took to draw, and the animation starts from its beginning.
+  useEffect(() => {
+    if (!visible || !laidOut || !codeReady) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(runOpen);
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [visible, laidOut, codeReady, runOpen]);
+
+  // Out when `visible` clears. It moves from its first frame and decelerates, all of it together, and
+  // only then is the host told to unmount. Reopened during the close, it simply comes back: the open
+  // stops this, whose `finished` is then false, so the host is not told.
+  useEffect(() => {
+    if (visible || hidingRef.current) return;
     hidingRef.current = true;
-    Animated.timing(appear, { toValue: 0, duration: 240, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(
-      ({ finished }) => {
-        if (finished) onHidden();
-      },
+    const curve = Easing.bezier(0.33, 0, 0.2, 1);
+    Animated.parallel([
+      Animated.timing(bg, { toValue: 0, duration: 320, easing: curve, useNativeDriver: true }),
+      Animated.timing(cardFade, { toValue: 0, duration: 240, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(card, { toValue: 0, duration: 300, easing: curve, useNativeDriver: true }),
+      Animated.timing(chrome, { toValue: 0, duration: 280, easing: curve, useNativeDriver: true }),
+      Animated.timing(menuAnim, { toValue: 0, duration: 160, easing: curve, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) onHidden();
+    });
+  }, [visible, bg, cardFade, card, chrome, menuAnim, onHidden]);
+
+  // The emoji field mounts invisible and fades in once it has been drawn (layout, then two frames), so
+  // the cost of rasterising it the first time is paid while nothing of it shows.
+  const fieldShown = useRef(false);
+  const onFieldLayout = useCallback(() => {
+    if (fieldShown.current) return;
+    fieldShown.current = true;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        Animated.timing(fieldFade, { toValue: 1, duration: 650, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+      }),
     );
-  }, [visible, appear, onHidden]);
+  }, [fieldFade]);
 
   const close = useCallback(() => {
     useProfileQrStore.getState().close();
@@ -291,6 +400,10 @@ function ProfileQrOverlay({
 
   // ── Link menu, notice ──
   const [menuOpen, setMenuOpen] = useState(false);
+  // The close fades the menu with everything else; it must not come back open if the screen does.
+  useEffect(() => {
+    if (!visible) setMenuOpen(false);
+  }, [visible]);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -431,11 +544,11 @@ function ProfileQrOverlay({
   const cardPad = 22;
   const qrSize = cardW - cardPad * 2;
 
-  const bgOpacity = appear.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0, 1, 1] });
-  const cardOpacity = appear.interpolate({ inputRange: [0, 0.15, 0.75, 1], outputRange: [0, 0, 1, 1] });
-  const cardScale = appear.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] });
-  const cardLift = appear.interpolate({ inputRange: [0, 1], outputRange: [22, 0] });
-  const chromeOpacity = appear.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
+  const cardScale = card.interpolate({ inputRange: [0, 1], outputRange: [0.86, 1] });
+  const cardLift = card.interpolate({ inputRange: [0, 1], outputRange: [36, 0] });
+  // Off their own edges and back: translation only, see `RoundButton`.
+  const topChromeY = chrome.interpolate({ inputRange: [0, 1], outputRange: [-(insets.top + 80), 0] });
+  const bottomChromeY = chrome.interpolate({ inputRange: [0, 1], outputRange: [insets.bottom + 110, 0] });
 
   const nearStyle = {
     transform: [
@@ -464,16 +577,20 @@ function ProfileQrOverlay({
   const bottomY = insets.bottom + 24;
 
   return (
-    <View style={styles.root} pointerEvents={visible ? 'auto' : 'none'}>
+    <View style={styles.root} pointerEvents={visible ? 'auto' : 'none'} onLayout={onRootLayout}>
       <StatusBar style="light" />
-      <Animated.View style={[StyleSheet.absoluteFill, { opacity: bgOpacity }]}>
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: bg }]}>
         <LinearGradient colors={[bgTop, bgMid, bgBottom]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
-        <Animated.View pointerEvents="none" style={[fieldBox, farStyle]}>
-          <EmojiField items={field.far} />
-        </Animated.View>
-        <Animated.View pointerEvents="none" style={[fieldBox, nearStyle]}>
-          <EmojiField items={field.near} />
-        </Animated.View>
+        {fieldMounted ? (
+          <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: fieldFade }]} onLayout={onFieldLayout}>
+            <Animated.View pointerEvents="none" style={[fieldBox, farStyle]}>
+              <EmojiField items={field.far} />
+            </Animated.View>
+            <Animated.View pointerEvents="none" style={[fieldBox, nearStyle]}>
+              <EmojiField items={field.near} />
+            </Animated.View>
+          </Animated.View>
+        ) : null}
         {/* Darker at the top and the bottom, so the buttons read over any emoji. */}
         <LinearGradient
           pointerEvents="none"
@@ -488,7 +605,7 @@ function ProfileQrOverlay({
       <Animated.View
         style={[
           styles.cardWrap,
-          { opacity: cardOpacity, transform: [{ translateY: cardLift }, { scale: cardScale }] },
+          { opacity: cardFade, transform: [{ translateY: cardLift }, { scale: cardScale }] },
         ]}
         pointerEvents="box-none"
       >
@@ -501,12 +618,17 @@ function ProfileQrOverlay({
           renderToHardwareTextureAndroid
           style={[styles.card, { width: cardW, padding: cardPad }]}
         >
-          <QrCodeView
-            value={url}
-            size={qrSize}
-            color={ink}
-            center={<RNText allowFontScaling={false} style={emojiTextStyle(Math.round(qrSize * 0.12))}>{emoji}</RNText>}
-          />
+          {codeReady ? (
+            <QrCodeView
+              value={url}
+              size={qrSize}
+              color={ink}
+              center={<RNText allowFontScaling={false} style={emojiTextStyle(Math.round(qrSize * 0.12))}>{emoji}</RNText>}
+            />
+          ) : (
+            // Never seen: the screen does not show until the code exists (see `codeReady`).
+            <View style={{ width: qrSize, height: qrSize }} />
+          )}
           {handle ? (
             <Text
               variant="subheading"
@@ -522,7 +644,7 @@ function ProfileQrOverlay({
         </View>
       </Animated.View>
 
-      <Animated.View style={[styles.topBar, { top: insets.top + 10, opacity: chromeOpacity }]} pointerEvents="box-none">
+      <Animated.View style={[styles.topBar, { top: insets.top + 10, transform: [{ translateY: topChromeY }] }]} pointerEvents="box-none">
         <RoundButton onPress={close} label={t('common.close')}>
           <Feather name="x" size={22} color="#FFFFFF" />
         </RoundButton>
@@ -533,7 +655,7 @@ function ProfileQrOverlay({
         ) : null}
       </Animated.View>
 
-      <Animated.View style={[styles.bottomBar, { bottom: bottomY, opacity: chromeOpacity }]} pointerEvents="box-none">
+      <Animated.View style={[styles.bottomBar, { bottom: bottomY, transform: [{ translateY: bottomChromeY }] }]} pointerEvents="box-none">
         <RoundButton onPress={toggleMenu} label={t('qr.link_menu', 'Ссылка')} size={54}>
           <Feather name="link" size={22} color="#FFFFFF" />
         </RoundButton>
@@ -611,10 +733,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  // Clipped, or the surface behind the icon paints square inside the round button.
   round: {
-    backgroundColor: 'rgba(255,255,255,0.16)',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   menu: {
     position: 'absolute',

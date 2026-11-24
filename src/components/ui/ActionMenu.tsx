@@ -54,6 +54,7 @@ import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { GlassBg, useLiquidGlassActive } from './LiquidGlass';
 import { useGlassSurfacesActive } from './SanGlassSurface';
+import { ModalStatusBar } from './ModalStatusBar';
 import { triggerHaptic } from '../../utils/haptics';
 
 export type ActionMenuIcon =
@@ -204,6 +205,11 @@ type PreviewPlan = {
   /** The item's full height, and the height of the window it is shown in (smaller: it scrolls). */
   fullHeight: number;
   height: number;
+  /**
+   * The window's height as it first covers the item, and as it goes back on the close: what of the
+   * item was on screen below the window's top edge. See "THE WINDOW GROWS OUT OF WHAT WAS ON SCREEN".
+   */
+  startHeight: number;
   top: number;
   /** Where the window's content starts, and the shift at which the snapshot covers the item. */
   scroll: number;
@@ -438,11 +444,15 @@ function ActionMenuInner<Id extends string>(
     const height = Math.min(anchor.height, Math.max(80, freeBottom - minTop - GAP - menuH));
     const topY = clamp(anchor.y, minTop, Math.max(minTop, freeBottom - GAP - menuH - height));
     const scroll = clamp(topY - anchor.y, 0, anchor.height - height);
+    // What of the item could be seen below the window's top edge before the menu opened: down to
+    // the band's bottom (the composer, the tab bar) or the item's own end. See `startHeight`.
+    const seenBelow = Math.min(anchor.y + anchor.height, bandBottom) - (anchor.y + scroll);
     return {
       left: anchor.x,
       width: anchor.width,
       fullHeight: anchor.height,
       height,
+      startHeight: clamp(seenBelow, Math.min(height, 40), anchor.height - scroll),
       top: topY,
       scroll,
       startShift: anchor.y + scroll - topY,
@@ -513,6 +523,19 @@ function ActionMenuInner<Id extends string>(
   }, [onHeldPreview]);
   const captureHeldRef = useRef(captureHeld);
   const shift = useSharedValue(plan ? plan.startShift : 0);
+  // ── THE WINDOW GROWS OUT OF WHAT WAS ON SCREEN (Nov 2026) ──────────────────
+  //
+  // Reported: a long message, or one partly behind the composer, "пытается уменьшиться, чтобы
+  // поместиться в этот контейнер", and after the close something seems left behind. The window the
+  // snapshot is shown in had its final height from its first frame. Its first frame is drawn exactly
+  // over the item, so whatever of the item had been on screen below that height vanished at once (the
+  // live item is hidden under it), and for an item running on under the composer the window instead
+  // stuck out over the composer's buttons, then rose. The close did the same backwards.
+  //
+  // Now the window starts at what was on screen below its top edge (`startHeight`) and grows, or
+  // shrinks, to its height while it moves into place, on the same spring; the close returns it to that
+  // height while it goes back. So it never covers what the item did not, at either end.
+  const windowH = useSharedValue(plan ? plan.startHeight : 0);
   const fade = useSharedValue(1);
   const shotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewScroll = useRef<ScrollView>(null);
@@ -589,9 +612,10 @@ function ActionMenuInner<Id extends string>(
     requestAnimationFrame(() => {
       onHeldPreviewRef.current?.('shown');
       shift.value = withSpring(0, PREVIEW_SPRING);
+      if (plan) windowH.value = withSpring(plan.height, PREVIEW_SPRING);
       startCard();
     });
-  }, [shift, startCard]);
+  }, [shift, windowH, plan, startCard]);
   const onShotError = useCallback(() => {
     if (shotSettled.current) return;
     shotSettled.current = true;
@@ -607,12 +631,17 @@ function ActionMenuInner<Id extends string>(
     } catch {}
   }, [shot]);
 
+  // iOS: the status bar fades out while the menu is open and back in as it starts to close (asked:
+  // the clock and battery should go and come back smoothly). See ModalStatusBar.
+  const [statusBarBack, setStatusBarBack] = useState(false);
+
   const dismiss = useCallback(
     (cb?: () => void) => {
       if (closing.current) return;
       closing.current = true;
       after.current = cb ?? null;
       onClosingRef.current?.();
+      setStatusBarBack(true);
       // The live item comes back at once, and the snapshot fades with the card while it goes back
       // over it, scrolled back to the part that was on screen. Unless the keyboard was dismissed:
       // that moved the item, so the snapshot fades where it is, quickly (`PREVIEW_FADE`).
@@ -621,6 +650,7 @@ function ActionMenuInner<Id extends string>(
         onHeldPreviewRef.current?.('gone');
         if (shownRef.current && !plan.keyboardUp) {
           shift.value = withTiming(plan.startShift, PREVIEW_RETURN);
+          windowH.value = withTiming(plan.startHeight, PREVIEW_RETURN);
           if (plan.height < plan.fullHeight) previewScroll.current?.scrollTo({ y: plan.scroll, animated: true });
         } else if (shownRef.current) {
           fade.value = withTiming(0, PREVIEW_FADE);
@@ -630,7 +660,7 @@ function ActionMenuInner<Id extends string>(
         runOnJS(finish)();
       });
     },
-    [c, fade, finish, plan, shift],
+    [c, fade, finish, plan, shift, windowH],
   );
   useImperativeHandle(ref, () => ({ dismiss }), [dismiss]);
 
@@ -756,8 +786,12 @@ function ActionMenuInner<Id extends string>(
     return { x, w, y0, y1, rt: y0 > rawTop ? 0 : r, rb: y1 < rawBottom ? 0 : r };
   }, [anchor, spotlightRadius, spotlightLift, shotShown, boundsTop, boundsBottom]);
 
+  // Never taller than the item below the window's scroll position: the window would then show past
+  // the item's end, and its scroll view would clamp the offset and shift the content.
+  const windowMax = plan ? plan.fullHeight - plan.scroll : 0;
   const previewStyle = useAnimatedStyle(() => ({
     opacity: Math.min(fade.value, 1 - c.value),
+    height: Math.max(1, Math.min(windowH.value, windowMax)),
     transform: [{ translateY: shift.value }],
   }));
 
@@ -776,6 +810,7 @@ function ActionMenuInner<Id extends string>(
 
   return (
     <View style={StyleSheet.absoluteFill} accessibilityViewIsModal>
+      <ModalStatusBar hidden={!statusBarBack} />
       <Reanimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.dimClip, dimStyle]}>
         {spotHole && spotHole !== 'all' ? (
           <SpotlightDim hole={spotHole} color={dimColor} W={W} H={H} />
@@ -849,14 +884,18 @@ function ActionMenuInner<Id extends string>(
       {/* Above the card: on its way into place the snapshot rises over the card's corner. */}
       {plan && shot ? (
         <Reanimated.View
-          style={[styles.preview, { left: plan.left, top: plan.top, width: plan.width, height: plan.height }, previewStyle]}
+          style={[styles.preview, { left: plan.left, top: plan.top, width: plan.width }, previewStyle]}
         >
           {/* Invisible until the image has loaded, so nothing shows before it covers the item. A
               window that scrolls cuts the item across: its corners are rounded like the item's. */}
           <View
             style={[
               styles.previewInner,
-              plan.height < plan.fullHeight ? { borderRadius: spotlightRadius ?? 0, overflow: 'hidden' } : null,
+              // Clipped whenever the window is ever shorter than the item (at rest, or while it grows
+              // out of what was on screen); rounded only when it stays shorter at rest.
+              Math.min(plan.height, plan.startHeight) < plan.fullHeight
+                ? { borderRadius: plan.height < plan.fullHeight ? spotlightRadius ?? 0 : 0, overflow: 'hidden' }
+                : null,
               shotShown ? null : styles.previewLoading,
             ]}
           >

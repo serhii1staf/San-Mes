@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { perfMonitor } from '../services/perfMonitor';
+import { isFirstScreenPainted, markFirstScreenPainted } from '../services/firstScreenPaint';
 import { useSettingsStore } from '../store/settingsStore';
 
 /**
@@ -57,6 +58,20 @@ export function useScreenMountMark(screen: string): void {
   // throws the result away. This writes once, on the first render, which is also what the name says.
   const startedAtRef = useRef<number | null>(null);
   if (startedAtRef.current === null) startedAtRef.current = Date.now();
+
+  // The first screen of the launch lifts the JS splash once it has been drawn: two frames after its
+  // first commit (see src/services/firstScreenPaint.ts). Independent of the perf monitor.
+  useEffect(() => {
+    if (isFirstScreenPainted()) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(markFirstScreenPainted);
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, []);
 
   useEffect(() => {
     // Read the flag at effect time rather than subscribing to it. Subscribing would re-run this on a
