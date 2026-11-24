@@ -250,8 +250,8 @@ type CommentRowProps = {
 const NO_REPLY = () => {};
 
 // Where the composer was, on a thread whose comments the author closed (see "A THREAD WHOSE
-// COMMENTS ARE CLOSED"). One quiet line in the field's own capsule and height (44 pt), so the list
-// keeps the bottom padding it has with the composer.
+// COMMENTS ARE CLOSED"). One quiet line in a small capsule, centred: it was the field's full width,
+// which the owner found too wide.
 const CommentsClosedNotice = React.memo(function CommentsClosedNotice({ own, glassActive }: { own: boolean; glassActive: boolean }) {
   const theme = useTheme();
   const t = useT();
@@ -276,7 +276,7 @@ const CommentsClosedNotice = React.memo(function CommentsClosedNotice({ own, gla
 });
 
 const closedNoticeStyles = StyleSheet.create({
-  pill: { flex: 1, minHeight: 44, borderRadius: 22, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  pill: { height: 34, borderRadius: 17, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', maxWidth: '100%' },
   label: { fontSize: 13, marginLeft: 6, flexShrink: 1 },
 });
 
@@ -2102,7 +2102,7 @@ export default function CommentsScreen() {
             </View>
           ) : null}
           {commentsOff ? (
-          <Reanimated.View style={[{ flexDirection: 'row', paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
+          <Reanimated.View style={[{ flexDirection: 'row', justifyContent: 'center', paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
             <CommentsClosedNotice own={ownPost} glassActive={glassActive} />
           </Reanimated.View>
           ) : (
