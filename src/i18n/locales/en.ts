@@ -791,6 +791,7 @@ const en: Record<string, string> = {
   'admin.verified': 'Verified',
   'admin.verify': 'Verify',
   'admin.no_badge': 'No badge',
+  'admin.all_badges': 'All',
   'admin.no_text': '(no text)',
   'admin.no_posts': 'No posts',
   'admin.post': 'Post',

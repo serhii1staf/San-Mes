@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { UserBadge, BADGE_KEYS } from '../../src/components/ui/UserBadge';
+import { UserBadge, BADGE_KEYS, joinBadges, parseBadges } from '../../src/components/ui/UserBadge';
 import { parseImageUrls, adminDeletePost } from '../../src/lib/supabase';
 import { apiGet, apiPatch } from '../../src/services/apiClient';
 import { kvGetStringRawSync, kvSetStringRaw, kvDeleteRaw } from '../../src/services/kvStore';
@@ -313,14 +313,21 @@ export default function AdminScreen() {
     if (selectedUser?.id === userId) setSelectedUser({ ...selectedUser, is_verified: !currentlyVerified });
   };
 
-  const handleSetBadge = async (userId: string, badge: string | null) => {
-    await apiPatch(
-      `/v1/admin/profiles/${encodeURIComponent(userId)}`,
-      { badge },
-      { headers: { 'X-Admin-Key': adminKeyRef.current ?? '' } },
-    );
+  // A person can hold several badges, and each tap in the picker writes the whole set. The screen used
+  // to change only after the server answered, so a second badge tapped before that started from the
+  // old set and its write dropped the first one. The set now changes at the tap, and the writes go out
+  // one after another so the server keeps the last one.
+  const badgeWritesRef = useRef<Promise<unknown>>(Promise.resolve());
+  const handleSetBadge = (userId: string, badge: string | null) => {
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, badge } : u));
-    if (selectedUser?.id === userId) setSelectedUser({ ...selectedUser, badge });
+    setSelectedUser((prev: any) => (prev && prev.id === userId ? { ...prev, badge } : prev));
+    badgeWritesRef.current = badgeWritesRef.current
+      .then(() => apiPatch(
+        `/v1/admin/profiles/${encodeURIComponent(userId)}`,
+        { badge },
+        { headers: { 'X-Admin-Key': adminKeyRef.current ?? '' } },
+      ))
+      .catch(() => {});
   };
 
   // Password screen
@@ -386,21 +393,33 @@ export default function AdminScreen() {
             </Pressable>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-            <Pressable onPress={() => handleSetBadge(selectedUser.id, null)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: !selectedUser.badge ? theme.colors.accent.primary + '20' : theme.colors.background.secondary }}>
+            <Pressable onPress={() => handleSetBadge(selectedUser.id, null)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, alignSelf: 'center', backgroundColor: !selectedUser.badge ? theme.colors.accent.primary + '20' : theme.colors.background.secondary }}>
               <Text variant="caption" color={!selectedUser.badge ? theme.colors.accent.primary : theme.colors.text.tertiary}>{t('admin.no_badge')}</Text>
             </Pressable>
-            {/* The badges themselves, no names: what is granted is what the user will show. */}
-            {BADGE_KEYS.map((key) => (
-              <Pressable
-                key={key}
-                onPress={() => handleSetBadge(selectedUser.id, key)}
-                accessibilityRole="button"
-                accessibilityLabel={key}
-                style={{ padding: 4, borderRadius: 12, borderWidth: 2, borderColor: selectedUser.badge === key ? theme.colors.accent.primary : 'transparent' }}
-              >
-                <UserBadge badge={key} size="lg" />
-              </Pressable>
-            ))}
+            <Pressable onPress={() => handleSetBadge(selectedUser.id, joinBadges(BADGE_KEYS))} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, alignSelf: 'center', backgroundColor: theme.colors.background.secondary }}>
+              <Text variant="caption" color={theme.colors.text.tertiary}>{t('admin.all_badges')}</Text>
+            </Pressable>
+            {/* The badges themselves, no names: what is granted is what the user will show. A tap adds
+                the badge or takes it away; a person can have any number of them. */}
+            {BADGE_KEYS.map((key) => {
+              const held = parseBadges(selectedUser.badge).includes(key);
+              return (
+                <Pressable
+                  key={key}
+                  onPress={() => {
+                    const current = parseBadges(selectedUser.badge);
+                    const next = held ? current.filter((k) => k !== key) : [...current, key];
+                    handleSetBadge(selectedUser.id, joinBadges(next));
+                  }}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: held }}
+                  accessibilityLabel={key}
+                  style={{ padding: 4, borderRadius: 12, borderWidth: 2, borderColor: held ? theme.colors.accent.primary : 'transparent' }}
+                >
+                  <UserBadge badge={key} size="lg" />
+                </Pressable>
+              );
+            })}
           </ScrollView>
         </View>
 

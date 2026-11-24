@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, Image, StyleSheet, type ImageSourcePropType } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,9 +10,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 // exclusive-looking things with no text, possibly animated. Each badge is now a small gradient tile
 // with a white glyph, and a light shine passes over it a couple of times after it appears.
 //
-// The six old keys keep their meaning (they are stored on profiles: `profiles.badge`, any string up to
-// 32 characters, not validated by the Worker), so every badge already granted turns into its gem with
-// no migration. The rest are new and are granted the same way, from Settings → Admin.
+// The six old keys keep their meaning (they are stored on profiles: `profiles.badge`, a free string the
+// Worker does not validate), so every badge already granted turns into its gem with no migration. The
+// rest are new and are granted the same way, from Settings → Admin.
 //
 // The shine is a bounded CSS animation (Reanimated 4): two passes, then nothing runs. A badge sits in
 // list rows, so a perpetual animation would keep the UI thread busy for as long as a chat list is on
@@ -21,12 +21,28 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 type GlyphName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 
 export interface BadgeDef {
-  icon: GlyphName;
+  icon?: GlyphName;
+  /** A picture instead of a glyph, drawn over the gradient (the app's own badge). */
+  image?: ImageSourcePropType;
+  /** The same picture at twice the resolution, for the large size only. */
+  imageLarge?: ImageSourcePropType;
+  /** Width over height, for a picture badge. Glyph badges are square. */
+  aspect?: number;
   /** Gradient, top-left to bottom-right. */
   colors: readonly [string, string];
 }
 
 export const BADGE_DEFS: Record<string, BadgeDef> = {
+  // The app's own: its wordmark, cut from assets/icon.png. san.png (136×64) serves the list and profile
+  // sizes; at the admin picker's 34 pt it came out soft on a 3x screen (102 px from 64), so that size
+  // uses san_lg.png, the same cut at 272×128. One big file for every size would instead be shrunk about
+  // 3x in list rows, where Android's plain bilinear scaling leaves the letters' edges ragged.
+  san: {
+    image: require('../../../assets/badges/san.png'),
+    imageLarge: require('../../../assets/badges/san_lg.png'),
+    aspect: 2.125,
+    colors: ['#000000', '#000000'],
+  },
   // The original six.
   developer: { icon: 'code-braces', colors: ['#6366F1', '#22D3EE'] },
   admin: { icon: 'shield-crown', colors: ['#EF4444', '#F97316'] },
@@ -63,22 +79,64 @@ export const BADGE_DEFS: Record<string, BadgeDef> = {
 /** Every badge the admin can grant, in the order the picker shows them. */
 export const BADGE_KEYS = Object.keys(BADGE_DEFS);
 
+// ── SEVERAL BADGES ON ONE PERSON (Nov 2026) ──────────────────────────────────────────────────────────
+//
+// `profiles.badge` holds one key or a comma-separated list of them ("san,diamond,flame"). One key is
+// the list of one, so everything stored before reads the same. Unknown keys are skipped, so a badge
+// removed from this table disappears instead of breaking the row.
+export function parseBadges(value: string | null | undefined): string[] {
+  if (!value) return [];
+  const out: string[] = [];
+  for (const raw of value.split(',')) {
+    const key = raw.trim();
+    if (key && BADGE_DEFS[key] && !out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
+/** The stored form of a set of badges, in the picker's order; null for none. */
+export function joinBadges(keys: string[]): string | null {
+  const ordered = BADGE_KEYS.filter((k) => keys.includes(k));
+  return ordered.length > 0 ? ordered.join(',') : null;
+}
+
 const SIZES = { sm: 15, md: 18, lg: 34 } as const;
+/** How many badges a row shows at each size: names in lists have little room beside them. */
+const MAX_SHOWN = { sm: 3, md: 8, lg: 99 } as const;
 
 interface UserBadgeProps {
+  /** One badge key, or several separated by commas. */
   badge: string;
   size?: keyof typeof SIZES;
 }
 
 export const UserBadge = memo(function UserBadge({ badge, size = 'sm' }: UserBadgeProps) {
-  const def = BADGE_DEFS[badge];
+  const keys = parseBadges(badge);
+  if (keys.length === 0) return null;
+  if (keys.length === 1) return <BadgeGem badgeKey={keys[0]} size={size} />;
+  return (
+    <View style={[styles.row, size === 'sm' ? null : styles.wrap, { gap: size === 'lg' ? 6 : 3 }]}>
+      {keys.slice(0, MAX_SHOWN[size]).map((k) => (
+        <BadgeGem key={k} badgeKey={k} size={size} />
+      ))}
+    </View>
+  );
+});
+
+const BadgeGem = memo(function BadgeGem({ badgeKey, size }: { badgeKey: string; size: keyof typeof SIZES }) {
+  const def = BADGE_DEFS[badgeKey];
   if (!def) return null;
   const s = SIZES[size];
+  const w = def.image ? Math.round(s * (def.aspect || 1)) : s;
   const stripe = Math.max(4, Math.round(s * 0.34));
   return (
-    <View style={[styles.gem, { width: s, height: s, borderRadius: Math.round(s * 0.3) }]}>
+    <View style={[styles.gem, { width: w, height: s, borderRadius: Math.round(s * 0.3) }]}>
       <LinearGradient colors={def.colors} start={GRADIENT_START} end={GRADIENT_END} style={StyleSheet.absoluteFill} />
-      <MaterialCommunityIcons name={def.icon} size={Math.round(s * 0.68)} color="#FFFFFF" />
+      {def.image ? (
+        <Image source={size === 'lg' && def.imageLarge ? def.imageLarge : def.image} style={{ width: w, height: s }} resizeMode="contain" />
+      ) : (
+        <MaterialCommunityIcons name={def.icon} size={Math.round(s * 0.68)} color="#FFFFFF" />
+      )}
       <Animated.View
         pointerEvents="none"
         style={[
@@ -90,8 +148,8 @@ export const UserBadge = memo(function UserBadge({ badge, size = 'sm' }: UserBad
             bottom: -s * 0.3,
             animationName: {
               '0%': { transform: [{ translateX: 0 }, { rotate: '20deg' }] },
-              '45%': { transform: [{ translateX: s + stripe * 3 }, { rotate: '20deg' }] },
-              '100%': { transform: [{ translateX: s + stripe * 3 }, { rotate: '20deg' }] },
+              '45%': { transform: [{ translateX: w + stripe * 3 }, { rotate: '20deg' }] },
+              '100%': { transform: [{ translateX: w + stripe * 3 }, { rotate: '20deg' }] },
             },
             animationDuration: '2600ms',
             animationDelay: '700ms',
@@ -110,5 +168,7 @@ const GRADIENT_END = { x: 1, y: 1 };
 
 const styles = StyleSheet.create({
   gem: { overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  row: { flexDirection: 'row', alignItems: 'center' },
+  wrap: { flexWrap: 'wrap' },
   shine: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.42)' },
 });
