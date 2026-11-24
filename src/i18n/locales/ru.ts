@@ -804,6 +804,7 @@ const ru: Record<string, string> = {
   'admin.verified': 'Верифицирован',
   'admin.verify': 'Верифицировать',
   'admin.no_badge': 'Без плашки',
+  'admin.all_badges': 'Все',
   'admin.no_text': '(без текста)',
   'admin.no_posts': 'Нет публикаций',
   'admin.post': 'Пост',

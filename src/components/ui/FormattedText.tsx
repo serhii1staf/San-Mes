@@ -476,25 +476,30 @@ const LinkChip = memo(function LinkChip({ url, color, fontSize, lineHeight, onOp
   const kind = detectLinkKind(url);
   const info = linkKindInfo(kind);
   const label = linkDisplayName(url, kind);
-  // Under a fixed line height iOS does not grow the line for the chip, so chips on lines next to each
-  // other touched. Then the chip keeps 3 pt clear of the line it is on.
-  const h = Math.round(lineHeight ? Math.min(fontSize * 1.3, lineHeight - 3) : fontSize * 1.3);
-  const glyph = Math.round(fontSize * 0.8);
+  // ── CHIPS ON NEIGHBOURING LINES KEEP A GAP ──────────────────────────────────────────────────────
+  //
+  // Reported on iPhone: a message with one link per line showed the chips touching, one on top of the
+  // next. A chip was 1.3x the font size, taller than the line itself (about 1.19x on iOS), and moved
+  // down into the line below. It is now the font size tall, centred on the line, which leaves about a
+  // fifth of the font size between chips on consecutive lines; under a fixed line height it keeps
+  // 4 pt clear of it. The 1.5 pt each side keeps chips on the same line apart.
+  const h = Math.round(lineHeight ? Math.min(fontSize, lineHeight - 4) : fontSize);
+  const glyph = Math.round(fontSize * 0.68);
   return (
-    <View style={{ transform: [{ translateY: Math.round(fontSize * 0.24) }] }}>
+    <View style={{ paddingHorizontal: 1.5, transform: [{ translateY: Math.round(fontSize * 0.17) }] }}>
       <Pressable
         onPress={() => onOpen(url)}
         hitSlop={4}
         accessibilityRole="link"
         accessibilityLabel={label}
-        style={[chipStyles.chip, { height: h, borderRadius: h / 2, paddingHorizontal: Math.round(fontSize * 0.5), backgroundColor: chipTint(color) }]}
+        style={[chipStyles.chip, { height: h, borderRadius: h / 2, paddingHorizontal: Math.round(fontSize * 0.45), backgroundColor: chipTint(color) }]}
       >
         {info.brand ? (
           <FontAwesome5 name={info.icon} size={glyph} color={color} brand />
         ) : (
           <FontAwesome5 name={info.icon} size={glyph} color={color} solid />
         )}
-        <RNText numberOfLines={1} allowFontScaling={false} style={[chipStyles.label, { color, fontSize: Math.round(fontSize * 0.88), marginLeft: Math.round(fontSize * 0.3) }]}>
+        <RNText numberOfLines={1} allowFontScaling={false} style={[chipStyles.label, { color, fontSize: Math.round(fontSize * 0.78), marginLeft: Math.round(fontSize * 0.25) }]}>
           {label}
         </RNText>
       </Pressable>

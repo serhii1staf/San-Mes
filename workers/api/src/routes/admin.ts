@@ -223,7 +223,9 @@ register('PATCH', '/v1/admin/profiles/:id', async (req, env, _ctx, params) => {
   }
   if (typeof v.badge === 'string' || v.badge === null) {
     sets.push('badge = ?');
-    binds.push(v.badge == null ? null : String(v.badge).slice(0, 32));
+    // One badge key or a comma-separated list of them (src/components/ui/UserBadge.tsx). Was 32, room
+    // for one key; all 30 badges at once are 198 characters.
+    binds.push(v.badge == null ? null : String(v.badge).slice(0, 512));
   }
   if (typeof v.display_name === 'string') {
     sets.push('display_name = ?');
