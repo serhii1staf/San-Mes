@@ -238,9 +238,14 @@ const PREVIEW_RETURN = { duration: 230, easing: Easing.out(Easing.cubic) };
 // and faded with the card it stayed whole for the first 100 ms beside the item it copies, which
 // showed both (emulator). So it fades at once instead.
 const PREVIEW_FADE = { duration: 140, easing: Easing.out(Easing.quad) };
-// The open run backwards: the card shrinks a little about its centre and fades, accelerating as it
-// goes, so it dissolves where it stood instead of vanishing at full size.
+// The open run backwards: the card shrinks a little about its centre, accelerating as it goes, so
+// it dissolves where it stood instead of vanishing at full size. The dim and the snapshot fade on
+// it; the card's own alpha does not (see `CONTENT_OUT`, `SURFACE_OUT`).
 const CLOSE_TIMING = { duration: 230, easing: Easing.bezier(0.55, 0, 0.75, 0.2) };
+// The close, for the card itself: its icons and labels go first, from the first frame, and its
+// surface follows, so neither is left over the chat (see "THE LABELS LEFT AFTER THE CARD HAD GONE").
+const CONTENT_OUT = { duration: 90, easing: Easing.out(Easing.quad) };
+const SURFACE_OUT = { duration: 170, easing: Easing.out(Easing.quad) };
 // Gap between the held item and the edge of its cut-out in the dim.
 const SPOT_PAD = 6;
 
@@ -254,6 +259,13 @@ function MenuIcon({ icon, color, size }: { icon: ActionMenuIcon; color: string; 
     : <MaterialCommunityIcons name={icon.name} size={size + 2} color={color} />;
 }
 
+// The hover highlight when it is off. Not 'transparent': Reanimated 4.1 converts that to `undefined`
+// (`names.transparent` in its Colors.ts), and a row that had been lit stayed lit. On Android, after
+// one slide across the card, three rows were lit at once. An alpha-0 white is an ordinary colour and
+// is written like one. Not alpha-0 black: that is 0, which RN on Android reads as no colour at all
+// (`UndefinedColor`).
+const HOVER_OFF = 'rgba(255,255,255,0)';
+
 const TopCell = memo(function TopCell<Id extends string>({
   item, color, hoverBg, hovered, onPress, registerRef, index,
 }: {
@@ -266,7 +278,7 @@ const TopCell = memo(function TopCell<Id extends string>({
   index: number;
 }) {
   const hoverStyle = useAnimatedStyle(() => ({
-    backgroundColor: hovered && hovered.value === item.id ? hoverBg : 'transparent',
+    backgroundColor: hovered && hovered.value === item.id ? hoverBg : HOVER_OFF,
   }));
   return (
     <Reanimated.View style={[styles.topCellWrap, hoverStyle]}>
@@ -306,7 +318,7 @@ const ListRow = memo(function ListRow<Id extends string>({
   index: number;
 }) {
   const hoverStyle = useAnimatedStyle(() => ({
-    backgroundColor: hovered && hovered.value === item.id ? hoverBg : 'transparent',
+    backgroundColor: hovered && hovered.value === item.id ? hoverBg : HOVER_OFF,
   }));
   return (
     <Reanimated.View style={hoverStyle}>
@@ -408,6 +420,9 @@ function ActionMenuInner<Id extends string>(
   const p = useSharedValue(0);
   const cp = useSharedValue(0);
   const c = useSharedValue(0);
+  // The card leaving: its icons and labels, then its surface (see `contentStyle`).
+  const contentOut = useSharedValue(0);
+  const surfaceOut = useSharedValue(0);
   const closing = useRef(false);
   const after = useRef<(() => void) | null>(null);
   const onClosingRef = useRef(onClosing);
@@ -656,11 +671,13 @@ function ActionMenuInner<Id extends string>(
           fade.value = withTiming(0, PREVIEW_FADE);
         }
       }
+      contentOut.value = withTiming(1, CONTENT_OUT);
+      surfaceOut.value = withTiming(1, SURFACE_OUT);
       c.value = withTiming(1, CLOSE_TIMING, () => {
         runOnJS(finish)();
       });
     },
-    [c, fade, finish, plan, shift, windowH],
+    [c, contentOut, surfaceOut, fade, finish, plan, shift, windowH],
   );
   useImperativeHandle(ref, () => ({ dismiss }), [dismiss]);
 
@@ -709,7 +726,12 @@ function ActionMenuInner<Id extends string>(
         done();
         return;
       }
-      node.measureInWindow((x, y, w, h) => {
+      // The page position from `measure`, not `measureInWindow`. The gesture reports the finger
+      // relative to the root view, and so does `measure`. `measureInWindow` adds the root's offset in
+      // the window, which RN on Android takes from `getWindowVisibleDisplayFrame`, so it is minus the
+      // status bar even edge to edge: every zone sat 24 dp above its row, and letting go on "Ответить"
+      // pinned the message. On iOS the root is at the window's origin and the two agree.
+      node.measure((_x, _y, w, h, x, y) => {
         out[i] = i < topCells.length ? { id, top: y, bottom: y + h, left: x, right: x + w } : { id, top: y, bottom: y + h };
         done();
       });
@@ -749,7 +771,7 @@ function ActionMenuInner<Id extends string>(
     const shut = c.value;
     if (canFade) {
       return {
-        opacity: interpolate(open, [0, 0.55], [0, 1], Extrapolation.CLAMP) * (1 - shut),
+        opacity: interpolate(open, [0, 0.55], [0, 1], Extrapolation.CLAMP) * (1 - surfaceOut.value),
         transform: [{ scale: interpolate(open, [0, 1], [0.88, 1]) * (1 - 0.1 * shut) }],
       };
     }
@@ -758,6 +780,25 @@ function ActionMenuInner<Id extends string>(
       transform: [{ scale: interpolate(open, [0, 1], [0.3, 1]) * (1 - 0.95 * shut) }],
     };
   });
+  // ── THE LABELS LEFT AFTER THE CARD HAD GONE (Nov 2026) ──────────────────────
+  //
+  // Reported twice, the second time with a recording: after the menu closes "остаются артефакты,
+  // ... вот это вот сама менюшка". Frame by frame (iPhone, 48 fps), holding a long message: as the
+  // close began, the message came back under and over the card (the live bubble at once, the snapshot
+  // growing back over it), its text showed through the card's translucent surface, and the card's
+  // icons and labels ("Ответить", "Закрепить", "Переслать", "Перевести") stayed crisp on top of it
+  // well into the close. The card faded on `CLOSE_TIMING`, which accelerates: it still has 92 % of its
+  // alpha at 100 ms. White text at that alpha reads as text; the glass over a bright message no longer
+  // reads as a surface.
+  //
+  // So the card's alpha no longer follows the close. The content goes first (`CONTENT_OUT`, 90 ms,
+  // from the first frame), the surface right behind it (`SURFACE_OUT`, 170 ms), and only the shrink,
+  // the dim and the snapshot keep `CLOSE_TIMING`. On the open the content comes in just behind the
+  // surface. The content's alpha applies whatever the surface is, Apple's glass included (the content
+  // is the glass's sibling); Apple's glass itself still takes no alpha and only shrinks.
+  const contentStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(cp.value, [0.2, 0.75], [0, 1], Extrapolation.CLAMP) * (1 - contentOut.value),
+  }));
   const dimStyle = useAnimatedStyle(() => ({ opacity: Math.min(1, Math.max(0, p.value)) * (1 - c.value) }));
 
   // ── The held item stays lit ──────────────────────────────────────────────
@@ -838,6 +879,9 @@ function ActionMenuInner<Id extends string>(
               <View style={[StyleSheet.absoluteFill, { backgroundColor: flatSurface }]} />
             )}
 
+            {/* The content fades on its own, ahead of the card on the close (see `contentStyle`). A
+                sibling of the glass, never its ancestor, so its alpha cannot switch the glass off. */}
+            <Reanimated.View style={[styles.cardContent, contentStyle]}>
             {title ? (
               <View style={styles.title}>
                 <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} numberOfLines={1}>{title}</Text>
@@ -877,6 +921,7 @@ function ActionMenuInner<Id extends string>(
                 ))}
               </View>
             ) : null}
+            </Reanimated.View>
           </View>
         </Reanimated.View>
       ) : null}
@@ -954,6 +999,9 @@ const styles = StyleSheet.create({
   },
   cardClip: { flex: 1, borderRadius: RADIUS, overflow: 'hidden' },
   unclipped: { overflow: 'visible' },
+  // The title, the top row and the list, in the same column they were in before they had their own
+  // alpha (see `contentStyle`).
+  cardContent: { flex: 1 },
   title: { height: TITLE_H, justifyContent: 'flex-end', paddingHorizontal: 18, paddingBottom: 4 },
   topRow: { height: TOP_ROW_H, flexDirection: 'row', paddingHorizontal: 6, paddingTop: 6 },
   topCellWrap: { flex: 1, borderRadius: 16 },
