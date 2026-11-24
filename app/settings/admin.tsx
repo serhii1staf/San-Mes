@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { UserBadge, BADGE_KEYS } from '../../src/components/ui/UserBadge';
 import { parseImageUrls, adminDeletePost } from '../../src/lib/supabase';
 import { apiGet, apiPatch } from '../../src/services/apiClient';
 import { kvGetStringRawSync, kvSetStringRaw, kvDeleteRaw } from '../../src/services/kvStore';
@@ -64,15 +65,6 @@ interface StatusResponse {
   metrics: { profiles: number | null; posts: number | null; comments: number | null; dbLatencyMs: number; storageBytes?: number; storageObjects?: number };
   config?: StatusConfig;
 }
-
-const BADGES = [
-  { key: 'developer', label: 'admin.badge.developer', color: '#6366F1', icon: 'code' },
-  { key: 'admin', label: 'admin.badge.admin', color: '#EF4444', icon: 'shield' },
-  { key: 'moderator', label: 'admin.badge.moderator', color: '#F59E0B', icon: 'eye' },
-  { key: 'verified', label: 'admin.badge.verified', color: '#10B981', icon: 'check-circle' },
-  { key: 'vip', label: 'admin.badge.vip', color: '#8B5CF6', icon: 'star' },
-  { key: 'creator', label: 'admin.badge.creator', color: '#EC4899', icon: 'film' },
-];
 
 export default function AdminScreen() {
   const theme = useTheme();
@@ -397,10 +389,16 @@ export default function AdminScreen() {
             <Pressable onPress={() => handleSetBadge(selectedUser.id, null)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: !selectedUser.badge ? theme.colors.accent.primary + '20' : theme.colors.background.secondary }}>
               <Text variant="caption" color={!selectedUser.badge ? theme.colors.accent.primary : theme.colors.text.tertiary}>{t('admin.no_badge')}</Text>
             </Pressable>
-            {BADGES.map(b => (
-              <Pressable key={b.key} onPress={() => handleSetBadge(selectedUser.id, b.key)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: selectedUser.badge === b.key ? b.color + '20' : theme.colors.background.secondary }}>
-                <Feather name={b.icon as any} size={12} color={selectedUser.badge === b.key ? b.color : theme.colors.text.tertiary} />
-                <Text variant="caption" color={selectedUser.badge === b.key ? b.color : theme.colors.text.tertiary}>{t(b.label)}</Text>
+            {/* The badges themselves, no names: what is granted is what the user will show. */}
+            {BADGE_KEYS.map((key) => (
+              <Pressable
+                key={key}
+                onPress={() => handleSetBadge(selectedUser.id, key)}
+                accessibilityRole="button"
+                accessibilityLabel={key}
+                style={{ padding: 4, borderRadius: 12, borderWidth: 2, borderColor: selectedUser.badge === key ? theme.colors.accent.primary : 'transparent' }}
+              >
+                <UserBadge badge={key} size="lg" />
               </Pressable>
             ))}
           </ScrollView>
@@ -601,7 +599,6 @@ export default function AdminScreen() {
           maxToRenderPerBatch={4}
           windowSize={6}
           renderItem={({ item }) => {
-            const badge = BADGES.find(b => b.key === item.badge);
             return (
               <Pressable onPress={() => handleSelectUser(item)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light, gap: 12 }}>
                 <Avatar emoji={item.emoji || '😊'} size="sm" />
@@ -609,12 +606,7 @@ export default function AdminScreen() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <Text variant="body" weight="semibold" numberOfLines={1}>{item.display_name}</Text>
                     {item.is_verified && <Feather name="check-circle" size={12} color="#10B981" />}
-                    {badge && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: badge.color + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-                        <Feather name={badge.icon as any} size={9} color={badge.color} />
-                        <Text style={{ fontSize: 9, color: badge.color, fontWeight: '600' }}>{t(badge.label)}</Text>
-                      </View>
-                    )}
+                    {item.badge ? <UserBadge badge={item.badge} /> : null}
                   </View>
                   <Text variant="caption" color={theme.colors.text.tertiary}>@{item.username}</Text>
                 </View>
