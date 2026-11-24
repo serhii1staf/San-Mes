@@ -76,8 +76,11 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   // Resolve the link tap handler once per render — cheap, and avoids
   // creating a new lambda inside every <RNText> below.
   const handleLinkTap = onLinkPress || openUrl;
-  // The text's own size, which the link chips are scaled to (the caller's style wins, as below).
-  const baseFontSize = (StyleSheet.flatten(style)?.fontSize as number | undefined) ?? 14 * (theme.fontScale || 1);
+  // The text's own size and line height, which the link chips are scaled to (the caller's style wins,
+  // as below).
+  const flatStyle = StyleSheet.flatten(style);
+  const baseFontSize = (flatStyle?.fontSize as number | undefined) ?? 14 * (theme.fontScale || 1);
+  const baseLineHeight = flatStyle?.lineHeight as number | undefined;
 
   const revealSpoiler = (index: number) => {
     setRevealedSpoilers(prev => new Set(prev).add(index), true);
@@ -144,7 +147,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
     },
     mention: { color: theme.colors.accent.primary, fontWeight: '600' as const },
     hashtag: { color: theme.colors.accent.primary, fontWeight: '500' as const },
-    link: { color: resolvedLinkColor, textDecorationLine: 'underline' as const },
+    link: { color: resolvedLinkColor, fontWeight: '600' as const },
   }), [theme.isDark, theme.fontScale, theme.colors.accent.primary, resolvedLinkColor]);
 
   const renderInline = (inlineParts: TextPart[], spoilerCounter: { value: number }): React.ReactNode => {
@@ -229,8 +232,19 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
           );
 
         case 'link':
+          // Truncated text (a post card on a profile) gets the service's name as coloured text, not a
+          // chip. On iOS a chip in the part cut off by `numberOfLines` is still drawn, at the text's
+          // top-left corner: on an iPhone a post with several links showed the hidden chips piled up
+          // and smeared under the author's name.
+          if (truncationProps) {
+            return (
+              <RNText key={i} onPress={() => handleLinkTap(part.content)} style={themedInline.link}>
+                {linkDisplayName(part.content)}
+              </RNText>
+            );
+          }
           return (
-            <LinkChip key={i} url={part.content} color={resolvedLinkColor} fontSize={baseFontSize} onOpen={handleLinkTap} />
+            <LinkChip key={i} url={part.content} color={resolvedLinkColor} fontSize={baseFontSize} lineHeight={baseLineHeight} onOpen={handleLinkTap} />
           );
 
         default:
@@ -458,11 +472,13 @@ type BlockSegment =
 // An inline View inside the Text, the only way to round a span. It sits on the text's baseline, so it
 // is moved down by about the font's descent to sit in the middle of the line. One colour, the link
 // colour the bubble already picked, so it reads on every bubble and theme.
-const LinkChip = memo(function LinkChip({ url, color, fontSize, onOpen }: { url: string; color: string; fontSize: number; onOpen: (url: string) => void }) {
+const LinkChip = memo(function LinkChip({ url, color, fontSize, lineHeight, onOpen }: { url: string; color: string; fontSize: number; lineHeight?: number; onOpen: (url: string) => void }) {
   const kind = detectLinkKind(url);
   const info = linkKindInfo(kind);
   const label = linkDisplayName(url, kind);
-  const h = Math.round(fontSize * 1.3);
+  // Under a fixed line height iOS does not grow the line for the chip, so chips on lines next to each
+  // other touched. Then the chip keeps 3 pt clear of the line it is on.
+  const h = Math.round(lineHeight ? Math.min(fontSize * 1.3, lineHeight - 3) : fontSize * 1.3);
   const glyph = Math.round(fontSize * 0.8);
   return (
     <View style={{ transform: [{ translateY: Math.round(fontSize * 0.24) }] }}>
