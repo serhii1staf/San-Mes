@@ -132,6 +132,7 @@ register('GET', '/v1/profiles/:id/posts', async (req, env, _ctx, params) => {
     comments_count: number;
     shares_count: number;
     created_at: string;
+    comments_off: number | null;
     profile_id: string | null;
     profile_username: string | null;
     profile_display_name: string | null;
@@ -149,6 +150,7 @@ register('GET', '/v1/profiles/:id/posts', async (req, env, _ctx, params) => {
             p.comments_count,
             p.shares_count,
             p.created_at,
+            p.comments_off,
             pr.id            AS profile_id,
             pr.username      AS profile_username,
             pr.display_name  AS profile_display_name,
@@ -171,6 +173,8 @@ register('GET', '/v1/profiles/:id/posts', async (req, env, _ctx, params) => {
     comments_count: row.comments_count,
     shares_count: row.shares_count,
     created_at: row.created_at,
+    // The post editor starts from this, and a thread opened from the profile knows at once.
+    comments_off: !!row.comments_off,
     profiles: row.profile_id
       ? normalizeProfile({
           id: row.profile_id,

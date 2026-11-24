@@ -198,6 +198,9 @@ export const ProfilePostCard = memo(ProfilePostCardBase, (prev, next) =>
   prev.post.content === next.post.content &&
   prev.post.image_url === next.post.image_url &&
   prev.post.created_at === next.post.created_at &&
+  // Nothing on the card shows it, but the hold menu hands this `post` to the editor: without it the
+  // editor reopened with the comment setting from before the last save.
+  prev.post.comments_off === next.post.comments_off &&
   prev.postEmoji === next.postEmoji &&
   prev.authorName === next.authorName &&
   prev.authorEmoji === next.authorEmoji &&

@@ -492,11 +492,14 @@ export function useSwipeToReply<T extends { id: string }>({
   item,
   onReply,
   onSwipeActive,
+  enabled = true,
 }: {
   item: T;
   onReply: (m: T) => void;
   /** Optional: lets the screen lock list scrolling for the duration, as the chat does. */
   onSwipeActive?: (active: boolean) => void;
+  /** False where nothing can be replied (a thread whose comments are closed): the row does not move. */
+  enabled?: boolean;
 }) {
   // ── THE SAME COSTS THE CHAT BUBBLES HAD, AND THE SAME FIXES ─────────────────
   //
@@ -528,6 +531,7 @@ export function useSwipeToReply<T extends { id: string }>({
   const gesture = useMemo(
     () =>
       Gesture.Pan()
+        .enabled(enabled)
         .activeOffsetX([-12, 9999])
         .failOffsetY([-10, 10])
         .onStart(() => {
@@ -563,7 +567,7 @@ export function useSwipeToReply<T extends { id: string }>({
           if (kept !== flags) swipeFlagsSV.value = kept;
           if ((flags & SWIPE_ACTIVE) !== 0 && onSwipeActive) runOnJS(onSwipeActive)(false);
         }),
-    [fireReply, onSwipeActive, translateXSV, swipeFlagsSV, armReplyIcon],
+    [fireReply, onSwipeActive, translateXSV, swipeFlagsSV, armReplyIcon, enabled],
   );
 
   const rowAnimStyle = useAnimatedStyle(() => {

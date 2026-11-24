@@ -7,12 +7,13 @@
 //                                         NEWEST page; `?before=<iso>` walks older pages.
 //
 // Writes (authed):
-//   POST   /v1/posts                    — create. Body: { content, image_url? }
+//   POST   /v1/posts                    — create. Body: { content, image_url?, comments_off? }
 //   DELETE /v1/posts/:id                — delete (author-only). Cascades likes,
 //                                         comments, and reposts referencing it.
 //   POST   /v1/posts/:id/like           — toggle. Increments / decrements
 //                                         the post's likes_count atomically.
 //   POST   /v1/posts/:id/comments       — add a comment. Bumps comments_count.
+//                                         403 `comments_off` when the author closed them.
 //   POST   /v1/posts/repost             — Body: { originalPostId, comment? }
 //                                         Inserts a `::repost::…::` post and
 //                                         bumps the original's shares_count.
@@ -40,6 +41,7 @@ interface PostRow {
   comments_count: number;
   shares_count: number;
   created_at: string;
+  comments_off: number | null;
   profile_id: string | null;
   profile_username: string | null;
   profile_display_name: string | null;
@@ -57,6 +59,7 @@ const POST_SELECT_WITH_AUTHOR = `
          p.comments_count,
          p.shares_count,
          p.created_at,
+         p.comments_off,
          pr.id            AS profile_id,
          pr.username      AS profile_username,
          pr.display_name  AS profile_display_name,
@@ -77,6 +80,8 @@ function shapePost(row: PostRow) {
     comments_count: row.comments_count,
     shares_count: row.shares_count,
     created_at: row.created_at,
+    // The author closed the comments (migrations/0008): read-only thread, and the insert below refuses.
+    comments_off: !!row.comments_off,
     profiles: row.profile_id
       ? normalizeProfile({
           id: row.profile_id,
@@ -167,15 +172,16 @@ register('POST', '/v1/posts/repost', async (req, env, ctx, _params, authedUserId
 
 // ── POST /v1/posts ────────────────────────────────────────────────────
 //
-// Body: { content, image_url? }. Authed only. Returns the new post +
+// Body: { content, image_url?, comments_off? }. Authed only. Returns the new post +
 // embedded author profile so callers can render without a refetch.
 register('POST', '/v1/posts', async (req, env, ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
-  const body = await readJson<{ content?: unknown; image_url?: unknown; clientMutationId?: unknown }>(req);
+  const body = await readJson<{ content?: unknown; image_url?: unknown; comments_off?: unknown; clientMutationId?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
 
   const content = typeof body.value.content === 'string' ? body.value.content.slice(0, 8000) : '';
   const imageUrl = typeof body.value.image_url === 'string' ? body.value.image_url.slice(0, 4000) : null;
+  const commentsOff = body.value.comments_off === true ? 1 : 0;
   if (!content && !imageUrl) return fail(req, 'empty post', 400);
 
   // Idempotency: a retry of the same create (same clientMutationId from
@@ -197,10 +203,10 @@ register('POST', '/v1/posts', async (req, env, ctx, _params, authedUserId) => {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const stmt = env.DB.prepare(
-    `INSERT INTO posts (id, author_id, content, image_url, likes_count, comments_count, shares_count, created_at)
-     VALUES (?, ?, ?, ?, 0, 0, 0, ?)`,
+    `INSERT INTO posts (id, author_id, content, image_url, likes_count, comments_count, shares_count, created_at, comments_off)
+     VALUES (?, ?, ?, ?, 0, 0, 0, ?, ?)`,
   );
-  await stmt.bind(id, authedUserId, content, imageUrl, now).run();
+  await stmt.bind(id, authedUserId, content, imageUrl, now, commentsOff).run();
 
   if (clientMutationId) {
     await recordDedup(env, authedUserId, clientMutationId, id);
@@ -235,15 +241,15 @@ register('GET', '/v1/posts/:id', async (req, env, _ctx, params) => {
 
 // ── PATCH /v1/posts/:id ───────────────────────────────────────────────
 //
-// Author-scoped edit. Body: { content?, image_url? }. The "edit a
-// post" UI (`(tabs)/create.tsx` edit mode) calls this to update its
+// Author-scoped edit. Body: { content?, image_url?, comments_off? }. The
+// post editor (`app/post/new.tsx?editId=`) calls this to update its
 // own row in place. Empty body returns the current row unchanged.
 register('PATCH', '/v1/posts/:id', async (req, env, ctx, params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const id = parseUuid(params.id);
   if (!id) return fail(req, 'invalid post id', 400);
 
-  const body = await readJson<{ content?: unknown; image_url?: unknown }>(req);
+  const body = await readJson<{ content?: unknown; image_url?: unknown; comments_off?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
 
   const owner = await queryOne<{ author_id: string }>(
@@ -263,6 +269,10 @@ register('PATCH', '/v1/posts/:id', async (req, env, ctx, params, authedUserId) =
   if (typeof body.value.image_url === 'string' || body.value.image_url === null) {
     sets.push('image_url = ?');
     binds.push(body.value.image_url == null ? null : String(body.value.image_url).slice(0, 4000));
+  }
+  if (typeof body.value.comments_off === 'boolean') {
+    sets.push('comments_off = ?');
+    binds.push(body.value.comments_off ? 1 : 0);
   }
   if (sets.length > 0) {
     binds.push(id);
@@ -284,6 +294,8 @@ register('PATCH', '/v1/posts/:id', async (req, env, ctx, params, authedUserId) =
       id: shaped.id,
       content: shaped.content,
       image_url: shaped.image_url,
+      // An open thread swaps its composer for the notice (or back) without a refetch.
+      comments_off: shaped.comments_off,
       updated_at: new Date().toISOString(),
     };
     publishEvent(env, channels.author(authedUserId), 'author.post.edit', { id }, ctx);
@@ -504,6 +516,15 @@ register('POST', '/v1/posts/:id/comments', async (req, env, ctx, params, authedU
       return ok(req, prior ? prior.shaped : null);
     }
   }
+
+  // The author closed the comments: nobody adds one, the author included. After the retry check, so
+  // a comment that was created before they closed still answers its own retry.
+  const target = await queryOne<{ comments_off: number | null }>(
+    env,
+    `SELECT comments_off FROM posts WHERE id = ? LIMIT 1`,
+    [postId],
+  );
+  if (target?.comments_off) return fail(req, 'comments_off', 403);
 
   const id = crypto.randomUUID();
   const now = new Date().toISOString();

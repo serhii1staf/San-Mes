@@ -1,0 +1,26 @@
+-- 0008 — the author can turn comments off on a post
+--
+-- Apply to the live D1 database with:
+--   cd workers/api
+--   npx wrangler d1 execute san-mes --remote --file=../migrations/0008_posts_comments_off.sql --yes
+--
+-- Apply BEFORE deploying the Worker that reads it: `POST_SELECT_WITH_AUTHOR` and the profile posts
+-- query select `p.comments_off`, and a SELECT of a missing column fails every post read.
+--
+-- WHY
+--
+-- Requested by the owner (Nov 2026): a post whose comments are closed. Everyone can still see it and
+-- read the comments already there, nobody can add one, and the thread says so where the composer was
+-- ("автор ограничил комментарии"). Set in the composer's settings when publishing, and later from
+-- Edit on the post.
+--
+-- 1 = closed, 0 = open, which is every post that already exists. `POST /v1/posts/:id/comments`
+-- refuses with 403 `comments_off` while it is 1, so an install that has not taken the update cannot
+-- comment either; it only lacks the notice.
+--
+-- NOT IDEMPOTENT
+--
+-- SQLite has no `ADD COLUMN IF NOT EXISTS`, as in 0002, 0003, 0005 and 0006. Re-running errors with
+-- "duplicate column name". There is no backfill.
+
+ALTER TABLE posts ADD COLUMN comments_off INTEGER NOT NULL DEFAULT 0;

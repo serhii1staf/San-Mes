@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS posts (
   likes_count     INTEGER NOT NULL DEFAULT 0,
   comments_count  INTEGER NOT NULL DEFAULT 0,
   shares_count    INTEGER NOT NULL DEFAULT 0,
-  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  -- 1 = the author closed the comments (migrations/0008_posts_comments_off.sql).
+  comments_off    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_posts_created_at        ON posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_author_created    ON posts(author_id, created_at DESC);

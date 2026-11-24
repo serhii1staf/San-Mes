@@ -40,11 +40,13 @@ interface CommentContextMenuProps {
   gifUrl?: string | null;
   /** Window band between the screen's header and its composer; the lit cut-out is clipped to it. */
   visibleBounds?: { top: number; bottom: number };
+  /** The post's comments are closed: no Reply and no Edit (both write through the composer, which is gone). */
+  readOnly?: boolean;
   onClose: () => void;
   onAction: (action: CommentAction, comment: any) => void;
 }
 
-export function CommentContextMenu({ visible, comment, isOwn, displayBody, gifUrl, visibleBounds, onClose, onAction }: CommentContextMenuProps) {
+export function CommentContextMenu({ visible, comment, isOwn, displayBody, gifUrl, visibleBounds, readOnly = false, onClose, onAction }: CommentContextMenuProps) {
   const t = useT();
   const menuRef = useRef<ActionMenuHandle>(null);
   const body: string = displayBody ?? comment?.content ?? '';
@@ -53,13 +55,13 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, gifUr
     const top: ActionMenuItem<CommentAction>[] = [];
     const items: ActionMenuItem<CommentAction>[] = [];
     if (body && !gifUrl) top.push({ id: 'copy', icon: { set: 'feather', name: 'copy' }, label: t('common.copy') });
-    if (isOwn && !gifUrl) top.push({ id: 'edit', icon: { set: 'feather', name: 'edit-2' }, label: t('chat.menu.edit_short') });
+    if (isOwn && !gifUrl && !readOnly) top.push({ id: 'edit', icon: { set: 'feather', name: 'edit-2' }, label: t('chat.menu.edit_short') });
     if (isOwn) top.push({ id: 'delete', icon: { set: 'feather', name: 'trash-2' }, label: t('common.delete'), destructive: true });
-    // Report stays one tap away on every comment that is not ours (App Review 1.2).
+    // Report stays one tap away on every comment that is not ours (App Review 1.2), closed or not.
     else top.push({ id: 'report', icon: { set: 'feather', name: 'flag' }, label: t('chat.menu.report_short'), destructive: true });
-    items.push({ id: 'reply', icon: { set: 'feather', name: 'corner-up-left' }, label: t('comments.reply') });
+    if (!readOnly) items.push({ id: 'reply', icon: { set: 'feather', name: 'corner-up-left' }, label: t('comments.reply') });
     return { top, items };
-  }, [body, gifUrl, isOwn, t]);
+  }, [body, gifUrl, isOwn, readOnly, t]);
 
   // Android back: let the card animate out instead of the Modal vanishing.
   const close = () => {
