@@ -1,13 +1,13 @@
 import React, { memo } from 'react';
 import { useRecyclingState } from '@shopify/flash-list';
 import { View, Text as RNText, Pressable, TextStyle, Platform, ScrollView, StyleSheet } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { detectLinkKind, linkDisplayName, linkKindInfo } from '../../utils/linkKind';
 import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { openUrl } from '../../utils/openUrl';
-import { urlHostAndPath } from '../../utils/urlParts';
 import { triggerHaptic } from '../../utils/haptics';
 import { showToast } from '../../store/toastStore';
 
@@ -76,6 +76,8 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   // Resolve the link tap handler once per render — cheap, and avoids
   // creating a new lambda inside every <RNText> below.
   const handleLinkTap = onLinkPress || openUrl;
+  // The text's own size, which the link chips are scaled to (the caller's style wins, as below).
+  const baseFontSize = (StyleSheet.flatten(style)?.fontSize as number | undefined) ?? 14 * (theme.fontScale || 1);
 
   const revealSpoiler = (index: number) => {
     setRevealedSpoilers(prev => new Set(prev).add(index), true);
@@ -228,9 +230,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
 
         case 'link':
           return (
-            <RNText key={i} onPress={() => handleLinkTap(part.content)} style={themedInline.link}>
-              {shortenUrl(part.content)}
-            </RNText>
+            <LinkChip key={i} url={part.content} color={resolvedLinkColor} fontSize={baseFontSize} onOpen={handleLinkTap} />
           );
 
         default:
@@ -448,32 +448,53 @@ type BlockSegment =
   | { kind: 'text'; value: string }
   | { kind: 'code'; lang: string; value: string };
 
-// Display links compactly: strip protocol/www and, for our own deep links,
-// show just the domain + section (e.g. "san-m-app.com/post") instead of the
-// long id. The full URL is still used for the tap action.
+// ── A LINK IS A CHIP, NOT ITS ADDRESS (Nov 2026) ─────────────────────────────────────────────────
 //
-// This runs on every render of a bubble that holds a link, so it parses with `urlHostAndPath` (one
-// regex) instead of `new URL()`, the whatwg-url polyfill: 23 to 45 ms of it per emulator run of
-// opening the long chat and fast-scrolling it. Same host and first segment for every `https?://` link
-// the parser above produces; a non-ASCII first segment now shows as typed instead of percent-encoded.
-function shortenUrl(url: string): string {
-  const u = urlHostAndPath(url);
-  if (!u) {
-    // Not a parseable URL — strip protocol and clip length.
-    const clean = url.replace(/^https?:\/\/(www\.)?/, '');
-    return clean.length > 30 ? clean.slice(0, 29) + '…' : clean;
-  }
-  const host = u.host.replace(/^www\./, '');
-  const seg = u.path.split('/').filter(Boolean);
-  if (seg.length === 0) return host;
-  // For known sections keep only the section name, drop the long id.
-  if (seg[0] === 'post' || seg[0] === 'profile' || seg[0] === 'comments') {
-    return `${host}/${seg[0]}`;
-  }
-  // Otherwise show host + first segment, truncated.
-  const tail = seg[0].length > 16 ? seg[0].slice(0, 15) + '…' : seg[0];
-  return `${host}/${tail}`;
+// Requested: a link in a message or a comment shows as a small rounded chip with the service's icon
+// and name (Telegram, Instagram, Discord, Twitch, YouTube and the rest of `utils/linkKind.ts`), or the
+// site's domain for anything else, the size of the text around it. A tap opens the link as before.
+// The address replaced `shortenUrl`'s "host/first-segment".
+//
+// An inline View inside the Text, the only way to round a span. It sits on the text's baseline, so it
+// is moved down by about the font's descent to sit in the middle of the line. One colour, the link
+// colour the bubble already picked, so it reads on every bubble and theme.
+const LinkChip = memo(function LinkChip({ url, color, fontSize, onOpen }: { url: string; color: string; fontSize: number; onOpen: (url: string) => void }) {
+  const kind = detectLinkKind(url);
+  const info = linkKindInfo(kind);
+  const label = linkDisplayName(url, kind);
+  const h = Math.round(fontSize * 1.3);
+  const glyph = Math.round(fontSize * 0.8);
+  return (
+    <View style={{ transform: [{ translateY: Math.round(fontSize * 0.24) }] }}>
+      <Pressable
+        onPress={() => onOpen(url)}
+        hitSlop={4}
+        accessibilityRole="link"
+        accessibilityLabel={label}
+        style={[chipStyles.chip, { height: h, borderRadius: h / 2, paddingHorizontal: Math.round(fontSize * 0.5), backgroundColor: chipTint(color) }]}
+      >
+        {info.brand ? (
+          <FontAwesome5 name={info.icon} size={glyph} color={color} brand />
+        ) : (
+          <FontAwesome5 name={info.icon} size={glyph} color={color} solid />
+        )}
+        <RNText numberOfLines={1} allowFontScaling={false} style={[chipStyles.label, { color, fontSize: Math.round(fontSize * 0.88), marginLeft: Math.round(fontSize * 0.3) }]}>
+          {label}
+        </RNText>
+      </Pressable>
+    </View>
+  );
+});
+
+/** The chip's fill: the link colour at 15 %, or a neutral one for a colour that is not #rrggbb. */
+function chipTint(color: string): string {
+  return /^#[0-9a-f]{6}$/i.test(color) ? `${color}26` : 'rgba(127,127,127,0.18)';
 }
+
+const chipStyles = StyleSheet.create({
+  chip: { flexDirection: 'row', alignItems: 'center' },
+  label: { fontWeight: '600', maxWidth: 220 },
+});
 
 // Module-level parse cache: the same text often renders many times (list
 // recycling, navigation back-and-forth). Caching the parsed parts avoids
