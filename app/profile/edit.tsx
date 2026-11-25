@@ -236,6 +236,9 @@ export default function EditProfileScreen() {
         return;
       }
     }
+    // Set when a newly picked banner did not upload (see "ONLY AN UPLOADED BANNER" below).
+    let bannerUploadFailed = false;
+    let bannerTooLarge = false;
     try {
       // Strip dangerous invisible / control / bidi-override characters before
       // persisting (decorative Unicode + emoji are preserved). Single-line for
@@ -259,12 +262,25 @@ export default function EditProfileScreen() {
       });
 
       if (user?.id) {
-        let finalBannerUrl = bannerUri;
-        if (bannerUri && bannerUri.startsWith('file://')) {
+        // ── ONLY AN UPLOADED BANNER GOES TO THE PROFILE (Nov 2026) ──────────────────────────────
+        //
+        // A picked image is a file on this phone. When its upload failed, the file path itself was
+        // saved as the banner (found on a live profile: `file:///var/mobile/Containers/...`): a
+        // broken image for everyone else, and for this account on any other device. Now a failed
+        // upload sends no banner at all, the previous one stays, and the toast below says so.
+        let finalBannerUrl: string | null = bannerUri;
+        if (bannerUri && !/^https?:\/\//i.test(bannerUri)) {
+          finalBannerUrl = null;
           try {
-            const { url } = await uploadBanner(user.id, bannerUri);
+            const { url, reason } = await uploadBanner(user.id, bannerUri);
             if (url) finalBannerUrl = url;
+            else bannerTooLarge = reason === 'too_large';
           } catch {}
+          bannerUploadFailed = !finalBannerUrl;
+        }
+        if (bannerUploadFailed) {
+          // Back to the banner the server still has, so this phone does not show one nobody else sees.
+          updateProfile({ bannerUrl: initialBanner });
         }
 
         // Encode the transform as a hash on the final (uploaded) URL
@@ -294,7 +310,12 @@ export default function EditProfileScreen() {
     // local optimistic updateProfile above (which includes `links`) has
     // already applied, so this is truthful even if the network round-trip
     // failed — the link shows on the profile immediately after router.back().
-    showToast(t('toast.saved'), 'check-circle');
+    // Except for a banner that did not upload: everything else is saved, the banner is not.
+    if (bannerUploadFailed) {
+      showToast(t(bannerTooLarge ? 'edit_profile.banner_too_large' : 'edit_profile.banner_upload_failed'), 'alert-circle');
+    } else {
+      showToast(t('toast.saved'), 'check-circle');
+    }
     router.back();
   };
 

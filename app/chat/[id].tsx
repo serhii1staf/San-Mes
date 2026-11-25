@@ -76,7 +76,6 @@ import {
 } from '../../src/services/chatHistorySync';
 import { useChatUnread } from '../../src/store/chatUnreadStore';
 import { markConversationRead, markConversationReadIfNewer } from '../../src/services/readState';
-import { toSceneText } from '../../src/services/syncService';
 import { wasAwayLongEnough } from '../../src/services/appAway';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -3440,7 +3439,6 @@ export default function ChatScreen() {
               links: data.links ? (typeof data.links === 'string' ? data.links : JSON.stringify(data.links)) : null,
               badge: data.badge || null,
               is_verified: !!data.is_verified,
-              header_scene: toSceneText(data.header_scene),
               screenshots_disabled: !!data.screenshots_disabled,
               created_at: data.created_at || null,
               updated_at: data.updated_at || null,

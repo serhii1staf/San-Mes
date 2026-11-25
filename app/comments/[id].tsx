@@ -60,7 +60,7 @@ import { useBrowserStore } from '../../src/store/browserStore';
 import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
-import { useTransitionSettled } from '../../src/hooks/useTransitionSettled';
+import { useSettledGate, useTransitionSettled } from '../../src/hooks/useTransitionSettled';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 
@@ -95,6 +95,40 @@ function deleteLastGrapheme(s: string): string {
     }
   }
   return cps.join('');
+}
+
+/** The same emoji in the same order: re-reading the recents on a panel open changed nothing. */
+function sameStringList(a: readonly string[], b: readonly string[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** The same GIFs (by id) in the same order. */
+function sameIdList(a: readonly { id: string }[], b: readonly { id: string }[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i]?.id !== b[i]?.id) return false;
+  return true;
+}
+
+// A comment's recycling shape, cached per comment object. `reconcileComments` keeps the objects of
+// unchanged comments, so a refresh or a new comment re-reads only what changed; the stored content
+// is compared too, so an object edited in place is not answered from a stale entry.
+const commentTypeCache = new WeakMap<object, { content: string; type: 'gif' | 'link' | 'text' }>();
+function commentItemType(item: any): 'gif' | 'link' | 'text' {
+  const content: string = (item && item.content) || '';
+  const cacheable = !!item && typeof item === 'object';
+  if (cacheable) {
+    const hit = commentTypeCache.get(item);
+    if (hit && hit.content === content) return hit.type;
+  }
+  const parsed = parseReply(content);
+  const gif = parseGif(parsed.body);
+  const type = gif ? 'gif' : !hasCodeBlock(parsed.body) && extractFirstUrl(parsed.body) ? 'link' : 'text';
+  if (cacheable) commentTypeCache.set(item, { content, type });
+  return type;
 }
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
@@ -596,6 +630,19 @@ export default function CommentsScreen() {
   // The push animation is over. Gates the realtime attach and the list's pre-render window, which
   // `runAfterInteractions` could not keep off the slide (the native stack holds no interaction).
   const transitionSettled = useTransitionSettled();
+  // The opening requests (comments, post, repost original) still start on the first frame, so they
+  // gain the slide; their results wait for it to end before they set state. They used to land on
+  // whichever frame of the slide the network answered on, each a render of this whole screen.
+  const waitSettled = useSettledGate(transitionSettled);
+  // FlashList's own 250 once the push animation is over, reached in two frames (40 → 120 → 250)
+  // instead of one: the comments beyond the screen are built a few at a time, not in one commit
+  // right after the slide (the chat does the same with its history, `transcriptDrawDistance`).
+  const [listDrawDistance, setListDrawDistance] = useState(40);
+  useEffect(() => {
+    if (!transitionSettled || listDrawDistance >= 250) return;
+    const raf = requestAnimationFrame(() => setListDrawDistance((d) => Math.min(250, d * 3)));
+    return () => cancelAnimationFrame(raf);
+  }, [transitionSettled, listDrawDistance]);
   // Shared with the chat screen so the two label sets cannot drift apart.
   const mediaPanelLabels = useMediaPanelLabels();
   // Android: while focused, stop the OS window resize so ONLY our JS-driven
@@ -636,8 +683,30 @@ export default function CommentsScreen() {
     const hide = Keyboard.addListener('keyboardDidHide', () => { keyboardUpRef.current = 0; });
     return () => { show.remove(); hide.remove(); };
   }, []);
-  const [recentEmoji, setRecentEmoji] = useState<string[]>(() => getRecentEmoji());
-  const [recentGif, setRecentGif] = useState<GiphyItem[]>(() => getRecentGif());
+  // ── THE RECENTS ARE READ WHEN THE PANEL OPENS, NOT ON THE WAY IN (Nov 2026) ─────────────────────
+  //
+  // Both lists were read in their initialisers: an MMKV read plus a `JSON.parse` each, on the render
+  // path of every comments open, and `recent_gif` holds up to 24 full GIF objects. Nothing shows
+  // them until the media panel opens, and it starts closed. An effect then read both again on every
+  // `panelTab` change, a second render inside the tap that opens the panel. Same fix as the chat
+  // (`ensureRecentsLoaded` there): empty until `openEmoji` / `openGif` read them, and state is set
+  // only when a list really differs.
+  const [recentEmoji, setRecentEmoji] = useState<string[]>([]);
+  const [recentGif, setRecentGif] = useState<GiphyItem[]>([]);
+  const recentEmojiRef = useRef(recentEmoji);
+  recentEmojiRef.current = recentEmoji;
+  const recentGifRef = useRef(recentGif);
+  recentGifRef.current = recentGif;
+  const ensureRecentsLoaded = useCallback(() => {
+    try {
+      const e = getRecentEmoji();
+      if (!sameStringList(e, recentEmojiRef.current)) setRecentEmoji(e);
+      const g = getRecentGif();
+      if (!sameIdList(g, recentGifRef.current)) setRecentGif(g);
+    } catch {
+      // An unreadable cache means "no recents", which the empty lists already show.
+    }
+  }, []);
   const lastKbHeightRef = useRef(0);
   const liftSV = useSharedValue(0);
   const emojiPanelSV = useSharedValue(300);
@@ -1144,6 +1213,7 @@ export default function CommentsScreen() {
     if (!postId) return;
     const { apiGet } = await import('../../src/services/apiClient');
     const { data } = await apiGet<any>(`/v1/posts/${encodeURIComponent(postId)}`);
+    await waitSettled();
     if (data) setPostData(data);
   };
 
@@ -1176,6 +1246,8 @@ export default function CommentsScreen() {
     const safety = setTimeout(() => setIsLoading(false), 8000);
     try {
       const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
+      // Not on a frame of the slide (see `waitSettled`).
+      await waitSettled();
       if (Array.isArray(data)) {
         setComments((prev) => mergeCommentPages(prev, data));
         // Defer the cache serialize off the open/render frame: JSON.stringify of
@@ -1351,10 +1423,11 @@ export default function CommentsScreen() {
     const handle = InteractionManager.runAfterInteractions(async () => {
       const { apiGet } = await import('../../src/services/apiClient');
       const { data } = await apiGet<any>(`/v1/posts/${encodeURIComponent(info.originalPostId!)}`);
+      await waitSettled();
       if (!cancelled && data) setRepostOriginal(data);
     });
     return () => { cancelled = true; handle.cancel(); };
-  }, [postData?.content]);
+  }, [postData?.content, waitSettled]);
 
   // ── Typing indicator ────────────────────────────────────────────────────────
   //
@@ -1564,13 +1637,9 @@ export default function CommentsScreen() {
     return () => { sub.remove(); clearTimeout(tid); };
   }, [keepLifted]);
 
-  useEffect(() => {
-    if (!panelTab) return;
-    setRecentEmoji(getRecentEmoji());
-    setRecentGif(getRecentGif());
-  }, [panelTab]);
-
   const openEmoji = useCallback(() => {
+    // The first moment the recents are visible (see `ensureRecentsLoaded`).
+    ensureRecentsLoaded();
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
     setEmojiPanelHeight(h);
@@ -1589,9 +1658,10 @@ export default function CommentsScreen() {
         }),
       );
     }
-  }, [emojiPanelSV, liftSV, keyboardHeight]);
+  }, [emojiPanelSV, liftSV, keyboardHeight, ensureRecentsLoaded]);
 
   const openGif = useCallback(() => {
+    ensureRecentsLoaded();
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
     setEmojiPanelHeight(h);
@@ -1608,7 +1678,7 @@ export default function CommentsScreen() {
         }),
       );
     }
-  }, [emojiPanelSV, liftSV, keyboardHeight]);
+  }, [emojiPanelSV, liftSV, keyboardHeight, ensureRecentsLoaded]);
 
   const switchPanel = useCallback((tab: 'emoji' | 'gif') => {
     setPanelTab(tab);
@@ -1752,14 +1822,9 @@ export default function CommentsScreen() {
   // GIF body wins, else a non-code link body, else plain text. All helpers are
   // module-level + pure, so the deps array is empty (stable identity across
   // every CommentsScreen render — keystrokes, keyboard/panel lifts, GIF gate).
-  const getItemType = useCallback((item: any) => {
-    const parsed = parseReply(item.content || '');
-    const gif = parseGif(parsed.body);
-    if (gif) return 'gif';
-    const link = (!gif && !hasCodeBlock(parsed.body)) ? extractFirstUrl(parsed.body) : null;
-    if (link) return 'link';
-    return 'text';
-  }, []);
+  // Cached per comment object (`commentItemType`): FlashList asks for every item in its window
+  // on each layout pass, and each answer was a base64 decode, a JSON parse and two regex scans.
+  const getItemType = useCallback((item: any) => commentItemType(item), []);
 
   // Memoized FlashList content-container padding — a fresh inline object here
   // would hand FlashList a new contentContainerStyle reference on every
@@ -2003,10 +2068,11 @@ export default function CommentsScreen() {
             keyExtractor={keyExtractor}
             getItemType={getItemType}
             renderItem={renderComment}
-            // FlashList's own 250 once the push animation is over; until then only what is on
-            // screen, so the open commit does not build comments nobody can see yet. Always a number:
-            // FlashList keeps the previous value when this prop is `undefined`.
-            drawDistance={transitionSettled ? 250 : 40}
+            // FlashList's own 250 once the push animation is over, in two steps (`listDrawDistance`);
+            // until then only what is on screen, so the open commit does not build comments nobody
+            // can see yet. Always a number: FlashList keeps the previous value when this prop is
+            // `undefined`.
+            drawDistance={listDrawDistance}
             contentContainerStyle={listContentStyle}
             showsVerticalScrollIndicator={false}
             onScroll={onCommentsScroll}

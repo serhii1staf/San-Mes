@@ -36,9 +36,8 @@ import { validateThemeId } from '../themeIds';
 // Mirrors the same split already documented in `routes/admin.ts`.
 
 /** No credential columns. Used by every unauthenticated / third-party read. */
-// `header_scene` is deliberately absent — the live database has no such column and naming it
-// fails the whole query. See the long note on `PROFILE_AUTH_COLUMNS` in routes/auth.ts for the
-// full reason and for how to restore it after applying migration 0003.
+// `header_scene` is not served: the header decorations («Оформление») were removed from the app in
+// Nov 2026. The column stays in the database, unused (no profile had a scene stored when it went).
 //
 // `screenshots_disabled` is public on purpose: it is enforced on the VIEWER's device, so every viewer
 // has to be told. It was missing from every projection, so the owner's own toggle read back as
@@ -466,7 +465,10 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
     binds.push(next);
     recordChange('bio', next);
   }
-  if (typeof v.banner_url === 'string') {
+  // Only a web address. An app whose banner upload failed used to save the picked file's path on the
+  // phone instead (`file:///var/mobile/...`, `file:///data/user/0/...`: five live profiles on
+  // 2026-11-26), which no other device can load. Anything else is ignored, and the stored banner stays.
+  if (typeof v.banner_url === 'string' && /^https?:\/\//i.test(v.banner_url)) {
     const next = v.banner_url.slice(0, 4000);
     sets.push('banner_url = ?');
     binds.push(next);
@@ -504,31 +506,8 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
       delta['links'] = v.links == null ? null : v.links;
     }
   }
-  // Build-your-own header decorations. Accept an object ({version,items,...})
-  // or null; stored as a length-capped JSON TEXT (mirrors `links`). Returned
-  // verbatim on GET /v1/profiles/:id so any viewer renders it. Joins the
-  // realtime `profile.edit` delta so a mounted profile updates live.
-  // DISABLED until migration 0003 is applied — writing to a column the database does not have
-  // fails the whole profile UPDATE, so a user editing anything else at the same time would lose
-  // that edit too. Reading is already stripped (see `PROFILE_PUBLIC_COLUMNS`); accepting a write
-  // that cannot land, and taking the rest of the update down with it, is worse than ignoring the
-  // field. Re-enable together with the column. See routes/auth.ts for the restore steps.
-  const HEADER_SCENE_COLUMN_EXISTS = false;
-  if (HEADER_SCENE_COLUMN_EXISTS && ((v.header_scene && typeof v.header_scene === 'object') || v.header_scene === null)) {
-    const nextStored = v.header_scene == null ? null : JSON.stringify(v.header_scene).slice(0, 8000);
-    sets.push('header_scene = ?');
-    binds.push(nextStored);
-    const currentScene = current?.header_scene;
-    const currentStored =
-      currentScene == null
-        ? null
-        : typeof currentScene === 'string'
-          ? currentScene
-          : JSON.stringify(currentScene);
-    if (nextStored !== currentStored) {
-      delta['header_scene'] = v.header_scene == null ? null : v.header_scene;
-    }
-  }
+  // `header_scene` is ignored: the header decorations were removed from the app (Nov 2026). An older
+  // app that still sends it has the rest of its update applied.
   // ── NOT `badge` AND NOT `is_verified` (Nov 2026) ──────────────────────────────────────────────
   //
   // This route used to accept both, so anyone could give themselves the verified mark and every badge

@@ -173,7 +173,8 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
           <Avatar emoji={authorEmoji} size="xs" />
           <Text variant="caption" weight="semibold" numberOfLines={1} style={styles.authorName}>{authorName}</Text>
           {authorVerified ? <VerifiedBadge size={11} /> : null}
-          {authorBadge ? <UserBadge badge={authorBadge} size="sm" /> : null}
+          {/* No shine: every card on the page repeats the author's badges (see `UserBadge`). */}
+          {authorBadge ? <UserBadge badge={authorBadge} size="sm" shine={false} /> : null}
           <Text variant="caption" color={tertiary} numberOfLines={1} style={styles.timeText}>· {ago(post.created_at)}</Text>
         </View>
         {bodyText ? (

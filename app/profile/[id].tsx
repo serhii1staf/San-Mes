@@ -8,7 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore, useEntityStore } from '../../src/store';
 import { getProfile } from '../../src/lib/supabase';
-import { syncProfile, toSceneText } from '../../src/services/syncService';
+import { syncProfile } from '../../src/services/syncService';
 import { markSynced } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -18,7 +18,6 @@ import { useLiquidGlassActive } from '../../src/components/ui/LiquidGlass';
 import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
-import { normalizeScene } from '../../src/services/headerScene';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
 import { ProfileMenuModal } from '../../src/components/profile/ProfileMenuModal';
 import {
@@ -82,7 +81,6 @@ export default function UserProfileScreen() {
               links: (p as any).links ? JSON.stringify((p as any).links) : null,
               badge: (p as any).badge || null,
               is_verified: (p as any).is_verified || false,
-              header_scene: toSceneText((p as any).header_scene),
               screenshots_disabled: !!(p as any).screenshots_disabled,
               created_at: p.created_at || null,
               updated_at: p.updated_at || null,
@@ -113,8 +111,6 @@ export default function UserProfileScreen() {
   const proxyWidth = Math.round(width);
   useEffect(() => { if (bannerUrl) prefetchImages([bannerUrl], proxyWidth, 'disk'); }, [bannerUrl, proxyWidth]);
 
-  const sceneRaw = profile?.header_scene;
-  const scene = useMemo(() => normalizeScene(sceneRaw), [sceneRaw]);
   const linksRaw = profile?.links;
   const links = useMemo(() => parseProfileLinks(linksRaw), [linksRaw]);
   const isOwnProfile = !!currentUserId && currentUserId === profileId;
@@ -182,8 +178,7 @@ export default function UserProfileScreen() {
           links={links}
           bannerUrl={bannerUrl}
           bannerTransform={bannerTransform}
-          scene={scene}
-          sceneAnimate={screenFocused}
+          animate={screenFocused}
           actions={
             isOwnProfile ? (
               <ProfileActionPill glassActive={glassActive} accent onPress={() => router.push('/profile/edit')}>

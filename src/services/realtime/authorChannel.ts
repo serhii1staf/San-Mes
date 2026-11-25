@@ -20,7 +20,6 @@ import { authorChannelName, getRealtime } from './ably';
 import { leaseChannel } from './channelLease';
 import { invalidateProfilePosts } from '../profilePosts';
 import { useEntityStore } from '../entityStore';
-import { toSceneText } from '../syncService';
 
 function applyProfileEdit(profileId: string, payload: Record<string, unknown>): void {
   const entity = useEntityStore.getState();
@@ -39,10 +38,8 @@ function applyProfileEdit(profileId: string, payload: Record<string, unknown>): 
   if (has('badge')) merged.badge = payload.badge ?? null;
   if (has('is_verified')) merged.is_verified = !!payload.is_verified;
   if (has('screenshots_disabled')) merged.screenshots_disabled = !!payload.screenshots_disabled;
-  // Stored the way the profile screen stores a fetched profile: links as a JSON string, the
-  // header scene as text.
+  // Stored the way the profile screen stores a fetched profile: links as a JSON string.
   if (has('links')) merged.links = payload.links == null ? null : JSON.stringify(payload.links);
-  if (has('header_scene')) merged.header_scene = toSceneText(payload.header_scene);
   if (has('updated_at')) merged.updated_at = payload.updated_at ?? existing.updated_at;
   entity.upsertProfile(merged);
 }

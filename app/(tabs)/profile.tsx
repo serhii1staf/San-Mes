@@ -15,7 +15,6 @@ import { AccountSwitcher } from '../../src/components/ui/AccountSwitcher';
 import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
-import { getLocalScene, normalizeScene } from '../../src/services/headerScene';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
 import { getTabBarHeight } from '../../src/components/navigation/CustomTabBar';
 import {
@@ -29,8 +28,8 @@ import { ProfileContentTabs } from '../../src/components/profile/ProfileContentT
 
 /**
  * The account's own profile. Same design as before (banner card, avatar tile, name, links, bio,
- * Edit / decorate / share pills); the post tabs and follower counts are gone with publishing, and
- * the space under the header shows recent photos this account sent in chats.
+ * Edit / share pills); the follower counts are gone, and the decorate pill went with the header
+ * decorations («Оформление», removed in Nov 2026).
  *
  * Lightweight on purpose: a ScrollView with a fixed set of views, no post list — that list was the
  * mount cost behind the profile lag.
@@ -61,11 +60,6 @@ export default function ProfileScreen() {
   const proxyWidth = Math.round(width);
   useEffect(() => { if (bannerUrl) prefetchImages([bannerUrl], proxyWidth, 'disk'); }, [bannerUrl, proxyWidth]);
 
-  const headerSceneRaw = (user as any)?.headerScene;
-  const scene = useMemo(() => {
-    const s = normalizeScene(headerSceneRaw);
-    return s.items.length > 0 ? s : getLocalScene(userId);
-  }, [headerSceneRaw, userId]);
   const linksRaw = (user as any)?.links;
   const links = useMemo(() => parseProfileLinks(linksRaw), [linksRaw]);
   const share = useCallback(async () => {
@@ -109,16 +103,12 @@ export default function ProfileScreen() {
           links={links}
           bannerUrl={bannerUrl}
           bannerTransform={bannerTransform}
-          scene={scene}
-          sceneAnimate={screenFocused}
+          animate={screenFocused}
           onAvatarPress={() => setShowAccountSwitcher(true)}
           actions={
             <>
               <ProfileActionPill glassActive={glassActive} accent onPress={() => router.push('/profile/edit')}>
                 <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 14 }}>{t('profile.edit')}</Text>
-              </ProfileActionPill>
-              <ProfileActionPill glassActive={glassActive} square onPress={() => { triggerHaptic('light'); router.push('/profile/customize-header'); }}>
-                <Feather name="smile" size={16} color={theme.colors.text.primary} />
               </ProfileActionPill>
               <ProfileActionPill glassActive={glassActive} square onPress={share}>
                 <Feather name="share" size={16} color={theme.colors.text.primary} />

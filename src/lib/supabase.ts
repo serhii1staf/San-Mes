@@ -13,7 +13,7 @@
 // 2-3 line wrapper around an apiClient call.
 
 import { createClient } from '@supabase/supabase-js';
-import { Platform } from 'react-native';
+import { Image, Platform } from 'react-native';
 import { uploadToR2 } from './r2';
 import type { UploadFailureReason } from './uploadFailure';
 import {
@@ -115,8 +115,25 @@ export async function uploadPostImage(
   }
 }
 
+/** Widest banner uploaded: a 430 pt screen at 3x is 1290 px, and the rest leaves room for the editor's zoom. */
+const BANNER_MAX_WIDTH = 1600;
+
+/** The pixel width of a local image, or 0 when it cannot be read. */
+function localImageWidth(uri: string): Promise<number> {
+  return new Promise((resolve) => {
+    try {
+      Image.getSize(uri, (w) => resolve(Number.isFinite(w) ? w : 0), () => resolve(0));
+    } catch {
+      resolve(0);
+    }
+  });
+}
+
 /** Upload a banner image. Preserves GIF / WebP animation. */
-export async function uploadBanner(userId: string, imageUri: string): Promise<{ url: string | null; error: string | null }> {
+export async function uploadBanner(
+  userId: string,
+  imageUri: string,
+): Promise<{ url: string | null; error: string | null; reason?: UploadFailureReason }> {
   // Migrated to Cloudflare R2 — Supabase Storage was decommissioned during
   // the D1 migration, and the previous implementation was POSTing to a dead
   // bucket which is why other users never saw a saved banner. The R2 helper
@@ -129,9 +146,36 @@ export async function uploadBanner(userId: string, imageUri: string): Promise<{ 
     if (lower.endsWith('.gif') || lower.includes('.gif?')) ext = 'gif';
     else if (lower.endsWith('.png') || lower.includes('.png?')) ext = 'png';
     else if (lower.endsWith('.webp') || lower.includes('.webp?')) ext = 'webp';
+    // ── A BANNER IS AS WIDE AS A SCREEN, NOT AS A CAMERA (Nov 2026) ──────────────────────────────
+    //
+    // The picked file went up exactly as picked (`quality: 1`, no resize). A phone photo is often
+    // 3-8 MB at 4000 px, and the upload endpoint takes at most 4 MB (api/r2-upload.ts, under Vercel's
+    // body cap), which it refuses with 413. Chat and post photos are resized before upload; banners
+    // were not, and five live profiles held a phone file path as their banner on 2026-11-26 (what
+    // the edit screen saved when an upload failed; the failure reasons were never logged). A still
+    // image wider than `BANNER_MAX_WIDTH` is now resized to it. GIF and WebP are left alone so they
+    // keep their animation; one over 4 MB still fails, and the edit screen says it is too large.
+    let uploadUri = imageUri;
+    if (ext === 'jpg' || ext === 'png') {
+      try {
+        const width = await localImageWidth(imageUri);
+        if (width > BANNER_MAX_WIDTH) {
+          const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+          const resized = await manipulateAsync(
+            imageUri,
+            [{ resize: { width: BANNER_MAX_WIDTH } }],
+            // PNG stays PNG, so a banner with transparent parts keeps them.
+            ext === 'png' ? { format: SaveFormat.PNG } : { compress: 0.85, format: SaveFormat.JPEG },
+          );
+          if (resized?.uri) uploadUri = resized.uri;
+        }
+      } catch {
+        // Upload the original; it may still be under the cap.
+      }
+    }
     const { uploadToR2 } = await import('./r2');
-    const { url, error } = await uploadToR2(imageUri, `banners/${userId}.${ext}`);
-    if (!url) return { url: null, error: error || 'upload failed' };
+    const { url, error, reason } = await uploadToR2(uploadUri, `banners/${userId}.${ext}`);
+    if (!url) return { url: null, error: error || 'upload failed', reason };
     // Cache-bust so a re-upload to the same path doesn't render the stale
     // bitmap from the previous decode in this app session. Other clients
     // get a fresh URL via the server, so this only matters locally.
@@ -478,7 +522,7 @@ export async function updateProfile(
   _userId: string,
   // No `badge` or `is_verified`: the server ignores both here (they are granted from the admin panel
   // only), so the type does not offer them.
-  updates: Partial<{ display_name: string; emoji: string; bio: string; banner_url: string; theme_id: string | null; header_scene: any; links: any; username: string; screenshots_disabled: boolean }>,
+  updates: Partial<{ display_name: string; emoji: string; bio: string; banner_url: string; theme_id: string | null; links: any; username: string; screenshots_disabled: boolean }>,
 ): Promise<{ error: string | null }> {
   const { error } = await apiPatch('/v1/profiles/me', updates);
   if (error) {

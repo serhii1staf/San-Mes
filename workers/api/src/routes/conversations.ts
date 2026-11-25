@@ -17,7 +17,7 @@
 
 import { fail, ok } from '../http';
 import { register } from '../router';
-import { exec, normalizeProfile, query, queryOne } from '../db';
+import { exec, normalizeProfile, query, queryOne, type Env } from '../db';
 import { parseLimit, parseUuid } from '../util';
 
 /**
@@ -309,6 +309,49 @@ register('POST', '/v1/conversations/:id/read', async (req, env, _ctx, params, au
     unread_count: typeof state?.unread === 'number' ? state.unread : 0,
   });
 });
+
+// ── PUT / DELETE /v1/conversations/:id/mute ───────────────────────────
+//
+// Mute or unmute one conversation for the caller (migration 0010). While muted, `fanOutNewMessage`
+// (routes/messages.ts) sends the caller no push for it; the realtime ping still goes, so the chat
+// list stays current. The app calls these when the chat-list menu toggles mute (src/services/
+// muteSync.ts), which used to silence only the open app.
+//
+// Both are idempotent: muting a muted chat or unmuting an unmuted one answers the same as the first
+// time, so the app can safely retry after a lost response. Only the caller's own participant row is
+// touched, so nobody can mute a chat for someone else. A conversation the caller is not in is 403,
+// told apart from "already in that state" by the participation check (an UPDATE that changes
+// nothing reports 0 rows either way).
+async function setMuted(req: Request, env: Env, params: Record<string, string>, authedUserId: string | null, muted: 0 | 1) {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  const conversationId = parseUuid(params.id);
+  if (!conversationId) return fail(req, 'invalid conversation id', 400);
+  const participant = await queryOne<{ x: number }>(
+    env,
+    `SELECT 1 AS x
+       FROM conversation_participants
+      WHERE conversation_id = ?
+        AND user_id = ?
+      LIMIT 1`,
+    [conversationId, authedUserId],
+  );
+  if (!participant) return fail(req, 'forbidden', 403);
+  await exec(
+    env,
+    `UPDATE conversation_participants
+        SET muted = ?
+      WHERE conversation_id = ?
+        AND user_id = ?`,
+    [muted, conversationId, authedUserId],
+  );
+  return ok(req, { conversation_id: conversationId, muted: muted === 1 });
+}
+
+register('PUT', '/v1/conversations/:id/mute', (req, env, _ctx, params, authedUserId) =>
+  setMuted(req, env, params, authedUserId, 1));
+
+register('DELETE', '/v1/conversations/:id/mute', (req, env, _ctx, params, authedUserId) =>
+  setMuted(req, env, params, authedUserId, 0));
 
 // ── GET /v1/conversations/:id/messages?limit=50 ───────────────────────
 //

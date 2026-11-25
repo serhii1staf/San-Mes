@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   device_key    TEXT,
   banner_url    TEXT,
   theme_id      TEXT,            -- selected profile theme id; NULL ⇒ default-dark
-  header_scene  TEXT,            -- "build-your-own" header decorations; JSON {version,items,background?}
+  header_scene  TEXT,            -- unused: the header decorations were removed from the app (Nov 2026)
   links         TEXT,            -- JSON array of {type,url}
   badge         TEXT,
   is_verified   INTEGER NOT NULL DEFAULT 0,
@@ -147,10 +147,13 @@ CREATE TABLE IF NOT EXISTS conversations (
 -- forward from it via idx_messages_conv_created. NULL means "never read".
 -- Lives here rather than in its own table because this row already IS the
 -- (conversation, user) pair, so the list query has it without an extra join.
+-- `muted` (migration 0010) is 1 when this participant muted the conversation:
+-- the message fan-out then sends them no push (the realtime ping still goes).
 CREATE TABLE IF NOT EXISTS conversation_participants (
   conversation_id  TEXT NOT NULL,
   user_id          TEXT NOT NULL,
   last_read_at     TEXT,
+  muted            INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (conversation_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_cp_user_id          ON conversation_participants(user_id);

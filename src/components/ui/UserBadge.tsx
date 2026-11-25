@@ -108,22 +108,28 @@ interface UserBadgeProps {
   /** One badge key, or several separated by commas. */
   badge: string;
   size?: keyof typeof SIZES;
+  /**
+   * The light passing over the gem after it appears. Off where a badge repeats down a page: on a
+   * profile every post card carries its author's badges, and thirty shines starting at once on open
+   * were thirty animations the UI thread drew for six seconds, most of them below the fold.
+   */
+  shine?: boolean;
 }
 
-export const UserBadge = memo(function UserBadge({ badge, size = 'sm' }: UserBadgeProps) {
+export const UserBadge = memo(function UserBadge({ badge, size = 'sm', shine = true }: UserBadgeProps) {
   const keys = parseBadges(badge);
   if (keys.length === 0) return null;
-  if (keys.length === 1) return <BadgeGem badgeKey={keys[0]} size={size} />;
+  if (keys.length === 1) return <BadgeGem badgeKey={keys[0]} size={size} shine={shine} />;
   return (
     <View style={[styles.row, size === 'sm' ? null : styles.wrap, { gap: size === 'lg' ? 6 : 3 }]}>
       {keys.slice(0, MAX_SHOWN[size]).map((k) => (
-        <BadgeGem key={k} badgeKey={k} size={size} />
+        <BadgeGem key={k} badgeKey={k} size={size} shine={shine} />
       ))}
     </View>
   );
 });
 
-const BadgeGem = memo(function BadgeGem({ badgeKey, size }: { badgeKey: string; size: keyof typeof SIZES }) {
+const BadgeGem = memo(function BadgeGem({ badgeKey, size, shine }: { badgeKey: string; size: keyof typeof SIZES; shine: boolean }) {
   const def = BADGE_DEFS[badgeKey];
   if (!def) return null;
   const s = SIZES[size];
@@ -137,28 +143,30 @@ const BadgeGem = memo(function BadgeGem({ badgeKey, size }: { badgeKey: string; 
       ) : (
         <MaterialCommunityIcons name={def.icon} size={Math.round(s * 0.68)} color="#FFFFFF" />
       )}
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.shine,
-          {
-            width: stripe,
-            left: -stripe * 2,
-            top: -s * 0.3,
-            bottom: -s * 0.3,
-            animationName: {
-              '0%': { transform: [{ translateX: 0 }, { rotate: '20deg' }] },
-              '45%': { transform: [{ translateX: w + stripe * 3 }, { rotate: '20deg' }] },
-              '100%': { transform: [{ translateX: w + stripe * 3 }, { rotate: '20deg' }] },
+      {shine ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.shine,
+            {
+              width: stripe,
+              left: -stripe * 2,
+              top: -s * 0.3,
+              bottom: -s * 0.3,
+              animationName: {
+                '0%': { transform: [{ translateX: 0 }, { rotate: '20deg' }] },
+                '45%': { transform: [{ translateX: w + stripe * 3 }, { rotate: '20deg' }] },
+                '100%': { transform: [{ translateX: w + stripe * 3 }, { rotate: '20deg' }] },
+              },
+              animationDuration: '2600ms',
+              animationDelay: '700ms',
+              animationIterationCount: 2,
+              animationTimingFunction: 'ease-in-out',
+              animationFillMode: 'both',
             },
-            animationDuration: '2600ms',
-            animationDelay: '700ms',
-            animationIterationCount: 2,
-            animationTimingFunction: 'ease-in-out',
-            animationFillMode: 'both',
-          },
-        ]}
-      />
+          ]}
+        />
+      ) : null}
     </View>
   );
 });

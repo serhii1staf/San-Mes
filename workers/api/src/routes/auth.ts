@@ -34,31 +34,11 @@ import { asStr, readJson } from '../validate';
 // so handing it out is equivalent to handing out the PIN. It is still used as a
 // WHERE predicate below — comparing against it server-side is exactly what it is
 // for — but it never travels in a response.
-// ── `header_scene` IS NOT IN THIS LIST ON PURPOSE ───────────────────────────
+// ── `header_scene` IS NOT IN THIS LIST ───────────────────────────────────────
 //
-// The live D1 database does not have that column. `workers/migrations/0003_profiles_header_scene.sql`
-// adds it and has never been applied, so every query naming it fails outright:
-//
-//   D1_ERROR: no such column: header_scene at offset 81: SQLITE_ERROR
-//
-// which is a hard failure of LOGIN and of every profile read — not a degraded feature. The
-// code was written against a schema that only ever existed in `schema.sql`, and it stayed
-// invisible because the Worker had not been redeployed since. Deploying current `main` shipped
-// it and broke the app.
-//
-// So the column is dropped from the read path until the migration is actually applied. Nothing
-// is lost that ever worked: with no column in the database, header decorations have never been
-// readable in production.
-//
-// TO RESTORE: apply the migration, then add `header_scene` back here and in
-// `PROFILE_PUBLIC_COLUMNS` (workers/api/src/routes/profiles.ts).
-//
-//   cd workers/api
-//   npx wrangler d1 execute san-mes --remote --file=../migrations/0003_profiles_header_scene.sql
-//
-// That needs an API token with Account → D1 → Edit. Verify with
-// `SELECT name FROM pragma_table_info('profiles') WHERE name='header_scene'` before re-adding —
-// re-adding it without the column reintroduces exactly this outage.
+// The header decorations («Оформление») were removed from the app in Nov 2026, so no response
+// carries the column. It was left out before that too, while the live database had no such column
+// (every query naming it failed, which took login down once); the column exists now, unused.
 // `screenshots_disabled` is the owner's own setting; `/me` has to return it or the app resets the
 // toggle to off on every launch. See `PROFILE_PUBLIC_COLUMNS` in routes/profiles.ts.
 const PROFILE_AUTH_COLUMNS = `id, username, display_name, emoji, bio, device_key, banner_url, theme_id, links, badge, is_verified, created_at, updated_at, screenshots_disabled`;
