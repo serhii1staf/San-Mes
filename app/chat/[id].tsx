@@ -27,6 +27,7 @@ import { useTransitionSettled } from '../../src/hooks/useTransitionSettled';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
+import { warmActionMenu } from '../../src/components/ui/ActionMenu';
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { ChatHeaderStatus } from '../../src/components/chat/ChatHeaderStatus';
@@ -2141,6 +2142,14 @@ export default function ChatScreen() {
   // image warm, the profile fetch) waits for this rather than `runAfterInteractions`, which the
   // native stack never holds back and so ran in the middle of the slide.
   const transitionSettled = useTransitionSettled();
+  // Ready the hold menu once the chat is on screen, so the first hold of a launch does not evaluate
+  // it, view-shot and the Pin icon's font while it animates (ActionMenu, `warmActionMenu`). Idle time,
+  // once per launch.
+  useEffect(() => {
+    if (!transitionSettled) return;
+    const t = setTimeout(warmActionMenu, 400);
+    return () => clearTimeout(t);
+  }, [transitionSettled]);
   // Float this chat to the top of the messages list when opened. We stamp the
   // open time in the persisted chat-settings store (kept separate from the
   // conversation's lastMessageAt so a sync can't clobber it); the messages
@@ -2358,9 +2367,20 @@ export default function ChatScreen() {
   // is set by the menu's 'planned', which runs in the menu's mount effect, before the effect below.
   const hiddenIdSV = useSharedValue('');
   const previewingRef = useRef(false);
+  // The lift starts on the frame after the menu mounts, with the menu's own springs (ActionMenu, "THE
+  // OPEN STARTS ON THE FRAME AFTER THE MOUNT"): started in the mount frame, its first step covered the
+  // frame in which the UI thread built the overlay and it jumped. The close is immediate.
   useEffect(() => {
-    if (!actionMessage) previewingRef.current = false;
-    heldIdSV.value = actionMessage && !previewingRef.current ? actionMessage.id : '';
+    if (!actionMessage) {
+      previewingRef.current = false;
+      heldIdSV.value = '';
+      return;
+    }
+    const id = actionMessage.id;
+    const raf = requestAnimationFrame(() => {
+      heldIdSV.value = previewingRef.current ? '' : id;
+    });
+    return () => cancelAnimationFrame(raf);
   }, [actionMessage, heldIdSV]);
   const releaseHeld = useCallback(() => {
     heldIdSV.value = '';
@@ -5908,9 +5928,9 @@ export default function ChatScreen() {
   const typingChannel = conversationId ? typingChatChannelName(conversationId) : null;
   const { notifyTyping, notifyStopped } = useTypingPublisher(typingChannel);
 
-  // The header pill's two lines: the name (with the verified mark and badge) and, under it,
-  // «печатает…» or the @username. Shared by the glass and the flat pill. The status line is its own
-  // leaf (`ChatHeaderStatus`), so typing events re-render that line and not this screen.
+  // The header pill's two lines: the name (with the verified mark and badge) and, under it, the
+  // @username. Shared by the glass and the flat pill. «печатает…» is shown only by the pill above the
+  // composer (`TypingIndicator`); see the note in `ChatHeaderStatus`.
   const headerTitleContent = (
     <>
       <View style={styles.headerNameRow}>
@@ -5919,10 +5939,8 @@ export default function ChatScreen() {
         {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
       </View>
       <ChatHeaderStatus
-        channelName={typingChannel}
         username={displayUsername}
         color={peerBannerUrl ? 'rgba(255,255,255,0.78)' : theme.colors.text.secondary}
-        typingColor={peerBannerUrl ? '#FFFFFF' : theme.colors.accent.primary}
       />
     </>
   );

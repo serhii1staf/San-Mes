@@ -19,8 +19,8 @@ import { CachedImage } from '../ui/CachedImage';
 import { ModalStatusBar } from '../ui/ModalStatusBar';
 import { getImageDims } from '../../services/imageDimsCache';
 import { useTabBarStore } from '../../store/tabBarStore';
-import { GlassBg, useLiquidGlassActive } from '../ui/LiquidGlass';
-import { AppBlurView } from '../ui/AppBlurView';
+import { useLiquidGlassActive } from '../ui/LiquidGlass';
+import { OverlayButtonSurface } from '../ui/OverlayButtonSurface';
 
 /**
  * One round control in the viewer's chrome — the close X, and every action the callers put in the
@@ -67,7 +67,7 @@ export function ViewerActionButton({
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      style={[
+      style={({ pressed }) => [
         actionBtnStyles.base,
         // `overflow: hidden` on BOTH paths now, not just the flat one.
         //
@@ -79,6 +79,9 @@ export function ViewerActionButton({
         // button, so the corners showed straight edges and the control did not read as a glass pill
         // at all.
         actionBtnStyles.clip,
+        // The press feedback, now that the surface is not always a touch-reactive glass. A scale, not
+        // an alpha: a blur view under an alpha below 1 stops drawing.
+        pressed ? actionBtnStyles.pressed : null,
       ]}
     >
       {/* ── THE NON-GLASS PATH IS A BLUR NOW, NOT A FLAT WASH ─────────────────────
@@ -97,30 +100,15 @@ export function ViewerActionButton({
    
           The destructive tint rides on top of the blur rather than replacing it, so delete stays
           recognisable at a glance without the glyph colour being the only signal. */}
-      {glassActive ? null : (
-        <AppBlurView
-          intensity={36}
-          // A viewer action button sits ON the photo, so it is a scrim, not chrome. Without the role
-          // Android's fallback took the 0.72-floor `chrome` path and painted rgba(28,28,32,0.799) —
-          // a near-black disc over the image instead of a darkening you can see through.
-          role="scrim"
-          tint="dark"
-          style={StyleSheet.absoluteFill}
-        >
-          {destructive ? <View style={[StyleSheet.absoluteFill, actionBtnStyles.destructiveWash]} /> : null}
-        </AppBlurView>
-      )}
-      {glassActive ? (
-        <GlassBg
-          borderRadius={21}
-          glassStyle="regular"
-          interactive
-          colorScheme="dark"
-          // A faint red wash keeps delete readable as destructive through the material, which on
-          // its own is colourless and would make every action look identical.
-          tintColor={destructive ? 'rgba(255,60,50,0.22)' : undefined}
-        />
-      ) : null}
+      {/* The surface. With the glass off: the app's blur, as a scrim (the button sits ON the photo;
+          without the role Android's fallback took the 0.72-floor `chrome` path and painted a
+          near-black disc). With the glass on: see `OverlayButtonSurface` for why, on iOS, it is the
+          system blur with the glass's lit rim rather than our capturing glass. A faint red wash keeps
+          delete readable as destructive through the material. */}
+      <OverlayButtonSurface
+        radius={21}
+        tintColor={destructive ? (glassActive ? 'rgba(255,60,50,0.22)' : 'rgba(255,60,50,0.30)') : undefined}
+      />
       <Feather name={icon} size={18} color={color} />
     </Pressable>
   );
@@ -137,7 +125,7 @@ const actionBtnStyles = StyleSheet.create({
   // Separate from `base` so the reason it exists is not lost in a list of geometry: without it the
   // surface behind the icon — blur or glass — paints square inside a round button.
   clip: { overflow: 'hidden' },
-  destructiveWash: { backgroundColor: 'rgba(255,60,50,0.30)' },
+  pressed: { transform: [{ scale: 0.92 }] },
 });
 
 /**
@@ -849,6 +837,22 @@ function ImageViewerModalComponent({
    * and moving the fingers moves the photo. Past 1x or `MAX_ZOOM` it gives a little and springs back
    * when released (below 1x all the way back and centred), and it always ends inside its bounds.
    */
+  // ── ONE FINGER LIFTED MID-PINCH SENT THE PHOTO TOWARDS A CORNER (Nov 2026) ──────────────────────
+  //
+  // Reported: pinching in the middle, the photo sometimes moves off towards the top-left corner.
+  // Gesture Handler keeps a pinch active when one of the two fingers lifts (iOS's recogniser stays
+  // `changed`; Android ends it only on the last finger up). From then on the focal point is the
+  // finger still down and the scale stops changing, but the anchor taken at the start was the point
+  // BETWEEN the two fingers, so the photo jumped by half the distance between them, towards the
+  // finger that stayed (usually the index finger, up and to the left of the thumb), then followed it.
+  // A finger put back down jumped it again. So whenever the number of fingers changes, the pinch is
+  // re-anchored where it is: the photo stays put, and with one finger left it moves with that finger.
+  // The zoom without the rubber band is carried across, so a re-anchor past the limits does not
+  // apply the band twice.
+  const pinchPointers = useSharedValue(0);
+  const pinchScaleBase = useSharedValue(1);
+  const pinchRawStart = useSharedValue(1);
+  const pinchRaw = useSharedValue(1);
   const pinchGesture = useMemo(
     () =>
       Gesture.Pinch()
@@ -859,6 +863,10 @@ function ImageViewerModalComponent({
           cancelAnimation(zoomPanY);
           // A dismiss drag the second finger interrupted goes back.
           if (dragY.value !== 0) dragY.value = withSpring(0, SNAP_SPRING);
+          pinchPointers.value = e.numberOfPointers;
+          pinchScaleBase.value = e.scale > 0 ? e.scale : 1;
+          pinchRawStart.value = zoom.value;
+          pinchRaw.value = zoom.value;
           pinchStartZoom.value = zoom.value;
           pinchStartX.value = zoomPanX.value;
           pinchStartY.value = zoomPanY.value;
@@ -868,7 +876,22 @@ function ImageViewerModalComponent({
           lastFocalY.value = pinchOriginY.value;
         })
         .onUpdate((e) => {
-          const raw = pinchStartZoom.value * e.scale;
+          if (e.numberOfPointers !== pinchPointers.value) {
+            // A finger lifted or added: start again from here, so nothing jumps.
+            pinchPointers.value = e.numberOfPointers;
+            pinchScaleBase.value = e.scale > 0 ? e.scale : 1;
+            pinchRawStart.value = pinchRaw.value;
+            pinchStartZoom.value = zoom.value;
+            pinchStartX.value = zoomPanX.value;
+            pinchStartY.value = zoomPanY.value;
+            pinchOriginX.value = e.focalX - viewW.value / 2;
+            pinchOriginY.value = e.focalY - viewH.value / 2;
+            lastFocalX.value = pinchOriginX.value;
+            lastFocalY.value = pinchOriginY.value;
+            return;
+          }
+          const raw = pinchRawStart.value * (e.scale / pinchScaleBase.value);
+          pinchRaw.value = raw;
           const s = raw < 1 ? 1 - (1 - raw) * 0.4 : raw > MAX_ZOOM ? MAX_ZOOM + (raw - MAX_ZOOM) * 0.25 : raw;
           const fx = e.focalX - viewW.value / 2;
           const fy = e.focalY - viewH.value / 2;
@@ -908,7 +931,7 @@ function ImageViewerModalComponent({
           zoomPanY.value = withSpring(clampTo(y, panLimit(target, fitH.value, viewH.value)), SNAP_SPRING);
           runOnJS(setZoomedJS)(true);
         }),
-    [zoom, zoomPanX, zoomPanY, dragY, pinching, pinchStartZoom, pinchStartX, pinchStartY, pinchOriginX, pinchOriginY, lastFocalX, lastFocalY, fitW, fitH, viewW, viewH],
+    [zoom, zoomPanX, zoomPanY, dragY, pinching, pinchStartZoom, pinchStartX, pinchStartY, pinchOriginX, pinchOriginY, lastFocalX, lastFocalY, fitW, fitH, viewW, viewH, pinchPointers, pinchScaleBase, pinchRawStart, pinchRaw],
   );
 
   /**

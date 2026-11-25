@@ -56,6 +56,7 @@ import { GlassBg, useLiquidGlassActive } from './LiquidGlass';
 import { useGlassSurfacesActive } from './SanGlassSurface';
 import { ModalStatusBar } from './ModalStatusBar';
 import { triggerHaptic } from '../../utils/haptics';
+import { UI_RUNTIME_MAPPERS } from '../../utils/workletGuards';
 
 export type ActionMenuIcon =
   | { set: 'feather'; name: React.ComponentProps<typeof Feather>['name'] }
@@ -168,6 +169,29 @@ function viewShot(): ViewShot | null {
   }
   return viewShotMod;
 }
+/**
+ * ── THE FIRST MENU OF A LAUNCH PAID FOR ITS OWN SETUP (Nov 2026) ─────────────────────────────────
+ *
+ * Reported: right after launch the first hold animates "fast, as if broken", the second is smooth.
+ * Part of it was the bubble's first lift (useMessageGestures, "THE FIRST LIFT OF A CELL SNAPPED").
+ * The rest was work only the first open does, in the frames the open animates: this module and the
+ * menu's own (the app uses inline requires, so they are evaluated on first use), view-shot, and the
+ * MaterialCommunityIcons font for the Pin row, which `@expo/vector-icons` loads on the first icon
+ * that needs it and renders blank until then (the icon then pops in with an extra commit). The chat
+ * calls this once it has settled, in idle time, so a hold finds all of it ready.
+ */
+let warmed = false;
+export function warmActionMenu(): void {
+  if (warmed) return;
+  warmed = true;
+  try {
+    viewShot();
+  } catch {}
+  try {
+    void MaterialCommunityIcons.loadFont?.().catch(() => {});
+  } catch {}
+}
+
 /**
  * The keyboard's height now, 0 when it is down. React Native's `Keyboard.metrics()` alone is not
  * enough: on Android, in the chat's adjust-nothing window, it reported the keyboard visible with a
@@ -282,9 +306,12 @@ const TopCell = memo(function TopCell<Id extends string>({
   registerRef: (index: number, node: View | null) => void;
   index: number;
 }) {
-  const hoverStyle = useAnimatedStyle(() => ({
-    backgroundColor: hovered && hovered.value === item.id ? hoverBg : HOVER_OFF,
-  }));
+  // First run on the JS thread: the resting colour, without a synchronous read of the UI runtime
+  // (see `UI_RUNTIME_MAPPERS`). Nothing is hovered while the card mounts.
+  const hoverStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { backgroundColor: HOVER_OFF };
+    return { backgroundColor: hovered && hovered.value === item.id ? hoverBg : HOVER_OFF };
+  });
   return (
     <Reanimated.View style={[styles.topCellWrap, hoverStyle]}>
       <Pressable
@@ -322,9 +349,10 @@ const ListRow = memo(function ListRow<Id extends string>({
   registerRef: (index: number, node: View | null) => void;
   index: number;
 }) {
-  const hoverStyle = useAnimatedStyle(() => ({
-    backgroundColor: hovered && hovered.value === item.id ? hoverBg : HOVER_OFF,
-  }));
+  const hoverStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { backgroundColor: HOVER_OFF };
+    return { backgroundColor: hovered && hovered.value === item.id ? hoverBg : HOVER_OFF };
+  });
   return (
     <Reanimated.View style={hoverStyle}>
       <Pressable
@@ -547,16 +575,36 @@ function ActionMenuInner<Id extends string>(
     cardStarted.current = true;
     setCardOpen(true);
   }, []);
+  // ── THE OPEN STARTS ON THE FRAME AFTER THE MOUNT (Nov 2026) ─────────────────────────────────
+  //
+  // These springs used to start in the mount effect. The animation's clock starts when the UI thread
+  // first steps it, and in that same frame the UI thread is still creating, laying out and drawing the
+  // overlay this commit produced (about fifty views), so the spring's first step covered that whole
+  // frame. Reanimated caps a step at 64 ms, which puts the card at about 80 % opacity and 93 % size in
+  // the first frame anyone sees: the open read as a pop, worst on the first open of a launch, which
+  // also evaluates and lays out everything for the first time. One frame later the overlay is on
+  // screen and the spring runs from its start. The chat starts the held bubble's lift on the same
+  // frame (`heldIdSV` in app/chat/[id].tsx), so the two stay together.
   useEffect(() => {
-    p.value = withSpring(1, OPEN_SPRING);
-    if (!plan || plan.keyboardUp) return;
+    const raf = requestAnimationFrame(() => {
+      p.value = withSpring(1, OPEN_SPRING);
+    });
+    if (!plan || plan.keyboardUp) return () => cancelAnimationFrame(raf);
     const t = setTimeout(startCard, CARD_WAIT_MS);
-    return () => clearTimeout(t);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
   }, [p, plan, startCard]);
   // After the commit that mounts it: a glass card waiting for the snapshot is not mounted (see below),
-  // and a spring started before the mount would spend its first frames on nothing.
+  // and a spring started before the mount would spend its first frames on nothing. A frame later still,
+  // for the reason above.
   useEffect(() => {
-    if (cardOpen) cp.value = withSpring(1, OPEN_SPRING);
+    if (!cardOpen) return;
+    const raf = requestAnimationFrame(() => {
+      if (!closing.current) cp.value = withSpring(1, OPEN_SPRING);
+    });
+    return () => cancelAnimationFrame(raf);
   }, [cardOpen, cp]);
 
   const finish = useCallback(() => {
@@ -818,7 +866,17 @@ function ActionMenuInner<Id extends string>(
   // `OurGlassDissolve` in LiquidGlass.tsx), so with it the card fades like the flat one.
   const surfaceGlass = glassActive;
   const canFade = !glassActive || ourGlass;
+  // ── THE FIRST STYLE RUNS DO NOT WAIT FOR THE UI THREAD ─────────────────────────────────────────
+  //
+  // Each of these styles is also run once on the JS thread when the menu mounts, and in Reanimated
+  // 4.1 every `.value` read there is a synchronous call into the UI runtime. With the hover cells that
+  // was about thirty round trips on every open, made while the UI thread is busy with the hold. On
+  // that run they now return their resting values (what the shared values hold at mount), and the
+  // mapper on the UI thread applies the live ones, as the bubbles do (useMessageGestures).
   const cardStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) {
+      return canFade ? { opacity: 0, transform: [{ scale: 0.88 }] } : { opacity: 1, transform: [{ scale: 0.3 }] };
+    }
     const open = cp.value;
     const shut = c.value;
     if (canFade) {
@@ -848,10 +906,14 @@ function ActionMenuInner<Id extends string>(
   // the dim and the snapshot keep `CLOSE_TIMING`. On the open the content comes in just behind the
   // surface. The content's alpha applies whatever the surface is, Apple's glass included (the content
   // is the glass's sibling); Apple's glass itself still takes no alpha and only shrinks.
-  const contentStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(cp.value, [0.2, 0.75], [0, 1], Extrapolation.CLAMP) * (1 - contentOut.value),
-  }));
-  const dimStyle = useAnimatedStyle(() => ({ opacity: Math.min(1, Math.max(0, p.value)) * (1 - c.value) }));
+  const contentStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { opacity: 0 };
+    return { opacity: interpolate(cp.value, [0.2, 0.75], [0, 1], Extrapolation.CLAMP) * (1 - contentOut.value) };
+  });
+  const dimStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { opacity: 0 };
+    return { opacity: Math.min(1, Math.max(0, p.value)) * (1 - c.value) };
+  });
 
   // ── The held item stays lit ──────────────────────────────────────────────
   // Everything is dimmed except a rounded cut-out around the held item, so it is obvious what the
@@ -886,11 +948,20 @@ function ActionMenuInner<Id extends string>(
   // Never taller than the item below the window's scroll position: the window would then show past
   // the item's end, and its scroll view would clamp the offset and shift the content.
   const windowMax = plan ? plan.fullHeight - plan.scroll : 0;
-  const previewStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(fade.value, 1 - c.value),
-    height: Math.max(1, Math.min(windowH.value, windowMax)),
-    transform: [{ translateY: shift.value }, { scale: previewLift.value }],
-  }));
+  const previewStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) {
+      return {
+        opacity: 1,
+        height: Math.max(1, Math.min(plan ? plan.startHeight : 0, windowMax)),
+        transform: [{ translateY: plan ? plan.startShift : 0 }, { scale: 1 }],
+      };
+    }
+    return {
+      opacity: Math.min(fade.value, 1 - c.value),
+      height: Math.max(1, Math.min(windowH.value, windowMax)),
+      transform: [{ translateY: shift.value }, { scale: previewLift.value }],
+    };
+  });
 
   const isDark = theme.isDark;
   const textColor = theme.colors.text.primary;

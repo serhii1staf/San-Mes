@@ -404,6 +404,16 @@ export function useMessageGestures<T extends { id: string }>({
   // `hiddenId`: while the menu shows a snapshot of this bubble (a message that could not be shown
   // whole where it is), the bubble itself is hidden, at once, so the snapshot is the only copy on
   // screen. Same once-set rule, flag `HIDDEN`: from then on the style always carries `opacity`.
+  //
+  // ── THE FIRST LIFT OF A CELL SNAPPED (Nov 2026) ───────────────────────────────────────────────
+  //
+  // Reported: right after launch the first hold on a message animates "fast, as if broken", and the
+  // second one is smooth. At rest this style is `{}`, so the first time a cell is held Reanimated has
+  // no previous `transform` to start the spring from, and a spring with no start value begins at its
+  // target: the bubble jumped to 1.04 in one frame. From then on the cell has a last value (1, after
+  // the release), so every later hold sprang from it. Right after launch no cell has been held, which
+  // is why it was always the first hold. So the first lift of a cell writes a plain 1, and the run that
+  // the flag write below causes on the next frame starts the spring from it.
   const liftStyle = useAnimatedStyle(() => {
     if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return {};
     const held = !!heldId && heldId.value === idSV.value;
@@ -411,13 +421,14 @@ export function useMessageGestures<T extends { id: string }>({
     let flags = swipeFlagsSV.value;
     if ((flags & (LIFTED | HIDDEN)) === 0 && !held && !hidden) return {};
     const want = flags | (held ? LIFTED : 0) | (hidden ? HIDDEN : 0);
+    const firstLift = (flags & LIFTED) === 0 && (want & LIFTED) !== 0;
     if (want !== flags) {
       swipeFlagsSV.value = want;
       flags = want;
     }
     const style: { transform?: { scale: number }[]; opacity?: number } = {};
     if ((flags & LIFTED) !== 0) {
-      style.transform = [{ scale: withSpring(held ? 1.04 : 1, { damping: 15, stiffness: 260, mass: 0.7 }) }];
+      style.transform = [{ scale: firstLift ? 1 : withSpring(held ? 1.04 : 1, { damping: 15, stiffness: 260, mass: 0.7 }) }];
     }
     if ((flags & HIDDEN) !== 0) style.opacity = hidden ? 0 : 1;
     return style;

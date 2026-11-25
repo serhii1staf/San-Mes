@@ -531,7 +531,6 @@ const en: Record<string, string> = {
   'chat.composer.send_a11y': 'Send',
   'chat.composer.save_a11y': 'Save',
   'chat.viewer.download_a11y': 'Download',
-  'chat.header.typing': 'typing…',
   'chat.viewer.save_denied': 'No access to the photo library. You can allow it in Settings.',
   'chat.search_placeholder': 'Search messages...',
   'chat.editing': 'Editing',
