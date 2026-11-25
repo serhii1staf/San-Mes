@@ -1,12 +1,9 @@
 // Comment edit + delete endpoints.
 //
 // PATCH  /v1/comments/:id              — update the comment text. Author-only.
-// DELETE /v1/comments/:id?postId=<uuid> — remove + decrement the post's
-//                                          comments_count. Author-only.
-//
-// `postId` is a query param so the Worker can update the parent post's
-// counter without an extra round-trip — same shape as the existing
-// client-side flow in `deleteComment`.
+// DELETE /v1/comments/:id               — remove + decrement the post's comments_count. Author-only.
+//                                          A `?postId=` the client still sends is ignored: the
+//                                          comment's own row says which post it is on.
 
 import { fail, ok } from '../http';
 import { register } from '../router';
@@ -52,17 +49,10 @@ register('PATCH', '/v1/comments/:id', async (req, env, ctx, params, authedUserId
 });
 
 // ── DELETE /v1/comments/:id ────────────────────────────────────────
-//
-// Optional `?postId=<uuid>` so we can decrement the parent post's
-// comments_count atomically. If it's missing we still allow the delete
-// (so legacy clients keep working) but skip the counter update.
 register('DELETE', '/v1/comments/:id', async (req, env, ctx, params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const id = parseUuid(params.id);
   if (!id) return fail(req, 'invalid comment id', 400);
-
-  const url = new URL(req.url);
-  const postId = parseUuid(url.searchParams.get('postId'));
 
   const owner = await queryOne<{ author_id: string; post_id: string }>(
     env,
@@ -72,20 +62,24 @@ register('DELETE', '/v1/comments/:id', async (req, env, ctx, params, authedUserI
   if (!owner) return ok(req, { deleted: false });
   if (owner.author_id !== authedUserId) return fail(req, 'forbidden', 403);
 
+  // ── THE POST IS THE COMMENT'S OWN, NOT THE CALLER'S `?postId` (Nov 2026) ─────────────────────
+  //
+  // The counter and the realtime event used the query string's post id. Ownership was checked on the
+  // comment only, so anyone could write a comment anywhere, delete it with `?postId=<someone else's
+  // post>` and take one off that post's comment count each time, and send delete events on its
+  // channel. The comment's row knows its post; the parameter is ignored (the app always passed the
+  // same id, src/lib/supabase.ts).
   const stmts: { sql: string; params?: unknown[] }[] = [
     { sql: `DELETE FROM comments WHERE id = ?`, params: [id] },
   ];
-  if (postId) {
+  if (owner.post_id) {
     stmts.push({
       sql: `UPDATE posts SET comments_count = MAX(COALESCE(comments_count, 0) - 1, 0) WHERE id = ?`,
-      params: [postId],
+      params: [owner.post_id],
     });
   }
   await batch(env, stmts);
-  // Prefer the query-string postId if the client provided it; fall
-  // back to the row's own foreign key for legacy callers that don't
-  // pass it. Either way the delete event lands on exactly one channel.
-  const channelPostId = postId || owner.post_id;
+  const channelPostId = owner.post_id;
   if (channelPostId) {
     publishEvent(
       env,

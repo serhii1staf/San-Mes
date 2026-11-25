@@ -21,7 +21,7 @@
 import { fail, ok } from '../http';
 import { register } from '../router';
 import { exec, normalizeProfile, query, queryOne } from '../db';
-import { signToken } from '../auth';
+import { claimsOf, signToken } from '../auth';
 import { forgetInstallDecision } from '../revocation';
 import { asStr, readJson } from '../validate';
 
@@ -80,6 +80,61 @@ function hashPin(pin: string): string {
 
 const USERNAME_RE = /^[a-z0-9_]{2,32}$/;
 
+// ── Login lockout (see "THE PIN CANNOT BE WALKED THROUGH" in the login route) ─────────────────
+const FAILURE_WINDOW_S = 15 * 60;
+
+async function sha256Hex(s: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function readLock(env: import('../db').Env, keyHash: string): Promise<{ failures: number; window_start: number; locked_until: number } | null> {
+  try {
+    return await queryOne<{ failures: number; window_start: number; locked_until: number }>(
+      env,
+      `SELECT failures, window_start, locked_until FROM auth_failures WHERE key_hash = ? LIMIT 1`,
+      [keyHash],
+    );
+  } catch {
+    return null;
+  }
+}
+
+function lockSeconds(failures: number): number {
+  if (failures >= 20) return 24 * 60 * 60;
+  if (failures >= 10) return 60 * 60;
+  if (failures >= 5) return 15 * 60;
+  return 0;
+}
+
+async function noteFailure(env: import('../db').Env, keyHash: string, nowS: number): Promise<void> {
+  try {
+    const prev = await readLock(env, keyHash);
+    // A quiet quarter of an hour starts the count again, unless the key has already been locked: then
+    // the count is kept, so the locks escalate rather than restart, until a quiet day has passed.
+    const since = prev ? nowS - prev.window_start : 0;
+    const fresh = !prev || (prev.locked_until <= nowS && (since > 24 * 60 * 60 || (since > FAILURE_WINDOW_S && prev.failures < 5)));
+    const failures = fresh ? 1 : prev!.failures + 1;
+    const windowStart = fresh ? nowS : prev!.window_start;
+    const lockFor = lockSeconds(failures);
+    const lockedUntil = lockFor > 0 ? nowS + lockFor : 0;
+    await exec(
+      env,
+      `INSERT INTO auth_failures (key_hash, failures, window_start, locked_until) VALUES (?, ?, ?, ?)
+         ON CONFLICT(key_hash) DO UPDATE SET failures = excluded.failures,
+                                             window_start = excluded.window_start,
+                                             locked_until = excluded.locked_until`,
+      [keyHash, failures, windowStart, lockedUntil],
+    );
+  } catch {}
+}
+
+async function clearFailures(env: import('../db').Env, keyHash: string): Promise<void> {
+  try {
+    await exec(env, `DELETE FROM auth_failures WHERE key_hash = ?`, [keyHash]);
+  } catch {}
+}
+
 // ── POST /v1/auth/register ────────────────────────────────────────────
 //
 // Body: { username, displayName, emoji, pin, deviceKey }
@@ -135,7 +190,9 @@ register('POST', '/v1/auth/register', async (req, env) => {
   const profile = normalizeProfile(row);
   // Bind the token to the install that registered, so "disconnect this device" can enforce itself on
   // the request path rather than depending on that device cooperating. See `revocation.ts`.
-  const token = await signToken(env, id, asStr(body.value.installId, 64));
+  const registeredInstall = asStr(body.value.installId, 64);
+  await noteInstall(env, id, registeredInstall);
+  const token = await signToken(env, id, registeredInstall);
   return ok(req, { profile, token });
 });
 
@@ -150,12 +207,35 @@ register('POST', '/v1/auth/login', async (req, env) => {
   const pin = asStr(body.value.pin, 16);
   if (!deviceKey || !pin) return fail(req, 'invalid_key_or_pin', 400);
 
+  // ── THE PIN CANNOT BE WALKED THROUGH (Nov 2026) ──────────────────────────────────────────────
+  //
+  // The device key is shown to its owner (Settings) and typed by whoever signs in on a second phone,
+  // and the PIN can be four digits. With no limit, anyone who had seen a device key could try
+  // 0000-9999 in a couple of minutes and own the account for good. Failures are now counted per device
+  // key (as a SHA-256, never the key): after 5 in a quarter of an hour the key is locked for 15
+  // minutes, after 10 for an hour, after 20 for a day, and a successful sign-in clears the count. A
+  // locked key answers 429 'too_many_attempts' before the PIN is even compared. Per address, the
+  // `RL_AUTH` limit (guards.ts) caps the attempts too. Best-effort: without the table (migration 0009
+  // not applied) sign-in works as before.
+  const keyHash = await sha256Hex(deviceKey);
+  const nowS = Math.floor(Date.now() / 1000);
+  const lock = await readLock(env, keyHash);
+  if (lock && lock.locked_until > nowS) {
+    const res = fail(req, 'too_many_attempts', 429);
+    res.headers.set('Retry-After', String(Math.max(1, lock.locked_until - nowS)));
+    return res;
+  }
+
   const row = await queryOne<Record<string, unknown>>(
     env,
     `SELECT ${PROFILE_AUTH_COLUMNS} FROM profiles WHERE device_key = ? AND pin_hash = ? LIMIT 1`,
     [deviceKey, hashPin(pin)],
   );
-  if (!row) return fail(req, 'invalid_key_or_pin', 401);
+  if (!row) {
+    await noteFailure(env, keyHash, nowS);
+    return fail(req, 'invalid_key_or_pin', 401);
+  }
+  await clearFailures(env, keyHash);
 
   const profile = normalizeProfile(row);
   // ── SIGNING IN CLEARS A PREVIOUS REVOCATION FOR THIS INSTALL ──────────────
@@ -180,6 +260,7 @@ register('POST', '/v1/auth/login', async (req, env) => {
     );
     forgetInstallDecision(row.id as string, installId);
   }
+  await noteInstall(env, row.id as string, installId);
   const token = await signToken(env, row.id as string, installId);
   return ok(req, { profile, token });
 });
@@ -220,18 +301,49 @@ register('GET', '/v1/auth/me', async (req, env, _ctx, _params, authedUserId) => 
 // sessions stay logged in without re-asking for the PIN.
 register('POST', '/v1/auth/refresh', async (req, env, _ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
-  // The install claim has to SURVIVE a refresh, or revocation would have a hole you could drive
-  // through: a revoked device is refused, its client tries one silent refresh, and a refresh that
-  // minted an unattributed token would hand it thirty more days of access. Read from the body rather
-  // than from the incoming token because the dispatcher does not pass the verified claims through —
-  // and it cannot be spoofed to escape a revocation, because a token WITHOUT the claim is only
-  // obtainable by an old client, and this handler is only reached at all if the incoming token was
-  // already accepted (i.e. its install was not revoked).
-  const body = await readJson<{ installId?: unknown }>(req);
-  const installId = body.ok ? asStr(body.value.installId, 64) : null;
+  // ── A DELETED ACCOUNT'S TOKEN IS NOT RENEWED (Nov 2026) ───────────────────────────────────────
+  // Nothing checked that the profile still existed, so a token outlived `DELETE /v1/auth/me` and kept
+  // refreshing itself, writing posts and messages under an id that no longer has a profile.
+  const exists = await queryOne<{ x: number }>(env, `SELECT 1 AS x FROM profiles WHERE id = ? LIMIT 1`, [authedUserId]);
+  if (!exists) return fail(req, 'unauthorised', 401);
+  // ── A REFRESH KEEPS THE TOKEN'S OWN INSTALL (Nov 2026) ────────────────────────────────────────
+  //
+  // The install claim has to survive a refresh, or revocation has a hole: a revoked device is
+  // refused, and a refresh minting an unattributed token would give it thirty more days. It used to be
+  // read from the request body, on the reasoning that only an old client can hold a token without the
+  // claim. Any HTTP client can leave the body empty, though, and so turn a revocable token into one
+  // that can never be revoked, refreshable for ever. The presented token's own claim now wins; the
+  // body is read only for a token minted before the claim existed. Current builds send the same id in
+  // both places, so nothing changes for them.
+  const claims = claimsOf(req);
+  let installId = claims?.installId ?? null;
+  if (!installId) {
+    const body = await readJson<{ installId?: unknown }>(req);
+    installId = body.ok ? asStr(body.value.installId, 64) : null;
+  }
+  await noteInstall(env, authedUserId, installId);
   const token = await signToken(env, authedUserId, installId);
   return ok(req, { token });
 });
+
+/**
+ * List the install a token is being issued to on the account's devices, if it is not there yet, so
+ * that every install holding a token can be seen and disconnected in Settings → Devices. The heartbeat
+ * fills in its description later. Best-effort: the table may not exist on an old database.
+ */
+async function noteInstall(env: import('../db').Env, userId: string, installId: string | null): Promise<void> {
+  const id = (installId || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) return;
+  const now = new Date().toISOString();
+  try {
+    await exec(
+      env,
+      `INSERT INTO devices (install_id, user_id, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(install_id, user_id) DO NOTHING`,
+      [id, userId, now, now],
+    );
+  } catch {}
+}
 
 // ── DELETE /v1/auth/me ────────────────────────────────────────────────
 //

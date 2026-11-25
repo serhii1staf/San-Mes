@@ -247,6 +247,11 @@ export async function login(params: {
     if (error === 'invalid_key_or_pin') {
       return { profile: null, error: t('auth.error.invalid_key_or_pin') };
     }
+    // The server locks a device key after repeated wrong PINs, and limits sign-in attempts per
+    // address (workers/api: routes/auth.ts, guards.ts). Said in words, not as the code.
+    if (error === 'too_many_attempts' || error === 'rate_limited') {
+      return { profile: null, error: t('auth.error.too_many_attempts') };
+    }
     return { profile: null, error };
   }
   if (data?.token && data?.profile) {

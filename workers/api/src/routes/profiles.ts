@@ -529,19 +529,14 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
       delta['header_scene'] = v.header_scene == null ? null : v.header_scene;
     }
   }
-  if (typeof v.badge === 'string' || v.badge === null) {
-    const next = v.badge == null ? null : String(v.badge).slice(0, 32);
-    sets.push('badge = ?');
-    binds.push(next);
-    recordChange('badge', next);
-  }
-  if (typeof v.is_verified === 'boolean') {
-    sets.push('is_verified = ?');
-    binds.push(v.is_verified ? 1 : 0);
-    // Compare against the boolean projection that callers actually see.
-    const prev = !!current?.is_verified;
-    if (prev !== v.is_verified) delta['is_verified'] = v.is_verified;
-  }
+  // ── NOT `badge` AND NOT `is_verified` (Nov 2026) ──────────────────────────────────────────────
+  //
+  // This route used to accept both, so anyone could give themselves the verified mark and every badge
+  // with their own token: one PATCH, shown on every profile, comment, post and chat row, and broadcast
+  // live. They are granted by the admin route (PATCH /v1/admin/profiles/:id, behind the admin key) and
+  // nowhere else. Ignored rather than refused, so an older client's queued profile update that happens
+  // to carry them still applies its other fields. The app never sent them here (checked: every
+  // `updateProfile` call site).
   // The owner's screenshot lock. Rides the realtime delta like any other public field, so a viewer
   // who has this profile or chat open starts (or stops) protecting it without reopening.
   if (typeof v.screenshots_disabled === 'boolean') {

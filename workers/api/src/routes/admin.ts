@@ -60,8 +60,22 @@ function assertAdmin(req: Request, env: import('../db').Env): Response | null {
   const expected = env.ADMIN_KEY;
   if (!expected) return fail(req, 'admin not configured', 503);
   const provided = req.headers.get('X-Admin-Key') || req.headers.get('x-admin-key');
-  if (!timingSafeEqual(provided || '', expected)) return fail(req, 'unauthorised', 401);
+  // Both sides hashed first, so the comparison is between equal-length strings and its time says
+  // nothing about the key's length either.
+  if (!timingSafeEqual(fnv64(provided || ''), fnv64(expected)) || (provided || '') !== expected) {
+    return fail(req, 'unauthorised', 401);
+  }
   return null;
+}
+
+/** A fixed-length digest of a string (FNV-1a, 64-bit, hex): only to make `timingSafeEqual` length-blind. */
+function fnv64(s: string): string {
+  let h = 0xcbf29ce484222325n;
+  for (let i = 0; i < s.length; i++) {
+    h ^= BigInt(s.charCodeAt(i));
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, '0');
 }
 
 // ── GET /v1/admin/counts ─────────────────────────────────────────────

@@ -31,6 +31,7 @@ import { asStr, readJson } from '../validate';
 import { channels, publishEvent } from '../realtime';
 import { sendPushToUser, cleanPushBody } from '../push';
 import { findDedupResultId, maybeCleanupDedup, parseClientMutationId, recordDedup } from '../dedup';
+import { hasBlocked, withinLimit } from '../guards';
 
 interface PostRow {
   id: string;
@@ -124,6 +125,16 @@ register('POST', '/v1/posts/repost', async (req, env, ctx, _params, authedUserId
     }
   }
 
+  // The original has to exist, and only a person's first repost of it counts: the counter used to go
+  // up on every call, for any id, so it could be pumped without limit.
+  const original = await queryOne<{ id: string }>(env, `SELECT id FROM posts WHERE id = ? LIMIT 1`, [originalPostId]);
+  if (!original) return fail(req, 'not found', 404);
+  const already = await queryOne<{ x: number }>(
+    env,
+    `SELECT 1 AS x FROM posts WHERE author_id = ? AND content LIKE ? LIMIT 1`,
+    [authedUserId, `::repost::${originalPostId}%`],
+  );
+
   // The repost row uses the marker scheme the client already parses
   // (`isRepost` in `src/lib/supabase.ts`):
   //   ::repost::<original-uuid>::<optional comment>
@@ -131,17 +142,20 @@ register('POST', '/v1/posts/repost', async (req, env, ctx, _params, authedUserId
   const now = new Date().toISOString();
   const content = `::repost::${originalPostId}::${comment}`;
 
-  await batch(env, [
+  const writes: { sql: string; params?: unknown[] }[] = [
     {
       sql: `INSERT INTO posts (id, author_id, content, image_url, likes_count, comments_count, shares_count, created_at)
             VALUES (?, ?, ?, NULL, 0, 0, 0, ?)`,
       params: [id, authedUserId, content, now],
     },
-    {
+  ];
+  if (!already) {
+    writes.push({
       sql: `UPDATE posts SET shares_count = COALESCE(shares_count, 0) + 1 WHERE id = ?`,
       params: [originalPostId],
-    },
-  ]);
+    });
+  }
+  await batch(env, writes);
 
   if (clientMutationId) {
     await recordDedup(env, authedUserId, clientMutationId, id);
@@ -363,7 +377,7 @@ register('POST', '/v1/posts/:id/like', async (req, env, ctx, params, authedUserI
   if (existing) {
     await batch(env, [
       { sql: `DELETE FROM likes WHERE user_id = ? AND post_id = ?`, params: [authedUserId, postId] },
-      { sql: `UPDATE posts SET likes_count = MAX(COALESCE(likes_count, 0) - 1, 0) WHERE id = ?`, params: [postId] },
+      { sql: `UPDATE posts SET likes_count = (SELECT COUNT(*) FROM likes WHERE post_id = ?) WHERE id = ?`, params: [postId, postId] },
     ]);
     // Re-read the count so peers display the canonical value rather
     // than hand-rolling a -1 that might race with another tap.
@@ -387,15 +401,18 @@ register('POST', '/v1/posts/:id/like', async (req, env, ctx, params, authedUserI
     return ok(req, { liked: false });
   }
 
+  if (!meta) return ok(req, { liked: false });
   const now = new Date().toISOString();
+  // The count is recounted, not incremented: the row is `INSERT OR IGNORE`, so N parallel likes from
+  // one account made one row and added N. Cheap with `idx_likes_post_id`.
   await batch(env, [
     {
       sql: `INSERT OR IGNORE INTO likes (user_id, post_id, created_at) VALUES (?, ?, ?)`,
       params: [authedUserId, postId, now],
     },
     {
-      sql: `UPDATE posts SET likes_count = COALESCE(likes_count, 0) + 1 WHERE id = ?`,
-      params: [postId],
+      sql: `UPDATE posts SET likes_count = (SELECT COUNT(*) FROM likes WHERE post_id = ?) WHERE id = ?`,
+      params: [postId, postId],
     },
   ]);
   const after = await queryOne<{ likes_count: number }>(
@@ -519,12 +536,15 @@ register('POST', '/v1/posts/:id/comments', async (req, env, ctx, params, authedU
 
   // The author closed the comments: nobody adds one, the author included. After the retry check, so
   // a comment that was created before they closed still answers its own retry.
-  const target = await queryOne<{ comments_off: number | null }>(
+  const target = await queryOne<{ comments_off: number | null; author_id: string }>(
     env,
-    `SELECT comments_off FROM posts WHERE id = ? LIMIT 1`,
+    `SELECT comments_off, author_id FROM posts WHERE id = ? LIMIT 1`,
     [postId],
   );
-  if (target?.comments_off) return fail(req, 'comments_off', 403);
+  if (!target) return fail(req, 'not found', 404);
+  if (target.comments_off) return fail(req, 'comments_off', 403);
+  // Someone the author has blocked does not comment on their posts (and so does not push to them).
+  if (await hasBlocked(env, target.author_id, authedUserId)) return fail(req, 'forbidden', 403);
 
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -570,14 +590,16 @@ register('POST', '/v1/posts/:id/comments', async (req, env, ctx, params, authedU
       { post_id: postId, comment_id: id, by: authedUserId, ts: now },
       ctx,
     );
-    // Real push to the post author's device(s).
+    // Real push to the post author's device(s), at most a burst per commenter (guards.ts, RL_PUSH).
     const commenterName = row.profile_display_name || row.profile_username || 'Someone';
     const preview = cleanPushBody(content).slice(0, 140);
-    sendPushToUser(env, ctx, postOwner.author_id, {
-      title: commenterName,
-      body: preview ? `commented: ${preview}` : 'commented on your post',
-      data: { type: 'comment', post_id: postId, comment_id: id, by: authedUserId },
-    });
+    if (await withinLimit(env, 'PUSH', `${authedUserId}>${postOwner.author_id}`)) {
+      sendPushToUser(env, ctx, postOwner.author_id, {
+        title: commenterName,
+        body: preview ? `commented: ${preview}` : 'commented on your post',
+        data: { type: 'comment', post_id: postId, comment_id: id, by: authedUserId },
+      });
+    }
   }
   return ok(req, shaped);
 });

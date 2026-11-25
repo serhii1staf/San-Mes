@@ -1151,6 +1151,7 @@ const en: Record<string, string> = {
   // ─── Auth / supabase error strings ─────────────────────────────────────
   'auth.error.username_taken': 'This username is already taken',
   'auth.error.invalid_key_or_pin': 'Invalid key or PIN',
+  'auth.error.too_many_attempts': 'Too many wrong attempts. Try again later.',
   'auth.error.invalid_pin': 'Invalid PIN',
   'auth.error.delete_partial': 'Could not fully delete the account. Please try again.',
   'auth.error.delete_generic': 'Could not delete account',

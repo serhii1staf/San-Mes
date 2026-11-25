@@ -476,7 +476,9 @@ export async function createRepost(_authorId: string, originalPostId: string, co
 
 export async function updateProfile(
   _userId: string,
-  updates: Partial<{ display_name: string; emoji: string; bio: string; banner_url: string; theme_id: string | null; header_scene: any; links: any; username: string; badge: string | null; is_verified: boolean; screenshots_disabled: boolean }>,
+  // No `badge` or `is_verified`: the server ignores both here (they are granted from the admin panel
+  // only), so the type does not offer them.
+  updates: Partial<{ display_name: string; emoji: string; bio: string; banner_url: string; theme_id: string | null; header_scene: any; links: any; username: string; screenshots_disabled: boolean }>,
 ): Promise<{ error: string | null }> {
   const { error } = await apiPatch('/v1/profiles/me', updates);
   if (error) {
