@@ -1,10 +1,12 @@
 /**
- * The second line of the chat header: «печатает…» while the other person is typing, their @username
- * otherwise.
+ * The second line of the chat header: the other person's @username.
  *
- * Its own leaf with its own subscription, for the reason `TypingIndicator` is one: if the chat screen
- * subscribed, every "started / stopped typing" would re-render the transcript. Here it re-renders one
- * line of text.
+ * ── «ПЕЧАТАЕТ…» IS SHOWN ONCE, ABOVE THE FIELD (Nov 2026) ──────────────────────────────────────
+ *
+ * This line used to turn into «печатает…» while the other person typed, at the same moment as the
+ * typing pill above the composer (`TypingIndicator`) appeared: two indicators for one event. Asked
+ * for: keep only the one above the field. So this line no longer listens to typing at all, which
+ * also drops its own realtime subscription to the chat's typing channel (the pill keeps its own).
  *
  * There is deliberately no «в сети» / «был(а) недавно». The app has no presence data, and a fixed
  * «был(а) недавно» would be a status that is not true (`ChatPeekMenu` removed one for that reason).
@@ -14,24 +16,17 @@
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import { Text } from '../ui/Text';
-import { useT } from '../../i18n/store';
-import { useTypingPeers } from '../../services/realtime/typing';
 
 interface ChatHeaderStatusProps {
-  channelName: string | null;
   username: string;
   color: string;
-  typingColor: string;
 }
 
-function ChatHeaderStatusImpl({ channelName, username, color, typingColor }: ChatHeaderStatusProps) {
-  const t = useT();
-  const typing = useTypingPeers(channelName).length > 0;
-  const label = typing ? t('chat.header.typing') : username ? `@${username}` : '';
-  if (!label) return null;
+function ChatHeaderStatusImpl({ username, color }: ChatHeaderStatusProps) {
+  if (!username) return null;
   return (
-    <Text variant="caption" numberOfLines={1} color={typing ? typingColor : color} style={styles.status}>
-      {label}
+    <Text variant="caption" numberOfLines={1} color={color} style={styles.status}>
+      {`@${username}`}
     </Text>
   );
 }

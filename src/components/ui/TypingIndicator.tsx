@@ -23,12 +23,13 @@
  */
 
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { Text } from './Text';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { useTypingPeers } from '../../services/realtime/typing';
 import { GlassBg, useLiquidGlassActive } from './LiquidGlass';
+import { AppBlurView } from './AppBlurView';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 
@@ -113,12 +114,13 @@ function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
         style={[
           styles.pill,
           {
-            borderColor: theme.isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.12)',
+            // Android's blur fallback (`androidSurfaceStyle`) draws its own hairline inside the pill,
+            // so the pill's is hidden there rather than doubled. Hidden, not removed: the width stays,
+            // so the composer's height does not change with the glass setting.
+            borderColor: !glassActive && Platform.OS === 'android'
+              ? 'transparent'
+              : theme.isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.12)',
           },
-          // The flat fill is only for devices without liquid glass. With glass active the
-          // `GlassBg` below supplies the material, and painting a translucent fill on top of it
-          // would mute the blur it exists to provide.
-          glassActive ? null : { backgroundColor: theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)' },
         ]}
         // Announced as a live status so a screen reader mentions it without stealing focus
         // from the field the user is typing into.
@@ -138,6 +140,14 @@ function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
             glass surface animates in response to touches it can never receive, which is pure
             cost. `overflow: 'hidden'` on the pill is what clips the material to the rounded
             corners. */}
+        {/* ── WITH THE GLASS OFF IT IS A BLUR, NOT A 7 % WASH (Nov 2026) ──────────────────────────
+            Reported: with liquid glass switched off the pill is practically transparent. Its only
+            backing was a 0.07 / 0.05 alpha fill, which over a busy transcript reads as no surface at
+            all. Now it is the app's blur (`AppBlurView`): a real blur on iOS and the opaque chrome
+            surface on Android, the same family as every other piece of chrome with the glass off.
+            Behind the content like the glass, and never under an animated opacity (the composer stack
+            only translates), so the iOS blur keeps drawing. Explicit tints: `default` would follow
+            the system appearance instead of the app's own theme. */}
         {glassActive ? (
           <GlassBg
             borderRadius={13}
@@ -147,7 +157,14 @@ function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
             colorScheme={theme.isDark ? 'dark' : 'light'}
             tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.45)'}
           />
-        ) : null}
+        ) : (
+          <AppBlurView
+            intensity={60}
+            tint={theme.isDark ? 'dark' : 'light'}
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, { borderRadius: 13 }]}
+          />
+        )}
         {emoji.length > 0 ? (
           // Emoji are decorative — the label already names who is typing — so they are hidden
           // from assistive tech rather than read out as stray characters.

@@ -51,7 +51,8 @@
  *     glass alive: an alpha below 1 on a glass view's ancestor switches it off, expo/expo#41024).
  *   - The close starts moving on its first frame and decelerates: everything dissolves together, the
  *     card sinking a little, the buttons leaving through their edges.
- *   - The four round buttons are glass (or a blur where glass is off), like the photo viewer's.
+ *   - The four round buttons share the photo viewer's surface (`OverlayButtonSurface`): on iOS the
+ *     system blur with the glass's lit rim, since our capturing glass re-captured on every frame here.
  */
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -79,8 +80,7 @@ import { Text } from '../ui/Text';
 import { emojiTextStyle } from '../ui/emojiText';
 import { QrCodeView, warmQrCode } from '../qr/QrCodeView';
 import { QR_SCANNER_AVAILABLE, QrScanner } from '../qr/QrScanner';
-import { GlassBg, useLiquidGlassActive } from '../ui/LiquidGlass';
-import { AppBlurView } from '../ui/AppBlurView';
+import { OverlayButtonSurface } from '../ui/OverlayButtonSurface';
 import { isQrCached } from '../../utils/qrMatrix';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
@@ -241,7 +241,6 @@ function RoundButton({
   size?: number;
   children: React.ReactNode;
 }) {
-  const glassActive = useLiquidGlassActive();
   return (
     <Pressable
       onPress={onPress}
@@ -253,11 +252,9 @@ function RoundButton({
         { width: size, height: size, borderRadius: size / 2, transform: [{ scale: pressed ? 0.92 : 1 }] },
       ]}
     >
-      {glassActive ? (
-        <GlassBg borderRadius={size / 2} glassStyle="regular" control interactive colorScheme="dark" />
-      ) : (
-        <AppBlurView intensity={36} role="scrim" tint="dark" style={StyleSheet.absoluteFill} />
-      )}
+      {/* Not our capturing glass on iOS: these slide in and out and sit over an emoji field that never
+          stops moving, so each one re-captured on every frame. See `OverlayButtonSurface`. */}
+      <OverlayButtonSurface radius={size / 2} />
       {children}
     </Pressable>
   );
@@ -544,35 +541,61 @@ function ProfileQrOverlay({
   const cardPad = 22;
   const qrSize = cardW - cardPad * 2;
 
-  const cardScale = card.interpolate({ inputRange: [0, 1], outputRange: [0.86, 1] });
-  const cardLift = card.interpolate({ inputRange: [0, 1], outputRange: [36, 0] });
+  // ── THE CODE STAYED AFTER THE SCREEN HAD GONE (Nov 2026) ──────────────────────────────────────
+  //
+  // Reported: on close the screen disappears, and the QR code in the middle is still there, fading on
+  // its own. The card had its own timeline: the background faded on a curve that starts slowly and
+  // ends fast, while the card shrank and sank on another for 300 ms. Over a light profile, once the
+  // dark gradient had thinned the white card vanished into the page, and the dark dots of the code,
+  // the most contrasted thing left, floated in the middle shrinking after the window had gone. So the
+  // card's alpha is now the background's times its own: it can never outlast the window, on the open
+  // or the close. The shrink and the sink stay, under a card that is already almost invisible.
+  //
+  // Memoized, like every interpolation here: built in the render, each render (the code becoming
+  // ready, the layout, the field mounting, the link menu) handed the native driver new nodes for
+  // views that were mid-animation.
+  const cardOpacity = useMemo(() => Animated.multiply(bg, cardFade), [bg, cardFade]);
+  const cardScale = useMemo(() => card.interpolate({ inputRange: [0, 1], outputRange: [0.86, 1] }), [card]);
+  const cardLift = useMemo(() => card.interpolate({ inputRange: [0, 1], outputRange: [36, 0] }), [card]);
   // Off their own edges and back: translation only, see `RoundButton`.
-  const topChromeY = chrome.interpolate({ inputRange: [0, 1], outputRange: [-(insets.top + 80), 0] });
-  const bottomChromeY = chrome.interpolate({ inputRange: [0, 1], outputRange: [insets.bottom + 110, 0] });
+  const topChromeY = useMemo(
+    () => chrome.interpolate({ inputRange: [0, 1], outputRange: [-(insets.top + 80), 0] }),
+    [chrome, insets.top],
+  );
+  const bottomChromeY = useMemo(
+    () => chrome.interpolate({ inputRange: [0, 1], outputRange: [insets.bottom + 110, 0] }),
+    [chrome, insets.bottom],
+  );
 
-  const nearStyle = {
+  const nearStyle = useMemo(() => ({
     transform: [
       { translateX: sway.interpolate({ inputRange: SWAY_IN, outputRange: SWAY_X }) },
       { translateY: sway.interpolate({ inputRange: SWAY_IN, outputRange: SWAY_Y }) },
     ],
-  };
-  const farStyle = {
+  }), [sway]);
+  const farStyle = useMemo(() => ({
     transform: [
       { translateX: sway.interpolate({ inputRange: SWAY_IN, outputRange: SWAY_X_FAR }) },
       { translateY: sway.interpolate({ inputRange: SWAY_IN, outputRange: SWAY_Y_FAR }) },
     ],
-  };
+  }), [sway]);
+  // A new element on every render defeated `QrCodeView`'s memo, so each render of this screen redrew
+  // the code's thousand dots.
+  const qrCenter = useMemo(
+    () => <RNText allowFontScaling={false} style={emojiTextStyle(Math.round(qrSize * 0.12))}>{emoji}</RNText>,
+    [qrSize, emoji],
+  );
   // No hardware layer on the fields: measured with and without, both 0 janky frames of ~245 in 4 s at
   // rest, and a layer would hold a screen-sized texture per field for as long as the screen is open.
   const fieldBox = { position: 'absolute' as const, left: -OVERHANG_X, top: -OVERHANG_Y, width: fieldW, height: fieldH };
 
-  const menuStyle = {
+  const menuStyle = useMemo(() => ({
     opacity: menuAnim,
     transform: [
       { translateY: menuAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) },
       { scale: menuAnim.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) },
     ],
-  };
+  }), [menuAnim]);
 
   const bottomY = insets.bottom + 24;
 
@@ -605,7 +628,7 @@ function ProfileQrOverlay({
       <Animated.View
         style={[
           styles.cardWrap,
-          { opacity: cardFade, transform: [{ translateY: cardLift }, { scale: cardScale }] },
+          { opacity: cardOpacity, transform: [{ translateY: cardLift }, { scale: cardScale }] },
         ]}
         pointerEvents="box-none"
       >
@@ -623,7 +646,7 @@ function ProfileQrOverlay({
               value={url}
               size={qrSize}
               color={ink}
-              center={<RNText allowFontScaling={false} style={emojiTextStyle(Math.round(qrSize * 0.12))}>{emoji}</RNText>}
+              center={qrCenter}
             />
           ) : (
             // Never seen: the screen does not show until the code exists (see `codeReady`).

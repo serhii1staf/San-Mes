@@ -531,7 +531,6 @@ const ru: Record<string, string> = {
   'chat.composer.send_a11y': 'Отправить',
   'chat.composer.save_a11y': 'Сохранить',
   'chat.viewer.download_a11y': 'Скачать',
-  'chat.header.typing': 'печатает…',
   'chat.viewer.save_denied': 'Нет доступа к галерее. Его можно разрешить в настройках.',
   'chat.search_placeholder': 'Поиск по сообщениям...',
   'chat.editing': 'Редактирование',
