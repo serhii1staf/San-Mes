@@ -117,12 +117,118 @@ async function tg<T>(
   return { result: (body.result ?? null) as T | null, detail: '' };
 }
 
+// ── TELEGRAM'S FILE PATHS EXPIRE; OUR COPY DOES NOT (Nov 2026) ─────────────
+//
+// Reported: stickers sent a while ago disappear, for both people in the chat. A sticker URL named a
+// Telegram `file_path`, and Telegram guarantees one for about an hour; after that `getFile` has to be
+// called again with the file id for a new one. Only the path was kept, so once it expired this proxy
+// answered 502 and the sticker became an empty box in every chat it had been sent to.
+//
+// Now a sticker's bytes are kept in R2 (the media bucket, under `tg-stickers/<path>`) the first time
+// anyone fetches them, and an import copies its whole pack right away. New URLs also carry the file
+// id, so a sticker whose copy is missing can still be fetched by a fresh path. An old URL without an
+// id cannot be recovered once Telegram has dropped its path: it answers 410 Gone.
+const R2_PREFIX = 'tg-stickers/';
+/** Telegram's own limits are 512 KB for a static sticker and 64 KB for an animated one. */
+const MAX_STICKER_BYTES = 4 * 1024 * 1024;
+/** The Lottie JSON inside a `.tgs` is several times the gzip. */
+const MAX_LOTTIE_JSON_BYTES = 16 * 1024 * 1024;
+const FILE_ID = /^[A-Za-z0-9_-]{8,256}$/;
+/**
+ * External requests one invocation may make, less a margin: 50 on the Free plan. Calls to R2 (and D1)
+ * count against a separate limit of 1,000 for Cloudflare services, so only Telegram calls are counted.
+ */
+const OUTBOUND_BUDGET = 48;
+
+/** A Telegram file path as `getFile` gives them (`stickers/file_123.webp`), and nothing else. */
+function isSafePath(p: string): boolean {
+  return !!p && /^[A-Za-z0-9_\-./]+$/.test(p) && !p.includes('..');
+}
+
+/**
+ * The content type for a path, from its extension. Telegram serves sticker files as
+ * `application/octet-stream`, which `expo-image` refuses to decode; the path comes from Telegram's
+ * own `getFile` and is checked by `isSafePath`, so its extension can be trusted here. A `.tgs` is
+ * served as the Lottie JSON inside it.
+ */
+function stickerType(path: string): string {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.tgs')) return 'application/json';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  return 'image/webp';
+}
+
+/**
+ * The bytes behind a Telegram file path, or null when Telegram no longer has them.
+ *
+ * A `.tgs` is gunzipped here: it is plain gzip around Lottie JSON, which `lottie-react-native` (already
+ * in the app) renders as it is. Nothing is transcoded. Buffered rather than streamed, so the same
+ * bytes can go to the client and into R2; a sticker is small enough for that.
+ */
+async function fetchStickerBytes(env: Env, path: string): Promise<ArrayBuffer | null> {
+  if (!env.TELEGRAM_BOT_TOKEN) return null;
+  let res: Response;
+  try {
+    res = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${path}`);
+  } catch {
+    return null;
+  }
+  if (!res.ok || !res.body) return null;
+  if (Number(res.headers.get('content-length') || '0') > MAX_STICKER_BYTES) return null;
+  try {
+    const lottie = path.toLowerCase().endsWith('.tgs');
+    const body = lottie ? res.body.pipeThrough(new DecompressionStream('gzip')) : res.body;
+    const bytes = await new Response(body).arrayBuffer();
+    const max = lottie ? MAX_LOTTIE_JSON_BYTES : MAX_STICKER_BYTES;
+    return bytes.byteLength > 0 && bytes.byteLength <= max ? bytes : null;
+  } catch {
+    // A `.tgs` that is not gzip, or a body cut off in transit: nothing a renderer could use.
+    return null;
+  }
+}
+
+function stickerResponse(body: ReadableStream | ArrayBuffer, type: string): Response {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'content-type': type,
+      // The bytes behind a path never change, so clients and proxies may keep them for good.
+      'cache-control': 'public, max-age=31536000, immutable',
+      'access-control-allow-origin': '*',
+    },
+  });
+}
+
+/** Copies an import's stickers into R2, a few at a time, skipping any already there. */
+async function keepStickers(env: Env, paths: string[]): Promise<void> {
+  const bucket = env.STICKERS;
+  if (!bucket || !env.TELEGRAM_BOT_TOKEN) return;
+  const AT_ONCE = 6;
+  for (let i = 0; i < paths.length; i += AT_ONCE) {
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(
+      paths.slice(i, i + AT_ONCE).map(async (path) => {
+        if (!isSafePath(path)) return;
+        const key = R2_PREFIX + path;
+        try {
+          if (await bucket.head(key)) return;
+          const bytes = await fetchStickerBytes(env, path);
+          if (bytes) await bucket.put(key, bytes, { httpMetadata: { contentType: stickerType(path) } });
+        } catch {
+          // Best effort: the file route copies anything missed the first time it is shown.
+        }
+      }),
+    );
+  }
+}
+
 // ── GET /v1/stickers/telegram?pack=<link|name> ────────────────────────────
 //
 // Deliberately UNAUTHENTICATED-tolerant on the data it touches: it reads a public sticker set and
 // writes nothing. It still runs behind the same router as everything else, so the global auth
 // middleware applies where configured.
-register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedUserId) => {
+register('GET', '/v1/stickers/telegram', async (req, env, ctx, _params, authedUserId) => {
   // AUTHENTICATED, unlike the file proxy below. The data is public, so this is not about secrecy — it is
   // about our Telegram rate limit and our egress. An open enumeration endpoint is a free way for anyone
   // to spend both, and the only caller that legitimately exists is a signed-in user tapping "+".
@@ -195,7 +301,9 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
   // sixty-sticker import a few extra seconds it can afford. But it is NOT a fix for the import failure,
   // and it must not be recorded as one.
   const CONCURRENCY = 8;
-  const paths: Array<{ path: string | null; emoji: string; rejected: string; lottie: boolean } | null> = [];
+  const paths: Array<{ path: string | null; id: string; emoji: string; rejected: string; lottie: boolean } | null> = [];
+  // Calls to Telegram so far (getStickerSet, then each getFile), for the copy's budget below.
+  let telegramCalls = 1;
   for (let i = 0; i < wanted.length; i += CONCURRENCY) {
     const slice = wanted.slice(i, i + CONCURRENCY);
     // eslint-disable-next-line no-await-in-loop
@@ -225,12 +333,16 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
         s.is_video && thumbId ? [thumbId, s.file_id] : [s.file_id, ...(thumbId ? [thumbId] : [])];
 
       let p: string | undefined;
+      // The file id that produced `p`, for the URL: with it the file route can ask for a fresh path
+      // once this one has expired (see "TELEGRAM'S FILE PATHS EXPIRE" below).
+      let pId = '';
       let lastSeen: string | undefined;
       for (const candidate of order) {
+        telegramCalls++;
         const got = (await tg<{ file_path?: string }>(env, 'getFile', { file_id: candidate })).result;
         const fp = got?.file_path;
         if (fp) lastSeen = fp;
-        if (usable(fp)) { p = fp; break; }
+        if (usable(fp)) { p = fp; pId = FILE_ID.test(candidate) ? candidate : ''; break; }
       }
       // Nothing usable: keep the last path we DID see, so the rejection below can name its format
       // instead of reporting unresolved for a file that resolved perfectly well and was merely
@@ -243,17 +355,19 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
       // answer is a better fallback or a new renderer. See the 422 below.
       if (!p || (!STATIC_EXT.test(p) && !LOTTIE_EXT.test(p))) {
         const ext = p ? (p.match(/\.[a-z0-9]+$/i)?.[0] || 'no-ext') : 'unresolved';
-        return { path: null as string | null, emoji: s.emoji || '', rejected: ext, lottie: false };
+        return { path: null as string | null, id: '', emoji: s.emoji || '', rejected: ext, lottie: false };
       }
-      return { path: p as string | null, emoji: s.emoji || '', rejected: '', lottie: LOTTIE_EXT.test(p) };
+      return { path: p as string | null, id: pId, emoji: s.emoji || '', rejected: '', lottie: LOTTIE_EXT.test(p) };
       }),
     );
     paths.push(...settled);
   }
 
   const origin = url.origin;
-  const stickers = paths
-    .filter((p): p is { path: string; emoji: string; rejected: string; lottie: boolean } => !!p && !!p.path)
+  const resolved = paths.filter(
+    (p): p is { path: string; id: string; emoji: string; rejected: string; lottie: boolean } => !!p && !!p.path,
+  );
+  const stickers = resolved
     // The URL points at US, never at Telegram — see the note above about the token being embedded in
     // Telegram's own download URLs.
     .map((p) => ({
@@ -261,8 +375,12 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
       // holding just the url - a stored sticker, a chat message, an image cell - can still tell it
       // needs a Lottie renderer. The alternative was a parallel kind field that every layer would
       // have to remember to pass along, and one that forgets shows a blank cell.
+      //
+      // `id` is Telegram's file id: useless without our bot token, and what lets the file route get
+      // a fresh path for this sticker after the one in the URL has expired.
       url:
         `${origin}/v1/stickers/telegram/file?path=${encodeURIComponent(p.path)}` +
+        (p.id ? `&id=${encodeURIComponent(p.id)}` : '') +
         (p.lottie ? '&fmt=lottie' : ''),
       emoji: p.emoji,
       kind: p.lottie ? 'lottie' : 'image',
@@ -321,6 +439,17 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
   // The 422 below uses `fail`, which DOES wrap. That asymmetry is what made the bug look like a format
   // problem: genuine errors arrived intact and legible, while success arrived indistinguishable from the
   // one error that has no detail to print.
+  //
+  // The pack's bytes go into R2 while its paths are fresh, after the answer has been sent, so the
+  // import is no slower. A sticker this misses is copied by the file route the first time it is shown.
+  //
+  // Within what is left of this request's external budget (`OUTBOUND_BUDGET`): the import has already
+  // spent one per Telegram call. Measured on a 34-sticker pack (35 calls), exactly the 15 the limit
+  // left were copied and the rest failed. The rest are copied by the file route, each in its own
+  // request, and a sticker whose path expires first is fetched again by its file id.
+  const copyBudget = Math.max(0, OUTBOUND_BUDGET - telegramCalls);
+  ctx.waitUntil(keepStickers(env, resolved.map((p) => p.path).slice(0, copyBudget)));
+
   return ok(req, {
     name: set.name,
     title: set.title,
@@ -342,84 +471,58 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
 // a PUBLIC Telegram sticker set, reachable by anyone from Telegram directly, addressed by a
 // content-addressed path this route cannot be talked out of. `immutable` caching means Cloudflare's edge
 // absorbs repeats, so it cannot be used as an open relay of any volume either.
-register('GET', '/v1/stickers/telegram/file', async (req, env) => {
+//
+// Served from our R2 copy when there is one, else from Telegram, which is then copied. See
+// "TELEGRAM'S FILE PATHS EXPIRE" above for why the copy exists.
+register('GET', '/v1/stickers/telegram/file', async (req, env, ctx) => {
   const url = new URL(req.url);
   const path = url.searchParams.get('path') || '';
   // Telegram file paths look like `stickers/file_123.webp`. Refuse traversal, absolute URLs and
   // anything with a character that has no business in one.
-  if (!path || !/^[A-Za-z0-9_\-./]+$/.test(path) || path.includes('..')) {
-    return fail(req, 'invalid path', 400);
-  }
+  if (!isSafePath(path)) return fail(req, 'invalid path', 400);
+  // Telegram's file id, on URLs made since Nov 2026 (see "TELEGRAM'S FILE PATHS EXPIRE" above).
+  const fileId = url.searchParams.get('id') || '';
+  if (fileId && !FILE_ID.test(fileId)) return fail(req, 'invalid id', 400);
   // NOTE: `fmt=lottie` on the URL is informational for the CLIENT, not an instruction to this route. What
-  // gets gunzipped is decided by the path's own extension below, so a tampered `fmt` cannot make this
-  // route mis-handle a file.
+  // gets gunzipped is decided by the path's own extension, so a tampered `fmt` cannot make this route
+  // mis-handle a file.
+  const type = stickerType(path);
+  const key = R2_PREFIX + path;
+
+  // 1. Our copy. Keyed by the path in the URL, so a sticker keeps answering at the URL it was sent
+  //    with, whatever path Telegram gives the same file later.
+  if (env.STICKERS) {
+    try {
+      const kept = await env.STICKERS.get(key);
+      if (kept) return stickerResponse(kept.body, type);
+    } catch {
+      // R2 unavailable: Telegram below, as before the copy existed.
+    }
+  }
   if (!env.TELEGRAM_BOT_TOKEN) return fail(req, 'sticker import not configured', 503);
 
-  const upstream = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${path}`);
-  if (!upstream.ok || !upstream.body) return fail(req, 'sticker unavailable', 502);
-
-  // Streamed rather than buffered: a sticker is small, but streaming costs nothing and keeps the
-  // isolate's memory flat regardless of what a pack contains.
-  //
-  // Cached hard and immutably. A Telegram `file_path` is content-addressed — the bytes behind one never
-  // change — so this can sit on Cloudflare's edge for a year and every import after the first is served
-  // without touching Telegram at all. That also means the picker keeps working if Telegram is briefly
-  // unreachable.
-  // ── CONTENT TYPE COMES FROM THE EXTENSION, NOT FROM TELEGRAM ──────────────
-  //
-  // Verified against the live endpoint: Telegram serves sticker files as `application/octet-stream`.
-  // Passing that through would hand `expo-image` a blob with no declared image type, which is a decode
-  // refusal on both platforms — every imported sticker would have arrived as an empty cell.
-  //
-  // The extension is trustworthy here in a way it usually is not: the path was produced by Telegram's own
-  // `getFile` and is validated by the regex above, so it is not user input being sniffed.
-  const lower = path.toLowerCase();
-
-  // ── `.tgs` IS GUNZIPPED HERE, AND THAT IS THE WHOLE TRICK ─────────────────
-  //
-  // A `.tgs` is plain gzip around Lottie JSON. So an animated Telegram sticker does not need
-  // transcoding, rasterizing or a native binary — it needs `gunzip`, which the Workers runtime provides
-  // as `DecompressionStream('gzip')`. Out comes ordinary Lottie JSON, which `lottie-react-native` (already
-  // a dependency of the app) renders directly.
-  //
-  // This is why the ready-made tools did not apply: every `.tgs`→GIF converter on GitHub rasterizes with
-  // rlottie or ffmpeg or headless Chrome, none of which can run in a Worker. The reusable part was never
-  // the converter, it was the renderer we already ship — so nothing is converted at all.
-  //
-  // Streamed, so a Worker never holds a whole animation in memory, and cached `immutable` exactly like the
-  // image path: the `file_path` is content-addressed, so the decompressed bytes are as permanent as the
-  // compressed ones.
-  if (lower.endsWith('.tgs')) {
-    let json: ReadableStream<Uint8Array>;
-    try {
-      json = upstream.body.pipeThrough(new DecompressionStream('gzip'));
-    } catch {
-      // A `.tgs` that is not actually gzipped is malformed. Reported rather than served as garbage that
-      // the renderer would fail on with no explanation.
-      return fail(req, 'sticker not decodable', 502);
-    }
-    return new Response(json, {
-      status: 200,
-      headers: {
-        'content-type': 'application/json',
-        'cache-control': 'public, max-age=31536000, immutable',
-        'access-control-allow-origin': '*',
-      },
-    });
+  // 2. Telegram, by the path in the URL; then, when the URL carries the file id, by a fresh path. The
+  //    fresh one must be the same kind of file, or the bytes would be stored and served under the
+  //    wrong type.
+  let bytes = await fetchStickerBytes(env, path);
+  if (!bytes && fileId) {
+    const fresh = (await tg<{ file_path?: string }>(env, 'getFile', { file_id: fileId })).result?.file_path || '';
+    if (isSafePath(fresh) && stickerType(fresh) === type) bytes = await fetchStickerBytes(env, fresh);
   }
+  // Gone for good without an id; with one, Telegram may only be failing for now.
+  if (!bytes) return fail(req, 'sticker unavailable', fileId ? 404 : 410);
 
-  const type = lower.endsWith('.png')
-    ? 'image/png'
-    : lower.endsWith('.jpg') || lower.endsWith('.jpeg')
-      ? 'image/jpeg'
-      : 'image/webp';
-
-  return new Response(upstream.body, {
-    status: 200,
-    headers: {
-      'content-type': type,
-      'cache-control': 'public, max-age=31536000, immutable',
-      'access-control-allow-origin': '*',
-    },
-  });
+  // 3. Keep it, after answering.
+  if (env.STICKERS) {
+    const bucket = env.STICKERS;
+    // Its own buffer: the response below reads `bytes` while this write is still running.
+    const copy = bytes.slice(0);
+    ctx.waitUntil(
+      bucket.put(key, copy, { httpMetadata: { contentType: type } }).then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+  }
+  return stickerResponse(bytes, type);
 });

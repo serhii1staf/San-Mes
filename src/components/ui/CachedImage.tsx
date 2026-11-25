@@ -275,6 +275,13 @@ interface CachedImageProps {
   /** Forwarded after our proxy-fallback + gauge-release runs. */
   onError?: (event: ImageErrorEventData) => void;
   /**
+   * Fired when the image cannot be shown: the load failed and nothing else will be tried. `onError`
+   * also fires for the first of the two routes (proxy, then direct), so it cannot tell a retry from
+   * the end. For a sticker (no frame, transparent) that is the difference between a short wait and
+   * an invisible hole, which is what callers use this for.
+   */
+  onFailed?: () => void;
+  /**
    * OPT-IN shimmer placeholder. When omitted/falsy (the default for every
    * existing caller) the rendered output is byte-for-byte unchanged — the
    * `<Image>` is the single returned node with identical props, no wrapper.
@@ -330,6 +337,7 @@ export const CachedImage = memo(function CachedImage({
   autoplay,
   skeleton,
   progressive,
+  onFailed,
   // `paced` is still destructured, with nothing reading it, ON PURPOSE: it keeps
   // the word out of `...props` and therefore off the underlying expo-image, so a
   // stale call site that still passes it degrades to "no pacing" instead of
@@ -444,7 +452,7 @@ export const CachedImage = memo(function CachedImage({
     // `autoplay` is forwarded, not dropped. The GIF grid passes `false` to keep sixty cells still, and a
     // Lottie that ignored it would animate sixty vector timelines at once — worse than the animated-GIF
     // grid those cells were already changed to avoid.
-    return <LottieSticker uri={uri} style={style} autoplay={autoplay} />;
+    return <LottieSticker uri={uri} style={style} autoplay={autoplay} onFailed={onFailed} />;
   }
 
   let finalUri = uri;
@@ -534,7 +542,8 @@ export const CachedImage = memo(function CachedImage({
   const handleError = (e: ImageErrorEventData) => {
     // One retry by the other route: the original after a proxy failure, or the proxy after a direct
     // Giphy failure (`giphyDirect`). `proxyFailed` stays set, so a second failure ends there.
-    if (!noProxy && !proxyFailed && (finalUri !== uri || giphyDirect)) {
+    const willRetry = !noProxy && !proxyFailed && (finalUri !== uri || giphyDirect);
+    if (willRetry) {
       setProxyFailed(true);
     }
     // Release the in-flight decode counter on error too — otherwise a
@@ -544,6 +553,7 @@ export const CachedImage = memo(function CachedImage({
       pendingHere.current = false;
     }
     externalOnError?.(e);
+    if (!willRetry) onFailed?.();
   };
 
   // ── OPT-IN skeleton path ──────────────────────────────────────────────────

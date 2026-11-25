@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, useImperativeHandle } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, InteractionManager, ScrollView, Dimensions, Keyboard, AppState, type LayoutChangeEvent } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import { FlashList, type FlashListRef } from '@shopify/flash-list';
+import { FlashList, useRecyclingState, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
@@ -35,6 +35,7 @@ import { AnimatedGifIcon } from '../../src/components/chat/AnimatedGifIcon';
 import { AnimatedKeyboardIcon } from '../../src/components/chat/AnimatedKeyboardIcon';
 import { parseGif, GiphyItem } from '../../src/services/giphy';
 import { encodeReply, parseReply } from '../../src/utils/commentReply';
+import { isCutoutCapableUrl } from '../../src/utils/mediaKind';
 import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
 import { getRecentGif, pushRecentGif, removeRecentGif } from '../../src/services/recentGif';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
@@ -168,6 +169,11 @@ function sameHeaderPost(a: any, b: any): boolean {
     !!pa?.is_verified === !!pb?.is_verified
   );
 }
+
+const commentGifStyles = StyleSheet.create({
+  // The GIF's own 160 pt box, so the row keeps its height.
+  gone: { width: 160, height: 160, borderRadius: 14, alignItems: 'center', justifyContent: 'center', gap: 4, padding: 8 },
+});
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'spam', labelKey: 'report.cat.spam' },
@@ -342,6 +348,11 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
   // staggered-reveal hook below is always called (rules of hooks). Cheap.
   const parsed = parseReply(item.content || '');
   const gif = parseGif(parsed.body);
+  // A GIF or sticker that cannot load says so (see `SingleChatImage` in the chat): an imported Telegram
+  // sticker from before the Worker kept their bytes points at an expired Telegram path. Keyed by the
+  // GIF, because this row is recycled onto other comments.
+  const [gifFailed, setGifFailed] = useRecyclingState(() => false, [gif]);
+  const onGifFailed = useCallback(() => setGifFailed(true), [setGifFailed]);
   // GIF-paced reveal: animated GIFs cost ~100-180ms to decode, so the
   // one-per-FRAME photo pump starts them faster than they finish and a thread
   // with several GIF comments lands a decode burst (the recurring ~110ms x10
@@ -460,8 +471,15 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
         {gif ? null : <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>}
         {gif ? (
           <Pressable onPress={() => onImagePress(gif, item)} onLongPress={openMenuHere} delayLongPress={300} style={{ marginTop: 6 }}>
-            {gifReveal ? (
-              <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" autoplay={gifActive} />
+            {gifFailed ? (
+              <View style={[commentGifStyles.gone, { backgroundColor: theme.colors.background.secondary }]}>
+                <MaterialIcons name="broken-image" size={22} color={theme.colors.text.tertiary} />
+                {isCutoutCapableUrl(gif) ? (
+                  <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ fontSize: 11 }}>{t('stickers.unavailable')}</Text>
+                ) : null}
+              </View>
+            ) : gifReveal ? (
+              <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" autoplay={gifActive} onFailed={onGifFailed} />
             ) : (
               <Skeleton width={160} height={160} radius={14} />
             )}

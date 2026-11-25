@@ -34,9 +34,12 @@ export function LottieSticker({
   uri,
   style,
   autoplay,
+  onFailed,
 }: {
   uri: string;
   style?: StyleProp<ImageStyle>;
+  /** The animation could not be loaded (the file is gone, or it is not Lottie). See CachedImage. */
+  onFailed?: () => void;
   /**
    * `false` holds the sticker on its first frame.
    *
@@ -80,6 +83,7 @@ export function LottieSticker({
       progress={play ? undefined : 0}
       resizeMode="contain"
       style={style as any}
+      onAnimationFailure={onFailed ? () => onFailed() : undefined}
     />
   );
 }

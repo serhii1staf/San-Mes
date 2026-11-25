@@ -35,6 +35,12 @@ export interface Env {
    */
   TELEGRAM_BOT_TOKEN?: string;
   /**
+   * The media bucket (`san`), where imported Telegram stickers are kept under `tg-stickers/`.
+   * Telegram's file paths expire; this copy is what keeps a sent sticker visible. Optional: without
+   * the binding the sticker route goes to Telegram every time, as it did before. See routes/stickers.ts.
+   */
+  STICKERS?: R2Bucket;
+  /**
    * NVIDIA API key for San AI — `wrangler secret put NVIDIA_API_KEY`. Used only by
    * `POST /v1/ai/complete` (routes/ai.ts), never sent to a client. Optional: without it that route
    * answers 503 `ai_not_configured`.

@@ -908,8 +908,15 @@ function fitChatImageBox(natW: number, natH: number): { w: number; h: number } {
  * exceed MAX_CONCURRENT whenever a wave overlapped a slow decode, which is how a snapshot showed
  * `pendingDecodes: 6` against a cap of 3.
  */
+const chatImgStyles = StyleSheet.create({
+  // An unavailable sticker: centred in the box it already had.
+  gone: { alignItems: 'center', justifyContent: 'center', gap: 4, padding: 8 },
+  goneText: { fontSize: 11, lineHeight: 14 },
+});
+
 function SingleChatImage({ uri, isVisible, onPress, cutout, uploading, reportDimsFor, onDecoded }: { uri: string; isVisible?: boolean; onPress: () => void; cutout?: boolean; uploading?: boolean; reportDimsFor?: string; onDecoded?: () => void }) {
   const theme = useTheme();
+  const t = useT();
   // Seed from the persisted dimension cache so a previously-seen photo mounts
   // at the correct aspect-ratio box on the very first frame — this removes the
   // "container changes size / photo reloads every time I open the chat" jump.
@@ -1003,6 +1010,28 @@ function SingleChatImage({ uri, isVisible, onPress, cutout, uploading, reportDim
   // A failed decode must release the slot too, or one broken URL holds a third of the pool until the
   // watchdog fires.
   const handleError = useCallback(() => { setLoading(false); onDecoded?.(); }, [setLoading, onDecoded]);
+  // ── A STICKER THAT CANNOT LOAD SAYS SO (Nov 2026) ─────────────────────────────────────────────
+  //
+  // Reported: stickers sent a while ago "disappear, become invisible". They are Telegram stickers
+  // imported before the Worker kept their bytes, and the Telegram path they point at has expired. A
+  // cut-out has no tile behind it, so a failed one was an empty transparent box. Same box, so the
+  // list does not move; only what is drawn in it changes. A photo keeps its tile and needs nothing.
+  const [failed, setFailed] = useRecyclingState(() => false, [uri]);
+  const handleFailed = useCallback(() => { if (cutout) setFailed(true); }, [cutout, setFailed]);
+  // A sticker that failed while the phone was offline loads again when the connection comes back:
+  // the image is remounted (`attempt` is its key). One that failed while online (gone for good) is
+  // left alone. Only a failed bubble selects `isOnline`, so a reconnect re-renders nothing else.
+  const online = useConnectivityStore((s) => (failed ? s.isOnline : true));
+  const [attempt, setAttempt] = useRecyclingState(() => 0, [uri]);
+  const wasOnlineRef = useRef(online);
+  useEffect(() => {
+    const cameBack = online && !wasOnlineRef.current;
+    wasOnlineRef.current = online;
+    if (cameBack && failed) {
+      setFailed(false);
+      setAttempt((n) => n + 1);
+    }
+  }, [online, failed, setFailed, setAttempt]);
   return (
     <Pressable onPress={onPress}>
       {/* Fixed-size rounded container holds the image AND a centered loading
@@ -1058,6 +1087,7 @@ function SingleChatImage({ uri, isVisible, onPress, cutout, uploading, reportDim
         backgroundColor: cutout ? 'transparent' : theme.colors.background.tertiary,
       }}>
         <CachedImage
+          key={attempt}
           uri={uri}
           style={{ width: '100%', height: '100%' }}
           resizeMode={cutout ? 'contain' : 'cover'}
@@ -1066,7 +1096,14 @@ function SingleChatImage({ uri, isVisible, onPress, cutout, uploading, reportDim
           autoplay={isVisible}
           onLoad={handleLoad}
           onError={handleError}
+          onFailed={handleFailed}
         />
+        {failed ? (
+          <View style={[StyleSheet.absoluteFill, chatImgStyles.gone, { backgroundColor: theme.colors.background.tertiary }]} pointerEvents="none">
+            <MaterialIcons name="broken-image" size={22} color={theme.colors.text.tertiary} />
+            <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={chatImgStyles.goneText}>{t('stickers.unavailable')}</Text>
+          </View>
+        ) : null}
         {loading && !cutout ? (
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
             <Skeleton width={'100%'} height={'100%'} radius={0} />
