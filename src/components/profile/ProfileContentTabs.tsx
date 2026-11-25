@@ -46,6 +46,7 @@ import { linkDisplayName } from '../../utils/linkKind';
 import { parseGif } from '../../services/giphy';
 import { FormattedText } from '../ui/FormattedText';
 import { useTransitionSettled } from '../../hooks/useTransitionSettled';
+import { useAmbientMotionAllowed } from '../../hooks/useAmbientMotionAllowed';
 import { ProfilePostCard } from './ProfilePostCard';
 import { useRestFlag, type ScrollRest } from './scrollRest';
 import { UI_RUNTIME_MAPPERS } from '../../utils/workletGuards';
@@ -411,8 +412,10 @@ function tickerLoop(v: Animated.Value, from: number): Animated.CompositeAnimatio
 function EmojiTicker({ visible }: { visible: boolean }) {
   const focused = useIsFocused();
   const reduceMotion = useReducedMotion();
+  // Low Power Mode too: it shows the glyph it is on and does not move.
+  const motionAllowed = useAmbientMotionAllowed();
   const v = useRef(new Animated.Value(0)).current;
-  const running = focused && visible && !reduceMotion;
+  const running = focused && visible && !reduceMotion && motionAllowed;
   useEffect(() => {
     if (!running) {
       v.stopAnimation();

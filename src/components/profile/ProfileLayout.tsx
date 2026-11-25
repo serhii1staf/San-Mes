@@ -40,6 +40,7 @@ import { kvGetJSONSync } from '../../services/kvStore';
 import { useEntityStore } from '../../services/entityStore';
 import { triggerHaptic } from '../../utils/haptics';
 import { useTransitionSettled } from '../../hooks/useTransitionSettled';
+import { useAmbientMotionAllowed } from '../../hooks/useAmbientMotionAllowed';
 import { useT } from '../../i18n/store';
 
 // ─── Scroll-driven values (same curves as the original screens) ─────────────
@@ -169,6 +170,8 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
   // still too. They are frosted over there anyway, and they resume where they were.
   const frostOn = useRestFlag(anim.rest, (y) => y > 36);
   const headerMoving = animate && !frostOn;
+  const motionAllowed = useAmbientMotionAllowed();
+  const bannerAnimated = !!bannerUrl && isAnimated(bannerUrl);
   // ── Telegram's profile scroll animation ────────────────────────────────────
   // As the profile scrolls, the avatar travels to the Dynamic Island on iPhone (shrinking and turning
   // black, so it merges into it) and slides out through the top of the screen elsewhere — the effect
@@ -223,6 +226,11 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
             style={{ width: '100%', height: '100%', transform: [{ translateX: bannerTransform.translateX }, { translateY: bannerTransform.translateY }, { scale: bannerTransform.scale }] }}
             resizeMode="cover"
             proxyWidth={Math.round(width)}
+            // A GIF banner plays only while the header is on screen and in the clear: not under the
+            // frost (where it also made our glass re-capture the card on every frame), not with
+            // another screen on top, and not in Low Power Mode or with Reduce Motion. Reported:
+            // "гифки в профиле… нужно, чтобы она не лагала". Still banners get no prop at all.
+            autoplay={bannerAnimated ? headerMoving && motionAllowed : undefined}
           />
           <LinearGradient colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '55']} style={StyleSheet.absoluteFill} pointerEvents="none" />
         </View>
@@ -254,7 +262,8 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
           top={topInset + DROPS_TOP}
           left={20 + 84 + 16}
           height={DROPS_HEIGHT}
-          active={headerMoving && !dropsAway}
+          // Still in Low Power Mode too (Reduce Motion is handled inside).
+          active={headerMoving && !dropsAway && motionAllowed}
         />
       ) : null}
 

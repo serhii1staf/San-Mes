@@ -50,7 +50,9 @@ import { useMessageGestures, useReplyIconStyle } from '../../src/hooks/useMessag
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { useBrowserStore } from '../../src/store/browserStore';
-import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
+import { ChatBackgroundLayer, isAnimatedUri } from '../../src/components/ui/ChatBackgroundLayer';
+import { useAmbientMotionAllowed } from '../../src/hooks/useAmbientMotionAllowed';
+import { useIsFocused } from '@react-navigation/native';
 import { ReplyJumpGlow } from '../../src/components/chat/ReplyJumpGlow';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { uploadChatImage } from '../../src/lib/supabase';
@@ -2098,6 +2100,54 @@ function resolveConversationLocally(id: string | undefined, paramParticipantId: 
   return { id, settled: false };
 }
 
+// ── A GIF WALLPAPER PLAYS ONLY WHEN NOTHING ELSE NEEDS THE FRAME (Nov 2026) ───────────────────────
+//
+// Reported: GIFs as a chat background lag the chat. A GIF wallpaper is full screen and decodes a frame
+// every few tens of milliseconds for as long as the chat is open, including while the list scrolls,
+// while the keyboard slides, and while another screen is pushed on top of the chat. It now holds still
+// at those moments and in Low Power Mode or with Reduce Motion (`useAmbientMotionAllowed`), and is
+// decoded smaller (see `GIF_WALLPAPER_PROXY_W`).
+//
+// The busy flag is a tiny store rather than screen state: it flips at every scroll start and stop and
+// every keyboard move, and a state change on this screen would re-render the whole screen to move one
+// image. Only `ChatWallpaper` subscribes.
+interface WallpaperPause {
+  set: (reason: 'scroll' | 'keyboard', busy: boolean) => void;
+  subscribe: (cb: () => void) => () => void;
+  isBusy: () => boolean;
+}
+function createWallpaperPause(): WallpaperPause {
+  let scroll = false;
+  let keyboard = false;
+  let busy = false;
+  const listeners = new Set<() => void>();
+  return {
+    set(reason, value) {
+      if (reason === 'scroll') scroll = value;
+      else keyboard = value;
+      const next = scroll || keyboard;
+      if (next === busy) return;
+      busy = next;
+      listeners.forEach((l) => l());
+    },
+    subscribe(cb) {
+      listeners.add(cb);
+      return () => { listeners.delete(cb); };
+    },
+    isBusy: () => busy,
+  };
+}
+
+const ChatWallpaper = React.memo(function ChatWallpaper({ uri, pause }: { uri: string; pause: WallpaperPause }) {
+  const animated = isAnimatedUri(uri);
+  // Still wallpapers subscribe to nothing, so they never re-render for any of this.
+  const busy = useSyncExternalStore(animated ? pause.subscribe : subscribeNothing, animated ? pause.isBusy : neverBusy);
+  const focused = useIsFocused();
+  const allowed = useAmbientMotionAllowed();
+  return <ChatBackgroundLayer uri={uri} style={StyleSheet.absoluteFill} animate={allowed && focused && !busy} />;
+});
+const neverBusy = () => false;
+
 export default function ChatScreen() {
   // FIRST hook, deliberately. See the note further down where the old local stamp used to live, and
   // the hook itself for why its position is the whole point of it.
@@ -2681,6 +2731,12 @@ export default function ChatScreen() {
   const captureKbHeight = useCallback((h: number) => {
     if (h > 1) lastKbHeightRef.current = h;
   }, []);
+  // A GIF wallpaper holds still while the list scrolls or the keyboard moves. See `ChatWallpaper`.
+  const wallpaperPauseRef = useRef<WallpaperPause | null>(null);
+  if (!wallpaperPauseRef.current) wallpaperPauseRef.current = createWallpaperPause();
+  const setWallpaperKeyboardBusy = useCallback((busy: boolean) => {
+    wallpaperPauseRef.current?.set('keyboard', busy);
+  }, []);
   // UI-thread mirrors of the panel state used by the animated styles below.
   // `liftSV` = 1 while the input bar must stay lifted above the panel (panel
   // open OR keyboard re-rising after a close). `emojiPanelSV` carries the
@@ -3216,6 +3272,11 @@ export default function ChatScreen() {
   const kbFrames = useSharedValue(0);
   useKeyboardHandler(
     {
+      // One call at the start and one at the end of each keyboard move, for the GIF wallpaper.
+      onStart: () => {
+        'worklet';
+        runOnJS(setWallpaperKeyboardBusy)(true);
+      },
       onMove: (e) => {
         'worklet';
         kbFrames.value = e.height;
@@ -3230,6 +3291,7 @@ export default function ChatScreen() {
         // Capture the settled keyboard height (once per transition) so the
         // emoji panel can match it. Guarded to ignore the close (height 0).
         runOnJS(captureKbHeight)(e.height);
+        runOnJS(setWallpaperKeyboardBusy)(false);
       },
     },
     [],
@@ -7251,12 +7313,14 @@ export default function ChatScreen() {
     if (!scrollPausedRef.current) {
       scrollPausedRef.current = true;
       setRevealScrollPaused(true);
+      wallpaperPauseRef.current?.set('scroll', true);
     }
     if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current);
     scrollIdleRef.current = setTimeout(() => {
       visTrackerRef.current?.setScrolling(false);
       scrollPausedRef.current = false;
       setRevealScrollPaused(false);
+      wallpaperPauseRef.current?.set('scroll', false);
       // ── OLDER PAGES ARE COMMITTED HERE, WHEN THE LIST IS STILL ───────────────
       //
       // This is the fix for "it throws me to the top", and it is about WHEN, not how much.
@@ -7508,9 +7572,9 @@ export default function ChatScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
-      {chromeReady && chatSettings.backgroundImage && (
-        <ChatBackgroundLayer uri={chatSettings.backgroundImage} style={StyleSheet.absoluteFill} />
-      )}
+      {chromeReady && chatSettings.backgroundImage && wallpaperPauseRef.current ? (
+        <ChatWallpaper uri={chatSettings.backgroundImage} pause={wallpaperPauseRef.current} />
+      ) : null}
 
       {/* Inverted list — newest message sits at the bottom with NO scrolling
           needed (exactly like the AI chat). This removes the open-at-top-then-
