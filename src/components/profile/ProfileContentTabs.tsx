@@ -213,15 +213,15 @@ function withLinkNames(text: string): string {
  *
  * A Telegram sticker that no longer loads used to leave a transparent 96 pt hole: a cut-out has no
  * frame, so a failed one is invisible. Stickers imported before their bytes were kept on our side
- * point at a Telegram path that expires. A cut-out loads without the resizing proxy, so its one
- * error is final; a GIF keeps the proxy and its frame, so a failed one still reads as a GIF.
+ * point at a Telegram path that expires. A GIF keeps its frame and badge, so a failed one still
+ * reads as a GIF and is left as it is.
  */
 const ReplyGif = memo(function ReplyGif({ uri, marginTop }: { uri: string; marginTop: number }) {
   const theme = useTheme();
   const t = useT();
   const cutout = isCutoutCapableUrl(uri);
   const [failed, setFailed] = useState(false);
-  const onError = useCallback(() => {
+  const onFailed = useCallback(() => {
     if (cutout) setFailed(true);
   }, [cutout]);
   if (failed) {
@@ -241,7 +241,7 @@ const ReplyGif = memo(function ReplyGif({ uri, marginTop }: { uri: string; margi
         cutout ? null : { backgroundColor: theme.colors.background.secondary },
       ]}
     >
-      <CachedImage uri={uri} style={styles.replyGifImg} resizeMode={cutout ? 'contain' : 'cover'} autoplay={false} noProxy={cutout} onError={onError} />
+      <CachedImage uri={uri} style={styles.replyGifImg} resizeMode={cutout ? 'contain' : 'cover'} autoplay={false} onFailed={onFailed} />
       {cutout ? null : (
         <View style={styles.gifBadge} pointerEvents="none">
           <Text variant="caption" weight="bold" color="#FFFFFF" style={styles.gifBadgeText}>GIF</Text>
@@ -761,7 +761,8 @@ const styles = StyleSheet.create({
   replyToText: { fontSize: 12, flex: 1 },
   replyGif: { width: REPLY_GIF, height: REPLY_GIF, borderRadius: 14, overflow: 'hidden' },
   replyGifImg: { width: REPLY_GIF, height: REPLY_GIF },
-  gifBadge: { position: 'absolute', left: 6, bottom: 6, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.5)' },
+  // Top corner: a GIF's own captions are burnt into its bottom edge.
+  gifBadge: { position: 'absolute', left: 6, top: 6, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.5)' },
   gifBadgeText: { fontSize: 10, lineHeight: 14 },
   mediaGone: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12 },
   mediaGoneText: { fontSize: 12 },

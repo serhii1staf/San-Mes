@@ -2,6 +2,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import { View, Pressable, FlatList, ActivityIndicator, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
 import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
 import { CachedImage } from '../ui/CachedImage';
+import { MaterialIcons } from '@expo/vector-icons';
 
 import { getTrendingGifs, getCachedTrending, setCachedTrending, GiphyItem } from '../../services/giphy';
 import { useT } from '../../i18n/store';
@@ -261,6 +262,7 @@ const styles = StyleSheet.create({
   // is passed in as a primitive and composed as a second style entry.
   cell: { width: CELL_W, height: CELL_W, borderRadius: 10, overflow: 'hidden', marginBottom: CELL_GAP },
   cellImg: { width: '100%', height: '100%' },
+  cellGone: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   list: { flex: 1 },
   listContent: { paddingTop: 10, paddingHorizontal: H_PAD },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 40 },
@@ -318,6 +320,12 @@ const GifCell = memo(function GifCell({
   // there is one mechanism instead of two. This component stays because the memoised Pressable is still
   // worth having, but it no longer owns a hook of its own — which is what made pacing unreachable from a
   // plain `renderItem` and is why the stickers grid shipped without it. See the note on `paced`.
+  //
+  // A cell whose image cannot load shows a broken-image mark instead of an empty square. That is what
+  // an imported Telegram sticker from before the Worker kept their bytes looks like once its Telegram
+  // path has expired; with the mark, the user can see which ones are gone and delete them (long press).
+  const [failed, setFailed] = useState(false);
+  const onFailed = useCallback(() => setFailed(true), []);
   return (
     <Pressable
       onPress={() => onSelect(item)}
@@ -372,7 +380,13 @@ const GifCell = memo(function GifCell({
           // A numeric `proxyWidth={CELL_W}` would fix the 800 px part and keep the single-host
           // funnel. Bypassing the proxy fixes both.
           noProxy
+          onFailed={onFailed}
         />
+      ) : null}
+      {failed ? (
+        <View style={styles.cellGone} pointerEvents="none">
+          <MaterialIcons name="broken-image" size={20} color="rgba(127,127,127,0.8)" />
+        </View>
       ) : null}
     </Pressable>
   );

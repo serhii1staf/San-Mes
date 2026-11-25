@@ -33,6 +33,13 @@ binding = "DB"
 database_name = "san-mes"
 database_id = "62428750-5f61-4ed8-9bd9-51241ad95d16"
 
+# Imported Telegram stickers, kept under `tg-stickers/` in the media bucket (src/routes/stickers.ts).
+# Telegram's file paths expire, so a sticker served only from Telegram vanished from every chat it
+# was sent in. Stickers are public set artwork; nothing else is written here by the Worker.
+[[r2_buckets]]
+binding = "STICKERS"
+bucket_name = "san"
+
 # ── Rate limits (src/guards.ts) ─────────────────────────────────────────────────────────────────
 #
 # Workers rate-limiting bindings: counted per Cloudflare location, in 10 or 60 s windows, approximate.
