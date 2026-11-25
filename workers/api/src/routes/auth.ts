@@ -421,12 +421,16 @@ register('DELETE', '/v1/auth/me', async (req, env, _ctx, _params, authedUserId) 
     env,
     `SELECT name FROM sqlite_master
       WHERE type = 'table'
-        AND name IN ('push_tokens','devices','blocked_users','mutation_dedup','reports')`,
+        AND name IN ('push_tokens','devices','blocked_users','mutation_dedup','reports','ai_usage')`,
   );
   const has = new Set(presentTables.map((r) => r.name));
 
   if (has.has('push_tokens')) {
     stmts.push({ sql: `DELETE FROM push_tokens WHERE user_id = ?`, params: [authedUserId] });
+  }
+  // San AI's daily request count (migration 0011, routes/ai.ts).
+  if (has.has('ai_usage')) {
+    stmts.push({ sql: `DELETE FROM ai_usage WHERE user_id = ?`, params: [authedUserId] });
   }
   if (has.has('devices')) {
     stmts.push({ sql: `DELETE FROM devices WHERE user_id = ?`, params: [authedUserId] });
