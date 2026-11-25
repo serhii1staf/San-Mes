@@ -40,6 +40,11 @@ import { parseImageUrls } from '../../lib/supabase';
 import { useIsBlocked } from '../../store/blockedUsersStore';
 import { useProfileAppearanceStore } from '../../store/profileAppearanceStore';
 import { stripMarkers } from '../../utils/previewText';
+import { parseReply } from '../../utils/commentReply';
+import { isCutoutCapableUrl } from '../../utils/mediaKind';
+import { linkDisplayName } from '../../utils/linkKind';
+import { parseGif } from '../../services/giphy';
+import { FormattedText } from '../ui/FormattedText';
 import { useTransitionSettled } from '../../hooks/useTransitionSettled';
 import { ProfilePostCard } from './ProfilePostCard';
 import { useRestFlag, type ScrollRest } from './scrollRest';
@@ -172,13 +177,87 @@ const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; on
   );
 });
 
+/** A GIF or sticker in «Ответы»: its first frame. A page of them animating at once is what weak phones drop frames on. */
+const REPLY_GIF = 96;
+
+/**
+ * A comment, read the way its thread reads it (src/utils/commentReply.ts): the `::re::` wrapper is
+ * the quote, a `::gif::` body is a GIF or a sticker, the rest is text.
+ *
+ * Reported: replies here showed "a link, gif, a link, then our Worker's API" instead of the GIF.
+ * This used `stripMarkers`, which returns nothing for a GIF, and then fell back to the stored string.
+ * It never falls back to the stored string now.
+ */
+function readReply(content: string): { replyUser?: string; quoted: string; gif: string | null; body: string } {
+  const parsed = parseReply(content || '');
+  const gif = parseGif(parsed.body);
+  return {
+    replyUser: parsed.replyUser,
+    quoted: parsed.replyGif ? 'GIF' : withLinkNames(parsed.replyText || ''),
+    gif,
+    body: gif ? '' : stripMarkers(parsed.body),
+  };
+}
+
+/**
+ * Plain text with each link shown by its name (the service, or the site's domain), the way truncated
+ * FormattedText shows them. For the one-line and two-line quotes, which are plain Text: a post that
+ * shares a profile printed its whole `https://san-m-app.com/profile/<uuid>` over two lines.
+ */
+function withLinkNames(text: string): string {
+  return text.indexOf('://') === -1 ? text : text.replace(/https?:\/\/[^\s]+/g, (u) => linkDisplayName(u));
+}
+
+/**
+ * The first frame of a GIF or sticker reply, or a short note once it cannot be loaded.
+ *
+ * A Telegram sticker that no longer loads used to leave a transparent 96 pt hole: a cut-out has no
+ * frame, so a failed one is invisible. Stickers imported before their bytes were kept on our side
+ * point at a Telegram path that expires. A cut-out loads without the resizing proxy, so its one
+ * error is final; a GIF keeps the proxy and its frame, so a failed one still reads as a GIF.
+ */
+const ReplyGif = memo(function ReplyGif({ uri, marginTop }: { uri: string; marginTop: number }) {
+  const theme = useTheme();
+  const t = useT();
+  const cutout = isCutoutCapableUrl(uri);
+  const [failed, setFailed] = useState(false);
+  const onError = useCallback(() => {
+    if (cutout) setFailed(true);
+  }, [cutout]);
+  if (failed) {
+    return (
+      <View style={[styles.mediaGone, { marginTop, backgroundColor: theme.colors.background.secondary }]}>
+        <Feather name="image" size={13} color={theme.colors.text.tertiary} />
+        <Text variant="caption" color={theme.colors.text.tertiary} style={styles.mediaGoneText}>{t('stickers.unavailable')}</Text>
+      </View>
+    );
+  }
+  return (
+    <View
+      style={[
+        styles.replyGif,
+        { marginTop },
+        // A sticker is drawn to its own edges: no frame and no crop.
+        cutout ? null : { backgroundColor: theme.colors.background.secondary },
+      ]}
+    >
+      <CachedImage uri={uri} style={styles.replyGifImg} resizeMode={cutout ? 'contain' : 'cover'} autoplay={false} noProxy={cutout} onError={onError} />
+      {cutout ? null : (
+        <View style={styles.gifBadge} pointerEvents="none">
+          <Text variant="caption" weight="bold" color="#FFFFFF" style={styles.gifBadgeText}>GIF</Text>
+        </View>
+      )}
+    </View>
+  );
+});
+
 const ReplyRow = memo(function ReplyRow({ reply }: { reply: ProfileReply }) {
   const theme = useTheme();
   const t = useT();
   const ago = useShortAgo();
   const parentAuthor = reply.posts?.profiles?.display_name || reply.posts?.profiles?.username || '';
-  const parentText = stripMarkers(reply.posts?.content || '') || (reply.posts?.image_url ? t('chat.photo') : '');
-  const body = stripMarkers(reply.content) || reply.content;
+  const parentText = withLinkNames(stripMarkers(reply.posts?.content || '')) || (reply.posts?.image_url ? t('chat.photo') : '');
+  const { replyUser, quoted, gif, body } = useMemo(() => readReply(reply.content), [reply.content]);
   return (
     <Pressable
       onPress={() => openPost(reply.post_id)}
@@ -198,7 +277,27 @@ const ReplyRow = memo(function ReplyRow({ reply }: { reply: ProfileReply }) {
           ) : null}
         </View>
       ) : null}
-      <Text variant="body" numberOfLines={6} style={{ marginTop: reply.posts ? 8 : 0, fontSize: 14, lineHeight: 20 }}>{body}</Text>
+      {replyUser ? (
+        // The comment this one answers, in one line, like the thread's own quote.
+        <View style={[styles.replyTo, { marginTop: reply.posts ? 8 : 0 }]}>
+          <Feather name="corner-down-right" size={12} color={theme.colors.text.tertiary} />
+          <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={styles.replyToUser}>
+            @{replyUser}
+          </Text>
+          {quoted ? (
+            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={styles.replyToText}>{quoted}</Text>
+          ) : null}
+        </View>
+      ) : null}
+      {gif ? (
+        <ReplyGif key={gif} uri={gif} marginTop={reply.posts || replyUser ? 8 : 0} />
+      ) : body ? (
+        <View style={{ marginTop: reply.posts || replyUser ? 8 : 0 }}>
+          {/* The thread renders comments with FormattedText too, so a link, a mention or an emoji
+              reads the same here. Truncated text draws links as coloured text, not chips. */}
+          <FormattedText numberOfLines={6} style={styles.replyBody}>{body}</FormattedText>
+        </View>
+      ) : null}
       <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 6, fontSize: 11 }}>{ago(reply.created_at)}</Text>
     </Pressable>
   );
@@ -657,6 +756,16 @@ const styles = StyleSheet.create({
   tickerGlyph: { position: 'absolute', fontSize: 20, lineHeight: 26, textAlign: 'center', includeFontPadding: false },
   replyCard: { borderRadius: 24, borderWidth: 1, padding: 12, marginBottom: 12 },
   quote: { borderLeftWidth: 3, borderRadius: 10, paddingVertical: 6, paddingHorizontal: 10 },
+  replyTo: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  replyToUser: { fontSize: 12, flexShrink: 0, maxWidth: '60%' },
+  replyToText: { fontSize: 12, flex: 1 },
+  replyGif: { width: REPLY_GIF, height: REPLY_GIF, borderRadius: 14, overflow: 'hidden' },
+  replyGifImg: { width: REPLY_GIF, height: REPLY_GIF },
+  gifBadge: { position: 'absolute', left: 6, bottom: 6, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.5)' },
+  gifBadgeText: { fontSize: 10, lineHeight: 14 },
+  mediaGone: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12 },
+  mediaGoneText: { fontSize: 12 },
+  replyBody: { fontSize: 14, lineHeight: 20 },
   empty: { alignItems: 'center', paddingVertical: 32, gap: 8 },
   mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 3 },
   mediaCell: { borderRadius: 10, overflow: 'hidden' },

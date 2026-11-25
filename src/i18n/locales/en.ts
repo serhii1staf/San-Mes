@@ -1202,6 +1202,7 @@ const en: Record<string, string> = {
   'stickers.delete_group_title': 'Delete this whole import?',
   'stickers.delete_group_msg': '{count} items from {date} will be removed. Messages already sent are unchanged.',
   'stickers.view_pack': 'Open “{pack}”',
+  'stickers.unavailable': 'Sticker unavailable',
 
   // ─── Keys that were only ever reachable through their Russian fallback ───────
   //
