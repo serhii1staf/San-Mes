@@ -219,9 +219,10 @@ async function fanOutNewMessage(
   const { conversationId, id, text, imgW, imgH, now } = m;
   const authedUserId = m.senderId;
   try {
-  const otherParticipants = await query<{ user_id: string }>(
+  // `muted` (migration 0010): the recipient muted this chat, so no push below.
+  const otherParticipants = await query<{ user_id: string; muted: number | null }>(
     env,
-    `SELECT user_id FROM conversation_participants
+    `SELECT user_id, muted FROM conversation_participants
       WHERE conversation_id = ? AND user_id != ?`,
     [conversationId, authedUserId],
   );
@@ -275,6 +276,9 @@ async function fanOutNewMessage(
     // Off-screen / backgrounded recipients get a real push too. Clean the
     // body so storage markers (::gif::, ::re:: …) never leak into the banner.
     //
+    // A recipient who muted this chat gets no push: the realtime ping above still updates their
+    // chat list and badge, and the app already shows no alert for a muted chat.
+    if (Number(row.muted) === 1) continue;
     // At most a burst per sender and recipient (guards.ts, `RL_PUSH`): past it the message is still
     // stored and still reaches the open app over realtime, but no more banners, so a flood cannot
     // fill someone's lock screen. Ordinary fast typing stays well under it.

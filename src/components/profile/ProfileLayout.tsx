@@ -11,7 +11,7 @@
  * are opacity / translate on the native driver; the media grid is read from the small per-chat tail
  * cache AFTER the push transition, never on the open frame.
  */
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Pressable,
@@ -20,7 +20,6 @@ import {
   Platform,
   InteractionManager,
   useWindowDimensions,
-  type LayoutChangeEvent,
 } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -33,11 +32,8 @@ import { CachedImage } from '../ui/CachedImage';
 import { BlurView } from '../ui/AppBlurView';
 import { NativeGlassView } from '../ui/LiquidGlass';
 import { LinkedText } from '../ui/LinkedText';
-import { HeaderBackgroundLayer } from './HeaderBackgroundLayer';
 import { ProfileLinkBubbles } from './ProfileLinkBubbles';
-import { HeaderSceneLayer } from './HeaderSceneLayer';
 import { createScrollRest, useRestFlag } from './scrollRest';
-import type { HeaderScene } from '../../services/headerScene';
 import type { BannerTransform } from '../../utils/bannerTransform';
 import { compareIso } from '../../utils/compareIso';
 import { kvGetJSONSync } from '../../services/kvStore';
@@ -138,7 +134,7 @@ const DROPS_HEIGHT = 108;
 
 export const ProfileHeaderCard = memo(function ProfileHeaderCard({
   topInset, anim, glassActive, emoji, displayName, username, isVerified, badge, bio, links,
-  bannerUrl, bannerTransform, scene, sceneAnimate, onAvatarPress, actions,
+  bannerUrl, bannerTransform, animate, onAvatarPress, actions,
 }: {
   topInset: number;
   anim: ProfileScrollAnim;
@@ -152,23 +148,27 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
   links: { url: string }[];
   bannerUrl?: string;
   bannerTransform: BannerTransform;
-  scene: HeaderScene | null;
-  sceneAnimate: boolean;
+  /** The screen is focused: the link drops may move. */
+  animate: boolean;
   onAvatarPress?: () => void;
   actions: React.ReactNode;
 }) {
   const theme = useTheme();
   const { width } = useWindowDimensions();
   const settled = useTransitionSettled();
-  // The drops and the stickers pause once the page has come to rest with them above the top of the
-  // screen (see `ScrollRest`). The drops' own band ends well before the card does, so they stop first.
-  const [cardH, setCardH] = useState(0);
-  const onCardLayout = useCallback((e: LayoutChangeEvent) => {
-    const h = Math.round(e.nativeEvent.layout.height);
-    setCardH((prev) => (prev === h ? prev : h));
-  }, []);
+  // The drops pause once the page has come to rest with them above the top of the screen (see
+  // `ScrollRest`).
   const dropsAway = useRestFlag(anim.rest, (y) => y >= topInset + DROPS_TOP + DROPS_HEIGHT);
-  const cardAway = useRestFlag(anim.rest, (y) => cardH > 0 && y >= cardH);
+  // ── UNDER THE FROST THE HEADER IS STILL (Nov 2026) ────────────────────────────────────────────
+  //
+  // The frost over the card starts to show at 36 pt of scroll (`headerOpacity`), but the drops kept
+  // moving until the page rested past their band. On iOS the frost is our glass, which re-captures
+  // and blurs everything beneath it whenever that changes: resting anywhere in between, the moving
+  // drops made it capture the card on every frame (or every other one), with nothing touched, for as
+  // long as the page stayed there. Resting with the frost showing, they now pause, so the frost goes
+  // still too. They are frosted over there anyway, and they resume where they were.
+  const frostOn = useRestFlag(anim.rest, (y) => y > 36);
+  const headerMoving = animate && !frostOn;
   // ── Telegram's profile scroll animation ────────────────────────────────────
   // As the profile scrolls, the avatar travels to the Dynamic Island on iPhone (shrinking and turning
   // black, so it merges into it) and slides out through the top of the screen elsewhere — the effect
@@ -207,12 +207,12 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
     </View>
   );
   // White name over a cover; theme text on the plain card (white-on-cream was unreadable in light).
-  const onMedia = !!bannerUrl || !!scene?.background || (scene?.drawing?.length ?? 0) > 0 || theme.isDark;
+  const onMedia = !!bannerUrl || theme.isDark;
   const nameColor = onMedia ? '#FFFFFF' : theme.colors.text.primary;
   const handleColor = onMedia ? 'rgba(255,255,255,0.85)' : theme.colors.text.secondary;
   const shadow = onMedia ? styles.textShadow : null;
   return (
-    <View onLayout={onCardLayout} style={{ borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+    <View style={{ borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
       {bannerUrl ? (
         <View style={StyleSheet.absoluteFill}>
           {/* No shimmer: a shimmer on every cold open is exactly the "it is loading" look that was
@@ -227,7 +227,6 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
           <LinearGradient colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '55']} style={StyleSheet.absoluteFill} pointerEvents="none" />
         </View>
       ) : null}
-      <HeaderBackgroundLayer backgroundId={scene?.background} drawing={scene?.drawing} hasBanner={!!bannerUrl} blend={scene?.bgBlend} />
 
       <View style={{ paddingTop: topInset + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
         {/* Placeholder: the real avatar is drawn above the frost (see the end of the card) so it
@@ -247,8 +246,6 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}>{actions}</View>
       </View>
 
-      <HeaderSceneLayer scene={scene} animate={sceneAnimate && !cardAway} />
-
       {/* Links float as liquid bubbles in the space beside the avatar (they replaced the chip row
           under the @handle). Under the frost, so they frost over with the rest of the card. */}
       {links.length > 0 ? (
@@ -257,7 +254,7 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
           top={topInset + DROPS_TOP}
           left={20 + 84 + 16}
           height={DROPS_HEIGHT}
-          active={sceneAnimate && !dropsAway}
+          active={headerMoving && !dropsAway}
         />
       ) : null}
 

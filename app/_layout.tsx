@@ -318,6 +318,25 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     return () => { clearTimeout(tid); sub.remove(); };
   }, [isAuthenticated, hasHydrated]);
 
+  // Chats muted from the chat list are muted on the server too, so their pushes stop while the app
+  // is closed; the local list alone only silenced the open app. Off the startup path, like the push
+  // registration above. See src/services/muteSync.ts.
+  useEffect(() => {
+    if (!isAuthenticated || !hasHydrated) return;
+    let stop: (() => void) | null = null;
+    let gone = false;
+    const tid = setTimeout(() => {
+      import('../src/services/muteSync')
+        .then((m) => { if (!gone) stop = m.startMuteSync(); })
+        .catch(() => {});
+    }, 3000);
+    return () => {
+      gone = true;
+      clearTimeout(tid);
+      stop?.();
+    };
+  }, [isAuthenticated, hasHydrated]);
+
   // ── RECORD THIS INSTALL SO THE OWNER CAN SEE IT AND REMOVE IT ─────────────
   //
   // This is what makes the Devices screen list every device that has signed in, rather than only the

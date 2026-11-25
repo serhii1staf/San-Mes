@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { NavigationContext, NavigationRouteContext } from '@react-navigation/native';
 
 /**
@@ -74,4 +74,32 @@ export function useTransitionSettled(): boolean {
   }, [settled, navigation, key]);
 
   return settled;
+}
+
+/**
+ * A stable function whose promise resolves once `settled` (from `useTransitionSettled`) is true, at
+ * once if it already is.
+ *
+ * For work that may START during the push but must not COMMIT during it: a request sent on open
+ * gains the length of the slide, and its result then waits for the end of the slide to set state,
+ * instead of re-rendering the screen on one of its frames. If the screen closes before it settles
+ * the promise never resolves, so nothing is set on a screen that is gone.
+ */
+export function useSettledGate(settled: boolean): () => Promise<void> {
+  const box = useRef<{ settled: boolean; waiters: (() => void)[] }>({ settled, waiters: [] });
+  useEffect(() => {
+    const b = box.current;
+    b.settled = settled;
+    if (!settled || b.waiters.length === 0) return;
+    const waiters = b.waiters;
+    b.waiters = [];
+    for (const resolve of waiters) resolve();
+  }, [settled]);
+  return useCallback(() => {
+    const b = box.current;
+    if (b.settled) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      b.waiters.push(resolve);
+    });
+  }, []);
 }

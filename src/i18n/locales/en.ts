@@ -347,6 +347,8 @@ const en: Record<string, string> = {
   'edit_profile.link_hint': 'Paste a link — the service is recognised automatically',
   'edit_profile.link_remove': 'Remove link',
   'edit_profile.username_invalid': 'at least 2 characters: a–z, 0–9 and _',
+  'edit_profile.banner_upload_failed': 'The banner did not upload. Everything else is saved',
+  'edit_profile.banner_too_large': 'The banner is over 4 MB and did not upload. Everything else is saved',
   // Banner position editor (drag + pinch) — shown after picking a banner
   // image, or via the "Position" pill on an existing banner.
   'edit_profile.banner.editor_title': 'Position banner',
@@ -373,31 +375,6 @@ const en: Record<string, string> = {
   'post_menu.save': 'Save',
   'post_menu.delete': 'Delete post',
   'post_menu.report': 'Report',
-
-  // ─── Profile customization (Оформление) ───
-  'customize.title': 'Customize',
-  'customize.bg': 'Background',
-  'customize.bg_none': 'None',
-  'customize.draw': 'Draw your own',
-  'customize.blend': 'Blend with banner',
-  'customize.anim': 'Animation',
-  'customize.hint': 'Pick a background, draw your own, or add stickers below. Drag and adjust.',
-  'customize.max_items': 'Maximum 24 items',
-  'customize.saved': 'Customization saved',
-  'customize.draw_done': 'Done',
-  'customize.draw_size': 'Brush size',
-  'customize.draw_brush': 'Brush',
-  'customize.draw_all_colors': 'All colors',
-  'customize.draw_erase_hint': 'Tap on lines to erase.',
-  'customize.brush_pen': 'Pen',
-  'customize.brush_marker': 'Marker',
-  'customize.brush_neon': 'Neon',
-  'customize.brush_dashed': 'Dashed',
-  'customize.anim_none': 'None',
-  'customize.anim_float': 'Float',
-  'customize.anim_pulse': 'Pulse',
-  'customize.anim_spin': 'Spin',
-  'customize.anim_swing': 'Swing',
 
   // ─── Account switcher ──────────────────────────────────────────────────
   'account_switcher.title': 'Accounts',
@@ -1244,7 +1221,6 @@ const en: Record<string, string> = {
   'profile.more': 'More',
   'profile.media_empty': 'Photos from your chats will appear here',
   'profile.edit_short': 'Edit',
-  'profile.customize': 'Customize',
   'profile.switch_account': 'Switch account',
   'profile.blocked_hint': 'You blocked this user. You can unblock them from the More menu.',
   'errors.boundary_title': 'Something went wrong',

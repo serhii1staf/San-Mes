@@ -15,6 +15,7 @@ import { InteractionManager } from 'react-native';
 import { apiGet } from './apiClient';
 import { kvGetJSONSync, kvSetJSON } from './kvStore';
 import { useAuthStore } from '../store/authStore';
+import { useSettledGate, useTransitionSettled } from '../hooks/useTransitionSettled';
 
 export interface ProfilePostAuthor {
   id: string;
@@ -189,6 +190,11 @@ function useCachedList<T>(
   });
   const [loading, setLoading] = useState<boolean>(() => !!profileId && !mem.get(profileId));
   const [nonce, setNonce] = useState(0);
+  // The request starts on open, but its answer waits for the end of the push before it is compared,
+  // written to disk and shown (`runAfterInteractions` below does not wait for a native-stack push,
+  // so a fast answer landed on the slide). Settled at once on the profile tab and on a later refetch.
+  const settled = useTransitionSettled();
+  const waitSettled = useSettledGate(settled);
 
   useEffect(() => {
     const onInvalidate = (id: string | null, what: InvalidationKind) => {
@@ -223,7 +229,8 @@ function useCachedList<T>(
     // After the push transition: the cached page (if any) is already on screen.
     const handle = InteractionManager.runAfterInteractions(() => {
       fetcher(profileId)
-        .then((next) => {
+        .then(async (next) => {
+          await waitSettled();
           if (!alive) return;
           if (next) {
             // ── AN UNCHANGED PAGE KEEPS THE ARRAY ALREADY ON SCREEN ───────────────────

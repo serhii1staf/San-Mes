@@ -43,6 +43,7 @@ import { stripMarkers } from '../../utils/previewText';
 import { useTransitionSettled } from '../../hooks/useTransitionSettled';
 import { ProfilePostCard } from './ProfilePostCard';
 import { useRestFlag, type ScrollRest } from './scrollRest';
+import { UI_RUNTIME_MAPPERS } from '../../utils/workletGuards';
 import {
   useProfilePosts,
   useProfileReplies,
@@ -129,9 +130,12 @@ const TabStrip = memo(function TabStrip({ value, onChange }: { value: TabKey; on
   useEffect(() => {
     pos.value = reduceMotion ? index : withTiming(index, { duration: 240, easing: Easing.out(Easing.cubic) });
   }, [index, reduceMotion, pos]);
-  const indicatorStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: pos.value * (itemW + STRIP_GAP) }],
-  }));
+  // First run on the JS thread: the resting position, without a synchronous read of the UI runtime
+  // (see `UI_RUNTIME_MAPPERS`); it mounts during the push.
+  const indicatorStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { transform: [{ translateX: index * (itemW + STRIP_GAP) }] };
+    return { transform: [{ translateX: pos.value * (itemW + STRIP_GAP) }] };
+  });
 
   return (
     <View style={[styles.strip, glassActive ? null : { backgroundColor: theme.colors.background.elevated }]} onLayout={onLayout}>
@@ -399,7 +403,10 @@ const PostsPane = memo(function PostsPane({
   const theme = useTheme();
   const t = useT();
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
-  const shown = useProgressiveCount(posts.length, ready, 4, 3);
+  // One card per frame after the first four, not three: each card is an image or two, formatted text,
+  // a link preview, an avatar and a badge, and three of them made back-to-back long frames right when
+  // the reader starts to scroll. Smaller commits leave the frames in between to the scroll.
+  const shown = useProgressiveCount(posts.length, ready, 4, 1);
   const hairline = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
   const onPressPost = useCallback((p: ProfilePost) => openPost(p.id), []);
   const compose = useCallback(() => {

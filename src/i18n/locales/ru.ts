@@ -347,6 +347,8 @@ const ru: Record<string, string> = {
   'edit_profile.link_hint': 'Вставьте ссылку — сервис определится сам',
   'edit_profile.link_remove': 'Удалить ссылку',
   'edit_profile.username_invalid': 'от 2 символов: латиница, цифры и _',
+  'edit_profile.banner_upload_failed': 'Баннер не загрузился. Остальное сохранено',
+  'edit_profile.banner_too_large': 'Баннер больше 4 МБ и не загрузился. Остальное сохранено',
   // Banner position editor (drag + pinch) — shown after picking a banner
   // image, or via the "Position" pill on an existing banner.
   'edit_profile.banner.editor_title': 'Расположение баннера',
@@ -373,31 +375,6 @@ const ru: Record<string, string> = {
   'post_menu.save': 'Сохранить',
   'post_menu.delete': 'Удалить пост',
   'post_menu.report': 'Пожаловаться',
-
-  // ─── Profile customization (Оформление) ───
-  'customize.title': 'Оформление',
-  'customize.bg': 'Фон',
-  'customize.bg_none': 'Без фона',
-  'customize.draw': 'Рисовать свой',
-  'customize.blend': 'Слить с баннером',
-  'customize.anim': 'Анимация',
-  'customize.hint': 'Выбери фон, нарисуй свой или добавь стикеры снизу. Перетаскивай и настраивай.',
-  'customize.max_items': 'Максимум 24 элементов',
-  'customize.saved': 'Оформление сохранено',
-  'customize.draw_done': 'Готово',
-  'customize.draw_size': 'Размер кисти',
-  'customize.draw_brush': 'Кисть',
-  'customize.draw_all_colors': 'Все цвета',
-  'customize.draw_erase_hint': 'Нажимай по линиям, чтобы стирать.',
-  'customize.brush_pen': 'Перо',
-  'customize.brush_marker': 'Маркер',
-  'customize.brush_neon': 'Неон',
-  'customize.brush_dashed': 'Пунктир',
-  'customize.anim_none': 'Без',
-  'customize.anim_float': 'Парение',
-  'customize.anim_pulse': 'Пульс',
-  'customize.anim_spin': 'Вращение',
-  'customize.anim_swing': 'Качание',
 
   // ─── Account switcher ──────────────────────────────────────────────────
   'account_switcher.title': 'Аккаунты',
@@ -1254,7 +1231,6 @@ const ru: Record<string, string> = {
   'profile.more': 'Ещё',
   'profile.media_empty': 'Здесь появятся фото из чатов',
   'profile.edit_short': 'Изменить',
-  'profile.customize': 'Оформить',
   'profile.switch_account': 'Сменить аккаунт',
   'profile.blocked_hint': 'Вы заблокировали этого пользователя. Разблокировать можно в меню «Ещё».',
   'errors.boundary_title': 'Что-то пошло не так',

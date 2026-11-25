@@ -75,8 +75,7 @@ function FloatingChip({ p, active }: { p: Placement; active: boolean }) {
 
   // Gate the infinite float loop on `active` (foreground + focused). When the
   // app is backgrounded or the screen is blurred we stop the loop and reset the
-  // value so nothing keeps churning the UI thread / battery. Mirrors the proven
-  // pattern in StickerGlyph.tsx.
+  // value so nothing keeps churning the UI thread / battery.
   useEffect(() => {
     if (!active) {
       anim.stopAnimation();
