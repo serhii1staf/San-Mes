@@ -111,6 +111,22 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   // ProfileReplyCard caller (which DOES pass a number) keeps working.
   const truncationProps = numberOfLines !== undefined ? { numberOfLines } : null;
 
+  // ── TEXT WITH CHIPS GETS A FIXED LINE HEIGHT (Nov 2026) ─────────────────────────────────────────
+  //
+  // Reported on iPhone, in chats: link chips on neighbouring lines could still run into each other.
+  // Without a line height of its own, a line is as tall as the tallest thing on it, and a chip is
+  // taller than the font's ascent, so the lines with chips and the lines without came out different
+  // heights, and the measured text could disagree with the drawn text while the chips were still
+  // being sized. A fixed line height (Telegram's spacing, 1.3x) makes every line the same height
+  // whatever is on it, and the chip keeps 4 pt clear of it (see `LinkChip`). Only text that shows
+  // chips: everything else keeps the spacing it has always had.
+  const chipLineHeight =
+    baseLineHeight === undefined && truncationProps === null && typeof children === 'string' &&
+    children.indexOf('://') !== -1 && /https?:\/\//.test(children)
+      ? Math.round(baseFontSize * 1.3)
+      : undefined;
+  const chipLineStyle = chipLineHeight !== undefined ? { lineHeight: chipLineHeight } : null;
+
   // Shared inline renderer. Pulled out of the JSX so the EXACT same inline
   // logic (bold/italic/spoiler/mention/link/inline-code/…) can be reused for
   // every text segment of the block-split path. The `spoilerCounter` is a
@@ -244,7 +260,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
             );
           }
           return (
-            <LinkChip key={i} url={part.content} color={resolvedLinkColor} fontSize={baseFontSize} lineHeight={baseLineHeight} onOpen={handleLinkTap} />
+            <LinkChip key={i} url={part.content} color={resolvedLinkColor} fontSize={baseFontSize} lineHeight={baseLineHeight ?? chipLineHeight} onOpen={handleLinkTap} />
           );
 
         default:
@@ -265,7 +281,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   if (useSingleTextPath) {
     const spoilerCounter = { value: 0 };
     return (
-      <RNText {...truncationProps} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style]}>
+      <RNText {...truncationProps} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style, chipLineStyle]}>
         {renderInline(parts, spoilerCounter)}
       </RNText>
     );
@@ -282,7 +298,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
         }
         const segParts = parseFormatting(seg.value);
         return (
-          <RNText key={i} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style]}>
+          <RNText key={i} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style, chipLineStyle]}>
             {renderInline(segParts, spoilerCounter)}
           </RNText>
         );

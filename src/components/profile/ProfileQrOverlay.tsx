@@ -362,19 +362,29 @@ function ProfileQrOverlay({
 
   // Out when `visible` clears. It moves from its first frame and decelerates, all of it together, and
   // only then is the host told to unmount. Reopened during the close, it simply comes back: the open
-  // stops this, whose `finished` is then false, so the host is not told.
+  // clears `hidingRef`, so the host is not told.
+  //
+  // `stopTogether: false` (Nov 2026). Reported: the menu went away but the QR screen could stay. With
+  // the default, ANY animation of the group being stopped stops all of them where they are, and the
+  // callback then reports `finished: false`, so the host is never told: a half-faded screen stays up,
+  // ignoring touches. Something starting on `menuAnim` (the menu's own close) was enough. Now each part
+  // runs to its end on its own, and `hidingRef` is what tells a reopen apart from a close.
   useEffect(() => {
     if (visible || hidingRef.current) return;
     hidingRef.current = true;
     const curve = Easing.bezier(0.33, 0, 0.2, 1);
-    Animated.parallel([
-      Animated.timing(bg, { toValue: 0, duration: 320, easing: curve, useNativeDriver: true }),
-      Animated.timing(cardFade, { toValue: 0, duration: 240, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-      Animated.timing(card, { toValue: 0, duration: 300, easing: curve, useNativeDriver: true }),
-      Animated.timing(chrome, { toValue: 0, duration: 280, easing: curve, useNativeDriver: true }),
-      Animated.timing(menuAnim, { toValue: 0, duration: 160, easing: curve, useNativeDriver: true }),
-    ]).start(({ finished }) => {
-      if (finished) onHidden();
+    Animated.parallel(
+      [
+        Animated.timing(bg, { toValue: 0, duration: 320, easing: curve, useNativeDriver: true }),
+        Animated.timing(cardFade, { toValue: 0, duration: 240, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(card, { toValue: 0, duration: 300, easing: curve, useNativeDriver: true }),
+        Animated.timing(chrome, { toValue: 0, duration: 280, easing: curve, useNativeDriver: true }),
+        Animated.timing(menuAnim, { toValue: 0, duration: 160, easing: curve, useNativeDriver: true }),
+      ],
+      { stopTogether: false },
+    ).start(() => {
+      // Reopened meanwhile: `runOpen` cleared the flag, and the screen is staying.
+      if (hidingRef.current) onHidden();
     });
   }, [visible, bg, cardFade, card, chrome, menuAnim, onHidden]);
 
@@ -598,6 +608,7 @@ function ProfileQrOverlay({
   }), [menuAnim]);
 
   const bottomY = insets.bottom + 24;
+  const noticeOpacity = useMemo(() => Animated.multiply(noticeAnim, bg), [noticeAnim, bg]);
 
   return (
     <View style={styles.root} pointerEvents={visible ? 'auto' : 'none'} onLayout={onRootLayout}>
@@ -621,8 +632,9 @@ function ProfileQrOverlay({
           locations={[0, 0.22, 0.72, 1]}
           style={StyleSheet.absoluteFill}
         />
-        {/* A tap on the background closes, like the old screen did. */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={menuOpen ? closeMenu : close} accessible={false} />
+        {/* A tap on the background closes the screen, menu or not: it used to close only the menu
+            when one was open, which read as the tap not working. The close fades the menu out too. */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={close} accessible={false} />
       </Animated.View>
 
       <Animated.View
@@ -710,7 +722,8 @@ function ProfileQrOverlay({
             styles.notice,
             {
               bottom: bottomY + 54 + 16,
-              opacity: noticeAnim,
+              // Goes with the screen: on its own it stayed at full strength over a closing screen.
+              opacity: noticeOpacity,
               transform: [{ translateY: noticeAnim.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }],
             },
           ]}

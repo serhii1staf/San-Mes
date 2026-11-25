@@ -20,10 +20,15 @@ const AI_PATH = '/v1/ai/complete';
 // session; one that is merely unavailable (400/5xx) is skipped for that request only.
 // Measured 2026-11-17 with the real system prompt, thinking disabled: super 0.8–3 s, ultra
 // 0.9–5 s, lightning 0.7–1.5 s, all emitting the [ACTION:...] tags correctly.
+//
+// Measured again 2026-11-25 through the Worker, after «San AI думает очень долго»: super 7–17 s,
+// ultra 2.5–17 s, lightning 0.4–1.7 s, four requests each with the real 4.8 KB prompt. The fastest
+// model now goes first; it answered «Привет» without a tag and «смени тему» with one, like the others.
+// The bigger two are what a request falls back to when it is unavailable, fastest first.
 const MODELS = [
-  'nvidia/nemotron-3.5-super-vl-120b-a12b',
-  'nvidia/nemotron-3-ultra-550b-a55b',
   'nvidia/nemotron-3.5-lightning-30b-a3b',
+  'nvidia/nemotron-3-ultra-550b-a55b',
+  'nvidia/nemotron-3.5-super-vl-120b-a12b',
 ];
 const retiredModels = new Set<string>();
 export const AI_DAILY_LIMIT = 50;

@@ -41,7 +41,7 @@ async function readBody(req: Request): Promise<{ model?: unknown; messages?: unk
   }
 }
 
-/** The models San AI may ask for: the same list, in the same order, as `MODELS` in the app. */
+/** The models San AI may ask for: the same list as `MODELS` in the app, which decides the order. */
 const MODELS = new Set([
   'nvidia/nemotron-3.5-super-vl-120b-a12b',
   'nvidia/nemotron-3-ultra-550b-a55b',

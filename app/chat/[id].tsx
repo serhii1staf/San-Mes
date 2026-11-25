@@ -232,6 +232,21 @@ function matchesEitherId(m: { id: string; serverId?: string }, candidate: string
   return m.id === candidate || (!!m.serverId && m.serverId === candidate);
 }
 
+/**
+ * The id a reply carries for the message it quotes: the server uuid whenever one exists.
+ *
+ * A reply to my OWN message used to carry that message's local `m-<ts>` id, which only my device
+ * knows. The peer holds the same message under its server uuid, so tapping the quote on their side
+ * found nothing. The uuid is read from the store at send time because `replyTo` is a snapshot taken
+ * when the reply started, and the server id may have arrived since. A message that is still unsent
+ * has no uuid yet and keeps its local id, which is all anyone could know about it at that point.
+ */
+function quotedMessageId(conversationId: string, quoted: { id: string; serverId?: string } | null | undefined): string | undefined {
+  if (!quoted) return undefined;
+  const live = (useChatStore.getState().messages[conversationId] || []).find((m) => matchesEitherId(m, quoted.id));
+  return live?.serverId || quoted.serverId || quoted.id;
+}
+
 /** The same emoji in the same order: the recents re-read on a panel open changed nothing. */
 function sameStringList(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
@@ -5274,7 +5289,7 @@ export default function ChatScreen() {
       text: '',
       createdAt: new Date().toISOString(),
       isRead: true,
-      replyToId: currentReply?.id,
+      replyToId: quotedMessageId(conversationId, currentReply),
       // See handleSend: the quoted message own text only. The label is derived at render time.
       replyToText: currentReply?.text || undefined,
       replyToIsOwn: currentReply ? (currentReply.senderId === currentUserId || currentReply.senderId === 'current') : undefined,
@@ -6093,7 +6108,7 @@ export default function ChatScreen() {
       text,
       createdAt: new Date().toISOString(),
       isRead: true,
-      replyToId: currentReply?.id,
+      replyToId: quotedMessageId(conversationId, currentReply),
       // The quoted message OWN text, never a display label. This used to bake a photo label in
       // whenever the quote carried images, which is why replying to a GIF read as a photo and why a
       // photo WITH a caption lost the caption - the most useful thing the preview could show. The
@@ -6205,7 +6220,9 @@ export default function ChatScreen() {
         const replyMarker = encodeReplyMarker(
           currentReply
             ? {
-                id: currentReply.id,
+                // The uuid when known, see `quotedMessageId`. Read off the new row rather than
+                // `currentReply` so the stored reply and the live publish name the same message.
+                id: newMessage.replyToId || currentReply.id,
                 text: newMessage.replyToText,
                 image: newMessage.replyToImage,
                 senderId: currentReply.senderId,
@@ -6705,23 +6722,32 @@ export default function ChatScreen() {
   // FlatList data IS `invertedMessages`, so the found index maps 1:1 to the row.
   const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
   const jumpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── EITHER IDENTITY (Nov 2026) ──────────────────────────────────────────────────────────────────
+  //
+  // Reported: tapping the quote in the peer's reply to MY message did nothing, while the other way
+  // round worked. The peer's reply carries the id their device knows my message by, the server uuid.
+  // My device holds that message under its local `m-<ts>` id with the uuid in `serverId`, and this
+  // looked only at `id`, so it found nothing and returned silently. The highlight then uses the row's
+  // own `id`, which is what the bubble compares.
   const scrollToMessageId = useCallback((messageId?: string) => {
     if (!messageId) return;
-    let idx = chatMessages.findIndex((mm) => mm.id === messageId);
+    let idx = chatMessages.findIndex((mm) => matchesEitherId(mm, messageId));
+    let targetId = idx >= 0 ? chatMessages[idx].id : null;
     if (idx < 0) {
       // Reply target is older than the loaded seed. Lazily hydrate the FULL
       // history from cache, then find it in the (oldest→newest) array — the
       // list data IS that array, so the index maps directly.
       const healed = historyHydratedRef.current === conversationId ? null : hydrateFullHistory();
       if (healed && healed.length > 0) {
-        idx = healed.findIndex((mm) => mm.id === messageId);
+        idx = healed.findIndex((mm) => matchesEitherId(mm, messageId));
         if (idx < 0) return;
+        targetId = healed[idx].id;
       } else {
         return; // genuinely not in this conversation
       }
     }
     triggerHaptic('selection');
-    setJumpHighlightId(messageId);
+    setJumpHighlightId(targetId);
     if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current);
     jumpTimerRef.current = setTimeout(() => setJumpHighlightId(null), 1600);
     // Window-aware scroll: grows the visible window to include the target if

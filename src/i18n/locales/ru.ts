@@ -1212,6 +1212,7 @@ const ru: Record<string, string> = {
   'stickers.delete_group_title': 'Удалить весь импорт?',
   'stickers.delete_group_msg': 'Будет удалено {count} шт. от {date}. Отправленные сообщения не изменятся.',
   'stickers.view_pack': 'Открыть набор «{pack}»',
+  'stickers.unavailable': 'Стикер недоступен',
 
   // ─── Keys that were only ever reachable through their Russian fallback ───────
   //
