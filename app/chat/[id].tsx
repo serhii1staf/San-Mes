@@ -8274,6 +8274,7 @@ export default function ChatScreen() {
             bubbleColor={menuIsOwn ? withOpacity(bubbleColors[0], bubbleOpacity) : theme.colors.background.tertiary}
             bubbleTextColor={menuIsOwn ? bubbleTextColor : theme.colors.text.primary}
             bubbleRadius={chatSettings.bubbleRadius}
+            bubbleFontSize={chatSettings.fontSize}
             linkEmoji={chatSettings.linkEmoji}
             // Request the SAME proxy width the bubble already used, so the held
             // photo comes from expo-image's memory cache rather than being

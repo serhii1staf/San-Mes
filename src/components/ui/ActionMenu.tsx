@@ -138,6 +138,12 @@ interface ActionMenuProps<Id extends string> {
    * is, not lifted.
    */
   onHeldPreview?: (state: 'planned' | 'shown' | 'failed' | 'gone' | 'still') => void;
+  /**
+   * For an item too tall to be shown whole (see "AN ITEM TALLER THAN THE WINDOW IS NOT SNAPSHOTTED"):
+   * a light copy of it, drawn by the caller for the height it is given, which rises just above the
+   * card while everything else dims. Without it such an item stays lit where it is.
+   */
+  longPreview?: (maxHeight: number) => React.ReactNode;
 }
 
 // ── THE WHOLE ITEM, ALWAYS ───────────────────────────────────────────────────────────────────────
@@ -458,7 +464,7 @@ function CornerStrip({ left, top, width, radius, edge, color }: {
 function ActionMenuInner<Id extends string>(
   {
     anchor, align = 'left', title, top, items, onSelect, onWillSelect, onClosing, onClose, zones, hovered,
-    spotlightRadius, spotlightBounds, spotlightLift = 1, captureHeld, onHeldPreview,
+    spotlightRadius, spotlightBounds, spotlightLift = 1, captureHeld, onHeldPreview, longPreview,
   }: ActionMenuProps<Id>,
   ref: React.ForwardedRef<ActionMenuHandle>,
 ) {
@@ -525,6 +531,16 @@ function ActionMenuInner<Id extends string>(
   );
   // How much the item is scaled while the menu is open (a long one is not).
   const lift = longItem ? 1 : spotlightLift;
+  // ── A LONG ITEM IS SHOWN AS A LIGHT COPY ABOVE THE CARD (Nov 2026) ────────────────────────────
+  //
+  // Reported: long messages "не выделяются так, как маленькие… оно просто затемняется и всё". Lit in
+  // place, a message that fills the screen between the header and the composer leaves almost nothing
+  // to dim, and it does not lift, so holding it looked like the screen merely darkening. With
+  // `longPreview` the card sits at the bottom and the caller's copy of the item (its first lines,
+  // drawn for the height left) rises right above it while everything else dims, the way a short
+  // message is lifted beside its card. Nothing is snapshotted, and the copy is clipped to what fits,
+  // so the cost is that of a few lines of text however long the item is.
+  const [longCopy] = useState(() => longItem && !!longPreview && !!anchor);
 
   // Decided once, on mount, from the item's rect: the parent hands a new anchor object on every
   // render, and the plan must not change under an open menu. See "THE WHOLE ITEM, ALWAYS".
@@ -565,6 +581,9 @@ function ActionMenuInner<Id extends string>(
   const seenBottom = anchor ? Math.min(anchor.y + anchor.height + liftPad, bandBottom) : 0;
   if (plan) {
     menuTop = plan.menuTop;
+  } else if (longCopy) {
+    // At the bottom, so the copy above it gets the most room (no keyboard: see `longItem`).
+    menuTop = Math.max(minTop, maxBottom - menuH);
   } else if (!anchor) {
     menuTop = clamp((H - menuH) / 2, minTop, Math.max(minTop, maxBottom - menuH));
   } else if (seenBottom + GAP + menuH <= maxBottom) {
@@ -577,6 +596,11 @@ function ActionMenuInner<Id extends string>(
   }
   const rawLeft = !anchor ? (W - menuW) / 2 : align === 'right' ? anchor.x + anchor.width - menuW : anchor.x;
   const menuLeft = clamp(rawLeft, 12, W - menuW - 12);
+  // The long item's copy: all the room above the card, at the item's own left edge and width. It
+  // starts over the top of what was on screen of the item, so it rises out of it.
+  const copyH = longCopy ? Math.max(80, menuTop - GAP - minTop) : 0;
+  const copyTop = longCopy ? menuTop - GAP - copyH : 0;
+  const copyStartDY = longCopy && anchor ? Math.max(0, Math.max(anchor.y, bandTop) - copyTop) : 0;
 
   // ── Open / close ─────────────────────────────────────────────────────────
   // `p` is the dim, `cp` the card. They open together, except when a snapshot is taken: then the card
@@ -943,8 +967,8 @@ function ActionMenuInner<Id extends string>(
   const boundsBottom = spotlightBounds?.bottom;
   const spotHole = useMemo((): SpotHole | 'all' | null => {
     if (!anchor || spotlightRadius === undefined) return null;
-    // The snapshot is above the dim: nothing of the list needs to show through.
-    if (shotShown) return 'all';
+    // The snapshot, or a long item's copy, is above the dim: nothing of the list needs to show through.
+    if (shotShown || longCopy) return 'all';
     // The lifted item grows about its centre; the hole grows with it.
     const growX = (anchor.width * (lift - 1)) / 2;
     const growY = (anchor.height * (lift - 1)) / 2;
@@ -964,7 +988,22 @@ function ActionMenuInner<Id extends string>(
     const r = Math.max(0, Math.min(spotlightRadius + SPOT_PAD, w / 2, (y1 - y0) / 2));
     // A clipped edge is the header's or the composer's edge, not the item's: square it.
     return { x, w, y0, y1, rt: y0 > rawTop ? 0 : r, rb: y1 < rawBottom ? 0 : r };
-  }, [anchor, spotlightRadius, lift, shotShown, boundsTop, boundsBottom, plan, menuTop, menuH]);
+  }, [anchor, spotlightRadius, lift, shotShown, longCopy, boundsTop, boundsBottom, plan, menuTop, menuH]);
+
+  // The copy follows the dim in (`p`) and the close out (`c`): it fades in quickly, rises from the
+  // item into place and grows the last few percent, as a short message lifts; on the close it fades
+  // and settles a little, with the card.
+  const copyStyle = useAnimatedStyle(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) {
+      return { opacity: 0, transform: [{ translateY: copyStartDY }, { scale: 0.96 }] };
+    }
+    const open = Math.min(1, Math.max(0, p.value));
+    const shut = c.value;
+    return {
+      opacity: interpolate(open, [0, 0.45], [0, 1], Extrapolation.CLAMP) * (1 - shut),
+      transform: [{ translateY: (1 - open) * copyStartDY }, { scale: (0.96 + 0.04 * open) * (1 - 0.03 * shut) }],
+    };
+  });
 
   // Never taller than the item below the window's scroll position: the window would then show past
   // the item's end, and its scroll view would clamp the offset and shift the content.
@@ -1008,6 +1047,17 @@ function ActionMenuInner<Id extends string>(
         )}
       </Reanimated.View>
       <Pressable style={StyleSheet.absoluteFill} onPress={() => dismiss()} accessibilityRole="button" accessibilityLabel="Close" />
+
+      {/* A long item's copy (see `longCopy`). Untouchable, so a tap on it closes the menu like a tap
+          anywhere else off the card. */}
+      {longCopy && anchor && longPreview ? (
+        <Reanimated.View
+          pointerEvents="none"
+          style={[styles.longCopy, { top: copyTop, left: anchor.x, width: anchor.width, height: copyH }, copyStyle]}
+        >
+          {longPreview(copyH)}
+        </Reanimated.View>
+      ) : null}
 
       {/* A card waiting for the snapshot (`cp` at 0) is invisible by its alpha. Apple's glass has none
           to spare (it never fades, see above) and would sit there small, so it mounts as it opens. */}
@@ -1135,6 +1185,8 @@ const styles = StyleSheet.create({
   cornerFrame: { position: 'absolute', overflow: 'hidden' },
   preview: { position: 'absolute' },
   previewInner: { flex: 1 },
+  // A copy shorter than its room sits on the card, not at the top of the screen.
+  longCopy: { position: 'absolute', justifyContent: 'flex-end' },
   previewLoading: { opacity: 0 },
   // Shadow on the outer view, clipping on the inner one: iOS drops a layer's shadow when the same
   // layer clips its bounds.
