@@ -210,20 +210,38 @@ const MAX_SHOT_PIXELS = 4_000_000;
 // Longest side of the snapshot, in pixels: what every GPU can hold as one texture. Android before 9
 // draws nothing for a bitmap past its texture limit (4096 on many of those devices); later ones tile.
 const MAX_SHOT_SIDE = Platform.OS === 'android' && (Platform.Version as number) < 28 ? 4096 : 8192;
-/** How long the card waits for the snapshot before it opens without it (keyboard down; see the open effect). */
+/**
+ * How long the card waits for the snapshot, from the moment the snapshot starts, before it opens
+ * without it (keyboard down; see the open effect).
+ */
 const CARD_WAIT_MS = 300;
 // A snapshot that has not arrived and loaded by then is given up on, and the menu keeps the cut-out.
 // Generous on purpose: the cut-out shows the item meanwhile, and a long message is slow to snapshot.
 // Measured on the emulator for a 4,790 pt message (4 M px): 500 ms to draw and encode, 750 ms with
 // the menu opening, about 1 s until the image is decoded and shown.
 const SHOT_TIMEOUT_MS = 4000;
-// iOS draws the snapshot on the main thread, which also runs the card's open spring, so a big one
-// waits until the card has opened rather than stall it. A small one (most bubbles) is cheap enough
-// to take at once, and so is any one with the keyboard up: the card and the keyboard both wait for
-// it then (see the open effect), so a delay would only add to the wait. Android draws it on a
-// worker thread (view-shot 4.0.3 runs the capture on an executor).
+// iOS draws the snapshot on the main thread, which also runs the open animations, so a big one
+// starts once the dim has faded in rather than stall it, and the card waits for it (see "THE CARD'S
+// WAIT STARTS WHEN THE SNAPSHOT DOES"). A small one (most bubbles) is cheap enough to take at once,
+// and so is any one with the keyboard up: the card and the keyboard both wait for it then (see the
+// open effect), so a delay would only add to the wait. Android draws it on a worker thread
+// (view-shot 4.0.3 runs the capture on an executor).
 const SHOT_DELAY_MS = Platform.OS === 'ios' ? 320 : 0;
 const SHOT_DELAY_PIXELS = 1_000_000;
+
+/** How the snapshot of `plan`'s item is taken: its scale (1 = full size) and the wait before it starts. */
+function shotGeometry(plan: PreviewPlan): { fit: number; delayMs: number } {
+  const density = PixelRatio.get();
+  const fullPixels = plan.width * plan.fullHeight * density * density;
+  const fit = Math.min(
+    1,
+    Math.sqrt(MAX_SHOT_PIXELS / fullPixels),
+    MAX_SHOT_SIDE / (plan.fullHeight * density),
+    MAX_SHOT_SIDE / (plan.width * density),
+  );
+  const delayMs = !plan.keyboardUp && fullPixels * fit * fit > SHOT_DELAY_PIXELS ? SHOT_DELAY_MS : 0;
+  return { fit, delayMs };
+}
 
 type PreviewPlan = {
   left: number;
@@ -569,6 +587,16 @@ function ActionMenuInner<Id extends string>(
   // early only its top row showed above the keyboard (a long message, emulator, about 0.8 s).
   const [cardOpen, setCardOpen] = useState(!plan);
   const cardStarted = useRef(!plan);
+  // ── THE CARD'S WAIT STARTS WHEN THE SNAPSHOT DOES (Nov 2026) ─────────────────────────────────
+  //
+  // On iOS a big snapshot starts `SHOT_DELAY_MS` (320) after the open, so that its main-thread draw
+  // does not land on the open animation, but the card stopped waiting at `CARD_WAIT_MS` (300) from
+  // the open. So for every such item the card opened 20 ms before the snapshot was even begun, and
+  // the draw then stalled the card's own spring halfway: the long-message hold that felt jerky on
+  // iPhone. The wait now counts from the start of the snapshot, so the card opens with it, as it
+  // does on Android, or `CARD_WAIT_MS` after it started without it. Android has no delay and is
+  // unchanged.
+  const [shotDelayMs] = useState(() => (plan ? shotGeometry(plan).delayMs : 0));
   const startCard = useCallback(() => {
     // Not once the close has begun: a card that never opened stays shut rather than flash open.
     if (cardStarted.current || closing.current) return;
@@ -590,12 +618,12 @@ function ActionMenuInner<Id extends string>(
       p.value = withSpring(1, OPEN_SPRING);
     });
     if (!plan || plan.keyboardUp) return () => cancelAnimationFrame(raf);
-    const t = setTimeout(startCard, CARD_WAIT_MS);
+    const t = setTimeout(startCard, shotDelayMs + CARD_WAIT_MS);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(t);
     };
-  }, [p, plan, startCard]);
+  }, [p, plan, startCard, shotDelayMs]);
   // After the commit that mounts it: a glass card waiting for the snapshot is not mounted (see below),
   // and a spring started before the mount would spend its first frames on nothing. A frame later still,
   // for the reason above.
@@ -673,13 +701,7 @@ function ActionMenuInner<Id extends string>(
     // Scaled down only past the caps. view-shot takes the size in pixels on Android and in points on
     // iOS (rendered at the screen's scale), and without one captures the view at its own size.
     const density = PixelRatio.get();
-    const fullPixels = plan.width * plan.fullHeight * density * density;
-    const fit = Math.min(
-      1,
-      Math.sqrt(MAX_SHOT_PIXELS / fullPixels),
-      MAX_SHOT_SIDE / (plan.fullHeight * density),
-      MAX_SHOT_SIDE / (plan.width * density),
-    );
+    const { fit, delayMs } = shotGeometry(plan);
     const unit = Platform.OS === 'android' ? density : 1;
     const take = () => {
       if (cancelled || shotSettled.current) return;
@@ -701,7 +723,6 @@ function ActionMenuInner<Id extends string>(
         fail();
       }
     };
-    const delayMs = !plan.keyboardUp && fullPixels * fit * fit > SHOT_DELAY_PIXELS ? SHOT_DELAY_MS : 0;
     shotTimer.current = setTimeout(fail, delayMs + SHOT_TIMEOUT_MS);
     const delay = delayMs > 0 ? setTimeout(take, delayMs) : null;
     if (!delay) take();

@@ -4744,12 +4744,30 @@ export default function ChatScreen() {
     const channel = lease.channel;
     const ownUserId = useAuthStore.getState().user?.id;
 
-    const onNewMessage = (msg: { data?: any }) => {
+    // ── ONLY THE AUTHOR, OR THE SERVER, CHANGES A MESSAGE HERE (Nov 2026) ─────────────────────
+    //
+    // Every signed-in device may publish on `chat:*` (api/ably-token.ts), so what a payload says
+    // about its sender proves nothing. Ably stamps each message with its publisher's `clientId`, the
+    // user id its token was minted for (`/v1/auth/me`), and a token cannot publish under another id.
+    // The Worker publishes with the root key and has none. So a new message must come from the user
+    // it names, and an edit or a delete from the author of the message it changes, or from the
+    // Worker, which checked the author before it published. Without this, the other person in a chat
+    // (or anyone holding its id) could delete or rewrite your own messages on your screen, which the
+    // server itself refuses (DELETE and PATCH /v1/messages/:id are sender-only).
+    const publisherOf = (msg: { clientId?: unknown }): string | null =>
+      typeof msg?.clientId === 'string' && msg.clientId.length > 0 ? msg.clientId : null;
+    /** Who wrote a stored message; old caches can still say 'current' for this account. */
+    const authorOf = (m: ChatMessage): string | undefined => (m.senderId === 'current' ? ownUserId : m.senderId);
+
+    const onNewMessage = (msg: { data?: any; clientId?: string }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object') return;
       // Skip our own publishes — the optimistic addMessage already showed
       // the message; receiving it again would dupe it.
       if (payload.senderId && ownUserId && payload.senderId === ownUserId) return;
+      // Published by someone other than the user it names (see "ONLY THE AUTHOR").
+      const publisher = publisherOf(msg);
+      if (publisher && publisher !== String(payload.senderId || '')) return;
       // Dedupe by id against the current store snapshot. Messages from the
       // peer are tagged with a stable client-side id by the publisher, so
       // a quick subscribe-after-publish race won't add the same row twice.
@@ -4801,9 +4819,15 @@ export default function ChatScreen() {
     const matchesPayload = (m: ChatMessage, payloadId: string) =>
       m.id === payloadId || (!!m.serverId && m.serverId === payloadId);
 
-    const onEdit = (msg: { data?: any }) => {
+    const onEdit = (msg: { data?: any; clientId?: string }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object' || !payload.id) return;
+      // From a device: only the message's author may edit it (see "ONLY THE AUTHOR").
+      const publisher = publisherOf(msg);
+      if (publisher) {
+        const held = (useChatStore.getState().messages[conversationId] || []).find((m) => matchesPayload(m, payload.id));
+        if (!held || authorOf(held) !== publisher) return;
+      }
       // An edit can swap which image is attached, so it can also change the shape. Accepts both the
       // client-published spelling (`imgW`) and the Worker-published one (`img_w`) — this event has two
       // publishers by design, so that a peer whose socket missed the client's publish still gets it.
@@ -4825,9 +4849,17 @@ export default function ChatScreen() {
     // Delete — peer removed a message. We just filter it out of the local
     // list; no Supabase round-trip required because the peer already did
     // (or will, when DB-side delete lands).
-    const onDelete = (msg: { data?: any }) => {
+    const onDelete = (msg: { data?: any; clientId?: string }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object' || !payload.id) return;
+      // From a device: only the message's author may delete it (see "ONLY THE AUTHOR"). A message
+      // this screen does not hold is left to the Worker's own `msg.delete`, which has no publisher
+      // and is always applied.
+      const publisher = publisherOf(msg);
+      if (publisher) {
+        const held = (useChatStore.getState().messages[conversationId] || []).find((m) => matchesPayload(m, payload.id));
+        if (!held || authorOf(held) !== publisher) return;
+      }
       // The full-history hydrate that used to run here is gone for the same reason it is gone
       // from the delete menu action: the tombstone makes the delete durable at every layer,
       // and loading up to 1000 rows into the list in response to a PEER's delete was a large
