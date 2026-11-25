@@ -13,11 +13,87 @@
  * zones `ActionMenu` publishes and writes `hoveredAction`. The top cells sit side by side, so their
  * zones carry left/right as well as top/bottom.
  */
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import type { SharedValue } from 'react-native-reanimated';
 import { ActionMenu, type ActionMenuAnchor, type ActionMenuHandle, type ActionMenuItem, type ActionMenuZone } from './ActionMenu';
+import { CachedImage } from './CachedImage';
+import { FormattedText } from './FormattedText';
 import type { ChatMessage } from '../../types';
 import { useT } from '../../i18n/store';
+import { useTheme } from '../../theme';
+
+/** Characters of a long message the copy lays out at most: about twice a screenful. */
+const COPY_MAX_CHARS = 1600;
+const COPY_MAX_LINES = 48;
+
+/**
+ * The start of `text`, enough to fill the copy and no more: laying out a 20,000-character message in
+ * full to show its first screenful is the cost the copy exists to avoid. Cut at a space or a line
+ * break where there is one near the limit, so a word or a link is not cut in half.
+ */
+function copyText(text: string): string {
+  let s = text;
+  const lines = s.split('\n');
+  if (lines.length > COPY_MAX_LINES) s = lines.slice(0, COPY_MAX_LINES).join('\n');
+  if (s.length <= COPY_MAX_CHARS) return s;
+  const cut = s.slice(0, COPY_MAX_CHARS);
+  const at = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('\n'));
+  return at > COPY_MAX_CHARS * 0.8 ? cut.slice(0, at) : cut;
+}
+
+/** `color` fully transparent, for the fade at the copy's end. */
+function clearOf(color: string): string {
+  if (/^#[0-9a-f]{6}$/i.test(color)) return `${color}00`;
+  if (/^#[0-9a-f]{8}$/i.test(color)) return `${color.slice(0, 7)}00`;
+  return 'transparent';
+}
+
+/**
+ * A long message as the menu shows it (see `longPreview` in ActionMenu): the bubble's colour, radius
+ * and text, its first photos as thumbnails, clipped to `maxHeight` with a fade where it is cut.
+ */
+function LongMessageCopy({
+  message, maxHeight, color, textColor, radius, fontSize, imageProxyWidth,
+}: {
+  message: ChatMessage;
+  maxHeight: number;
+  color: string;
+  textColor: string;
+  radius: number;
+  fontSize: number;
+  imageProxyWidth?: number;
+}) {
+  const text = message.text ? copyText(message.text) : '';
+  const images = message.imageUrls || [];
+  return (
+    <View style={[copyStyles.bubble, { maxHeight, borderRadius: radius, backgroundColor: color }]}>
+      {images.length > 0 ? (
+        <View style={[copyStyles.thumbs, text ? copyStyles.thumbsAboveText : null]}>
+          {images.slice(0, 3).map((u, i) => (
+            // The bubble's own proxy width, so these come from the decoded-image cache the bubble
+            // filled rather than being fetched again at a menu size.
+            <CachedImage key={`${i}:${u}`} uri={u} style={copyStyles.thumb} resizeMode="cover" proxyWidth={imageProxyWidth} autoplay={false} />
+          ))}
+        </View>
+      ) : null}
+      {text ? (
+        <FormattedText color={textColor} linkColor={textColor} style={{ fontSize }}>{text}</FormattedText>
+      ) : null}
+      <LinearGradient colors={[clearOf(color), color]} style={copyStyles.fade} pointerEvents="none" />
+    </View>
+  );
+}
+
+const copyStyles = StyleSheet.create({
+  bubble: { overflow: 'hidden', paddingHorizontal: 14, paddingVertical: 10 },
+  thumbs: { flexDirection: 'row', gap: 4 },
+  thumbsAboveText: { marginBottom: 8 },
+  thumb: { width: 72, height: 72, borderRadius: 10 },
+  // Only over the bottom edge: a copy that fits shows its end as it is, under a short fade.
+  fade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 44 },
+});
 
 export type MessageAction = 'reply' | 'copy' | 'copyImage' | 'edit' | 'delete' | 'translate' | 'report' | 'pin' | 'forward';
 
@@ -35,10 +111,12 @@ interface MessageContextMenuProps {
   /** Window rect of the held bubble (measured by its long-press gesture). */
   anchor?: ActionMenuAnchor | null;
   isPinned?: boolean;
-  // Kept for the call site; the menu no longer draws a copy of the bubble.
+  // The bubble's look, for the copy of a message too long to be shown whole (`LongMessageCopy`).
   bubbleColor?: string;
   bubbleTextColor?: string;
   bubbleRadius?: number;
+  /** The chat's text size, so the copy reads like the bubble. */
+  bubbleFontSize?: number;
   linkEmoji?: string;
   imageProxyWidth?: number;
   onClose: () => void;
@@ -59,11 +137,28 @@ interface MessageContextMenuProps {
 export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageContextMenuProps>(function MessageContextMenu(
   {
     visible, message, isOwn, anchor, isPinned, bubbleRadius, onClose, onClosing, onAction, dragActive, hoveredAction,
-    actionZones, visibleBounds, captureHeld, onHeldPreview,
+    actionZones, visibleBounds, captureHeld, onHeldPreview, bubbleColor, bubbleTextColor, bubbleFontSize, imageProxyWidth,
   },
   ref,
 ) {
   const t = useT();
+  const theme = useTheme();
+  // Only drawn when the menu decides the message is too long to be shown whole.
+  const longPreview = useCallback(
+    (maxHeight: number) =>
+      message ? (
+        <LongMessageCopy
+          message={message}
+          maxHeight={maxHeight}
+          color={bubbleColor || theme.colors.background.tertiary}
+          textColor={bubbleTextColor || theme.colors.text.primary}
+          radius={bubbleRadius ?? 18}
+          fontSize={bubbleFontSize ?? 16}
+          imageProxyWidth={imageProxyWidth}
+        />
+      ) : null,
+    [message, bubbleColor, bubbleTextColor, bubbleRadius, bubbleFontSize, imageProxyWidth, theme],
+  );
   const menuRef = useRef<ActionMenuHandle>(null);
   useImperativeHandle(ref, () => ({
     dismiss: (cb?: () => void) => {
@@ -125,6 +220,7 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       spotlightLift={1.04}
       captureHeld={captureHeld}
       onHeldPreview={onHeldPreview ? (state) => onHeldPreview(state, message.id) : undefined}
+      longPreview={longPreview}
       align={isOwn ? 'right' : 'left'}
       top={top}
       items={items}
