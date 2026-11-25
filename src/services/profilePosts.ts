@@ -190,7 +190,7 @@ function useCachedList<T>(
   });
   const [loading, setLoading] = useState<boolean>(() => !!profileId && !mem.get(profileId));
   const [nonce, setNonce] = useState(0);
-  // The request starts on open, but its answer waits for the end of the push before it is compared,
+  // A refresh of a page already on screen waits for the end of the push before it is compared,
   // written to disk and shown (`runAfterInteractions` below does not wait for a native-stack push,
   // so a fast answer landed on the slide). Settled at once on the profile tab and on a later refetch.
   const settled = useTransitionSettled();
@@ -226,11 +226,14 @@ function useCachedList<T>(
       setLoading(true);
     }
     let alive = true;
+    // Only a refresh of a page already on screen waits for the end of the push; a first page (the
+    // spinner is showing) is shown as soon as it arrives.
+    const refreshing = !!cached;
     // After the push transition: the cached page (if any) is already on screen.
     const handle = InteractionManager.runAfterInteractions(() => {
       fetcher(profileId)
         .then(async (next) => {
-          await waitSettled();
+          if (refreshing) await waitSettled();
           if (!alive) return;
           if (next) {
             // ── AN UNCHANGED PAGE KEEPS THE ARRAY ALREADY ON SCREEN ───────────────────

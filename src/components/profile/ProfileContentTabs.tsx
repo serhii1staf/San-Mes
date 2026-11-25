@@ -403,10 +403,10 @@ const PostsPane = memo(function PostsPane({
   const theme = useTheme();
   const t = useT();
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
-  // One card per frame after the first four, not three: each card is an image or two, formatted text,
-  // a link preview, an avatar and a badge, and three of them made back-to-back long frames right when
-  // the reader starts to scroll. Smaller commits leave the frames in between to the scroll.
-  const shown = useProgressiveCount(posts.length, ready, 4, 1);
+  // Three cards per frame after the first four. One per frame (tried in Nov 2026) filled a long page
+  // so slowly that scrolling down soon after opening showed the cards arriving, which read as the
+  // page reloading.
+  const shown = useProgressiveCount(posts.length, ready, 4, 3);
   const hairline = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
   const onPressPost = useCallback((p: ProfilePost) => openPost(p.id), []);
   const compose = useCallback(() => {

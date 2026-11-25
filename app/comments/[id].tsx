@@ -37,7 +37,7 @@ import { parseGif, GiphyItem } from '../../src/services/giphy';
 import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
 import { getRecentGif, pushRecentGif, removeRecentGif } from '../../src/services/recentGif';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
-import { useAuthStore, useConnectivityStore } from '../../src/store';
+import { useAuthStore, useConnectivityStore, useEntityStore } from '../../src/store';
 import { getRealtime, postChannelName } from '../../src/services/realtime/ably';
 import { leaseChannel } from '../../src/services/realtime/channelLease';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
@@ -45,7 +45,7 @@ import { typingPostChannelName, useTypingPublisher } from '../../src/services/re
 import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
 import { getComments, createComment, updateComment, deleteComment, deletePost, isRepost, parseImageUrls, COMMENTS_OFF_ERROR } from '../../src/lib/supabase';
 import { submitReport } from '../../src/services/moderation';
-import { invalidateProfilePosts, invalidateProfileReplies } from '../../src/services/profilePosts';
+import { findCachedPost, invalidateProfilePosts, invalidateProfileReplies } from '../../src/services/profilePosts';
 import { generateClientMutationId, queueMutation } from '../../src/services/offlineQueue';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
@@ -129,6 +129,43 @@ function commentItemType(item: any): 'gif' | 'link' | 'text' {
   const type = gif ? 'gif' : !hasCodeBlock(parsed.body) && extractFirstUrl(parsed.body) ? 'link' : 'text';
   if (cacheable) commentTypeCache.set(item, { content, type });
   return type;
+}
+
+// ── THE POST IS ON SCREEN IN THE FIRST FRAME (Nov 2026) ─────────────────────────────────────────
+//
+// Reported: opening a thread looked like a reload every time. A post opened from a profile is not
+// in the entity store (posts live on profile pages now), so the header above the comments stayed
+// empty until `/v1/posts/:id` answered, then popped in and pushed the comments down. The profile
+// page the post was tapped on already holds it, so that copy is shown at once; the request still
+// runs and replaces it only if something shown differs (`sameHeaderPost`).
+function seedPostData(postId: string | undefined): any {
+  if (!postId) return null;
+  try {
+    const entity = useEntityStore.getState();
+    const cached = entity.posts[postId];
+    if (cached) return { ...cached, profiles: entity.profiles[cached.author_id] || null };
+    const fromProfile = findCachedPost(postId);
+    if (fromProfile) return { ...fromProfile, profiles: entity.profiles[fromProfile.author_id] || fromProfile.profiles || null };
+  } catch {}
+  return null;
+}
+
+/** The same post as far as the header shows it: a refresh that changes none of this is not committed. */
+function sameHeaderPost(a: any, b: any): boolean {
+  if (!a || !b || String(a.id) !== String(b.id)) return false;
+  const pa = Array.isArray(a.profiles) ? a.profiles[0] : a.profiles;
+  const pb = Array.isArray(b.profiles) ? b.profiles[0] : b.profiles;
+  return (
+    (a.content || '') === (b.content || '') &&
+    (a.image_url || null) === (b.image_url || null) &&
+    !!a.comments_off === !!b.comments_off &&
+    (a.author_id || '') === (b.author_id || '') &&
+    (pa?.display_name || '') === (pb?.display_name || '') &&
+    (pa?.username || '') === (pb?.username || '') &&
+    (pa?.emoji || '') === (pb?.emoji || '') &&
+    (pa?.badge || null) === (pb?.badge || null) &&
+    !!pa?.is_verified === !!pb?.is_verified
+  );
 }
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
@@ -630,19 +667,11 @@ export default function CommentsScreen() {
   // The push animation is over. Gates the realtime attach and the list's pre-render window, which
   // `runAfterInteractions` could not keep off the slide (the native stack holds no interaction).
   const transitionSettled = useTransitionSettled();
-  // The opening requests (comments, post, repost original) still start on the first frame, so they
-  // gain the slide; their results wait for it to end before they set state. They used to land on
-  // whichever frame of the slide the network answered on, each a render of this whole screen.
+  // Only for a refresh of comments that are already on screen: it waits for the end of the slide
+  // before it sets state, so it does not re-render the screen on a frame of it. Anything the reader
+  // is still waiting for (no cached comments, the post, a repost's original) is shown as soon as it
+  // arrives. Delaying those to the end of the slide made every open look like a reload (Nov 2026).
   const waitSettled = useSettledGate(transitionSettled);
-  // FlashList's own 250 once the push animation is over, reached in two frames (40 → 120 → 250)
-  // instead of one: the comments beyond the screen are built a few at a time, not in one commit
-  // right after the slide (the chat does the same with its history, `transcriptDrawDistance`).
-  const [listDrawDistance, setListDrawDistance] = useState(40);
-  useEffect(() => {
-    if (!transitionSettled || listDrawDistance >= 250) return;
-    const raf = requestAnimationFrame(() => setListDrawDistance((d) => Math.min(250, d * 3)));
-    return () => cancelAnimationFrame(raf);
-  }, [transitionSettled, listDrawDistance]);
   // Shared with the chat screen so the two label sets cannot drift apart.
   const mediaPanelLabels = useMediaPanelLabels();
   // Android: while focused, stop the OS window resize so ONLY our JS-driven
@@ -828,9 +857,22 @@ export default function CommentsScreen() {
   // whole screen on every keystroke.
   const [hasText, setHasText] = useState(false);
   const handleHasTextChange = useCallback((next: boolean) => setHasText(next), []);
-  const [isLoading, setIsLoading] = useState(initialCommentsRef.current.length === 0);
+  // This thread was fetched before on this device (`loadComments` stamps `comments:<id>:ts`). With
+  // nothing cached it then is a thread without comments, and it opens on its empty state instead of
+  // a spinner every time; the fetch still runs and shows any comment that arrived since.
+  const knownThreadRef = useRef<boolean | null>(null);
+  if (knownThreadRef.current === null) {
+    try {
+      knownThreadRef.current = !!postId && kvGetJSONSync<number>(`comments:${postId}:ts`, 0) > 0;
+    } catch {
+      knownThreadRef.current = false;
+    }
+  }
+  const [isLoading, setIsLoading] = useState(initialCommentsRef.current.length === 0 && !knownThreadRef.current);
   const [isSending, setIsSending] = useState(false);
-  const [postData, setPostData] = useState<any>(null);
+  // From the caches in the first render, so the post is there with the cached comments (see
+  // "THE POST IS ON SCREEN IN THE FIRST FRAME").
+  const [postData, setPostData] = useState<any>(() => seedPostData(postId));
   // ── A THREAD WHOSE COMMENTS ARE CLOSED (Nov 2026) ──────────────────────────────────────────────
   //
   // The author can close a post's comments (app/post/new.tsx, «Настройки публикации»). The thread
@@ -1109,10 +1151,9 @@ export default function CommentsScreen() {
     // the user never sees a flash of empty space at the top of the list.
     const { useEntityStore } = require('../../src/store');
     const cached = useEntityStore.getState().posts[postId];
-    if (cached) {
-      const profile = useEntityStore.getState().profiles[cached.author_id];
-      setPostData({ ...cached, profiles: profile || null });
-    }
+    // The first render already holds this post (`seedPostData`); only another post on the same
+    // screen needs it set here.
+    setPostData((prev: any) => (prev && String(prev.id) === String(postId) ? prev : seedPostData(postId)));
     const handle = InteractionManager.runAfterInteractions(() => {
       loadComments();
       // A copy cached before posts carried `comments_off` cannot say whether the thread is closed.
@@ -1213,8 +1254,8 @@ export default function CommentsScreen() {
     if (!postId) return;
     const { apiGet } = await import('../../src/services/apiClient');
     const { data } = await apiGet<any>(`/v1/posts/${encodeURIComponent(postId)}`);
-    await waitSettled();
-    if (data) setPostData(data);
+    // The cached copy stays when the server's says the same, so the header is not rebuilt.
+    if (data) setPostData((prev: any) => (sameHeaderPost(prev, data) ? prev : data));
   };
 
   const loadComments = async () => {
@@ -1240,14 +1281,16 @@ export default function CommentsScreen() {
       setIsLoading(false);
       return;
     }
-    // Don't show the spinner if we already painted cached comments.
-    if (comments.length === 0) setIsLoading(true);
+    // Don't show the spinner if we already painted cached comments, or the empty state of a thread
+    // known to have none (`knownThreadRef`).
+    if (comments.length === 0 && !knownThreadRef.current) setIsLoading(true);
     // Safety: never let the spinner spin forever if the request stalls.
     const safety = setTimeout(() => setIsLoading(false), 8000);
     try {
       const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
-      // Not on a frame of the slide (see `waitSettled`).
-      await waitSettled();
+      // Cached comments are on screen: the refresh waits for the end of the slide. Nothing on screen
+      // yet (the spinner): shown at once (see `waitSettled`).
+      if (initialCommentsRef.current && initialCommentsRef.current.length > 0) await waitSettled();
       if (Array.isArray(data)) {
         setComments((prev) => mergeCommentPages(prev, data));
         // Defer the cache serialize off the open/render frame: JSON.stringify of
@@ -1423,11 +1466,10 @@ export default function CommentsScreen() {
     const handle = InteractionManager.runAfterInteractions(async () => {
       const { apiGet } = await import('../../src/services/apiClient');
       const { data } = await apiGet<any>(`/v1/posts/${encodeURIComponent(info.originalPostId!)}`);
-      await waitSettled();
       if (!cancelled && data) setRepostOriginal(data);
     });
     return () => { cancelled = true; handle.cancel(); };
-  }, [postData?.content, waitSettled]);
+  }, [postData?.content]);
 
   // ── Typing indicator ────────────────────────────────────────────────────────
   //
@@ -2068,11 +2110,10 @@ export default function CommentsScreen() {
             keyExtractor={keyExtractor}
             getItemType={getItemType}
             renderItem={renderComment}
-            // FlashList's own 250 once the push animation is over, in two steps (`listDrawDistance`);
-            // until then only what is on screen, so the open commit does not build comments nobody
-            // can see yet. Always a number: FlashList keeps the previous value when this prop is
-            // `undefined`.
-            drawDistance={listDrawDistance}
+            // FlashList's own 250 once the push animation is over; until then only what is on
+            // screen, so the open commit does not build comments nobody can see yet. Always a number:
+            // FlashList keeps the previous value when this prop is `undefined`.
+            drawDistance={transitionSettled ? 250 : 40}
             contentContainerStyle={listContentStyle}
             showsVerticalScrollIndicator={false}
             onScroll={onCommentsScroll}
