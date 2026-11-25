@@ -34,6 +34,12 @@ export interface Env {
    * proxies the bytes instead of handing those URLs out. See routes/stickers.ts.
    */
   TELEGRAM_BOT_TOKEN?: string;
+  /**
+   * NVIDIA API key for San AI — `wrangler secret put NVIDIA_API_KEY`. Used only by
+   * `POST /v1/ai/complete` (routes/ai.ts), never sent to a client. Optional: without it that route
+   * answers 503 `ai_not_configured`.
+   */
+  NVIDIA_API_KEY?: string;
 }
 
 export type Row = Record<string, unknown>;

@@ -49,6 +49,7 @@ import './routes/admin';
 import './routes/push';
 import './routes/devices';
 import './routes/stickers';
+import './routes/ai';
 
 // ─── Worker fetch handler ──────────────────────────────────────────────────
 

@@ -4,11 +4,16 @@ import { useAccountsStore } from '../store/accountsStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { kvGetJSONSync, kvGetStringSync, kvSetJSON, kvSetString } from './kvStore';
 import { t, useI18nStore } from '../i18n/store';
+import { apiPost } from './apiClient';
 
-const API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-// SECURITY: this key ships inside the app bundle, so anyone can extract it. It should live behind
-// a server proxy (the Worker) and be rotated; tracked as an open item, not fixed here.
-const API_KEY = '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';
+// ── NO API KEY IN THE APP (Nov 2026) ─────────────────────────────────────────────────────────────
+//
+// Requests used to go straight to NVIDIA with a key compiled into this file, so anyone could unpack
+// the app and use the key. They now go to the Worker (`POST /v1/ai/complete`, workers/api/src/
+// routes/ai.ts) with this account's session token, and the Worker adds the key, which lives there
+// as a secret. The Worker also holds the model list and the generation settings, and keeps a daily
+// count per account. The old key is still in older builds and in the git history: rotate it.
+const AI_PATH = '/v1/ai/complete';
 // Tried in order. NVIDIA retires hosted models on a schedule: `meta/llama-3.3-70b-instruct`
 // answers 410 Gone since 2026-08-26, and with a single hard-coded model that turned every San AI
 // request into «Ошибка подключения». A retired model (404/410) is skipped for the rest of the
@@ -373,43 +378,34 @@ async function requestCompletion(
   model: string,
   messages: { role: string; content: string }[],
 ): Promise<CompletionResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45000);
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${API_KEY}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        // Lower than the old 0.6: at 0.6 the replacement models sometimes wrote «тема применена»
-        // and left out the [ACTION:...] tag, so nothing changed.
-        temperature: 0.3,
-        // Cyrillic costs more tokens per word; 300 cut longer Russian answers mid-list.
-        max_tokens: 400,
-        // These are reasoning models. With thinking on, the whole budget went to hidden
-        // reasoning and `content` came back null after up to 60 s.
-        chat_template_kwargs: { enable_thinking: false },
-      }),
-      signal: controller.signal,
-    });
-    if (response.status === 429) return { kind: 'busy' };
-    if (response.status === 404 || response.status === 410) return { kind: 'retired' };
-    if (response.status === 400 || response.status >= 500) return { kind: 'unavailable', status: response.status };
-    if (!response.ok) return { kind: 'error', error: new Error(`API error: ${response.status}`) };
-    const data = await response.json();
-    const raw = data?.choices?.[0]?.message?.content;
+    // The Worker sends NVIDIA the generation settings San AI always used: temperature 0.3 (at 0.6
+    // the models sometimes wrote «тема применена» and left out the [ACTION:...] tag), 400 tokens
+    // (Cyrillic costs more tokens per word; 300 cut longer Russian answers mid-list) and thinking
+    // off (with it on, the whole budget went to hidden reasoning and `content` came back null).
+    // 45 s: the Worker gives up on NVIDIA after 40 and answers `upstream_timeout` first.
+    const { data, error } = await apiPost<{ status: number; text: string | null }>(
+      AI_PATH,
+      { model, messages },
+      { timeoutMs: 45000 },
+    );
+    if (error) {
+      // The Worker's own refusals: its per-minute limit, its daily count, and NVIDIA not answering.
+      if (error === 'rate_limited' || error === 'daily_limit') return { kind: 'busy' };
+      if (error === 'timeout' || error === 'upstream_timeout') return { kind: 'timeout' };
+      return { kind: 'error', error: new Error(`AI request failed: ${error}`) };
+    }
+    const status = Number(data?.status) || 0;
+    if (status === 429) return { kind: 'busy' };
+    if (status === 404 || status === 410) return { kind: 'retired' };
+    if (status === 400 || status >= 500) return { kind: 'unavailable', status };
+    if (status !== 200) return { kind: 'error', error: new Error(`API error: ${status}`) };
+    const raw = data?.text;
     // Belt and braces: drop an inline reasoning block if a model emits one despite the flag.
     const text = typeof raw === 'string' ? raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim() : '';
     return { kind: 'ok', text };
   } catch (e: any) {
-    if (e?.name === 'AbortError') return { kind: 'timeout' };
     return { kind: 'error', error: e };
-  } finally {
-    clearTimeout(timer);
   }
 }
 

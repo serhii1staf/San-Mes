@@ -112,12 +112,14 @@ export function rateClassFor(method: string, path: string): RateClass {
   if (method === 'GET' && path === '/v1/stickers/telegram') return 'HEAVY';
   if (method === 'GET' || method === 'HEAD') return 'READ';
   // A new conversation, post, repost, report or sticker import: rare in normal use, costly to abuse.
+  // And a San AI request, which spends the account's NVIDIA quota (routes/ai.ts).
   if (method === 'POST' && (
     path === '/v1/conversations' ||
     path === '/v1/posts' ||
     path === '/v1/posts/repost' ||
     path === '/v1/reports' ||
-    path === '/v1/mini-apps'
+    path === '/v1/mini-apps' ||
+    path === '/v1/ai/complete'
   )) return 'HEAVY';
   return 'WRITE';
 }

@@ -1,0 +1,148 @@
+// San AI, through the Worker.
+//
+// POST /v1/ai/complete   Body: { model, messages: [{ role, content }] }
+//                        → { status, text }: NVIDIA's HTTP status and the reply text (null unless 200)
+//
+// ── WHY THIS ROUTE EXISTS ───────────────────────────────────────────────────────────────────────
+//
+// The app called NVIDIA directly with an API key compiled into the bundle (src/services/aiService.ts),
+// so anyone could unpack the app, take the key and spend the account's quota on anything. The key
+// now lives only here, as a Worker secret, and the app sends its request to this route with its own
+// session token. A request is limited to the San AI models, to San AI's own generation settings, and
+// to a daily count per account kept in D1 (`ai_usage`, migration 0011), on top of the per-minute
+// limit every heavy route has (guards.ts).
+//
+// What passes through is what the app already sent to NVIDIA (disclosed in the consent prompt and in
+// the privacy policy §4). Nothing of it is stored or logged here; the only thing kept is the count.
+
+import { fail, ok } from '../http';
+import { register } from '../router';
+import { queryOne, type Env } from '../db';
+
+const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
+
+/**
+ * Largest request body. The app sends its system prompt (about 4 KB) and the last 8 messages; the
+ * shared 64 KB cap of `readJson` could refuse eight long Cyrillic messages, which went through when
+ * the app called NVIDIA itself.
+ */
+const MAX_BODY = 256 * 1024;
+
+async function readBody(req: Request): Promise<{ model?: unknown; messages?: unknown } | null> {
+  const declared = Number(req.headers.get('Content-Length') || '0');
+  if (Number.isFinite(declared) && declared > MAX_BODY) return null;
+  try {
+    const text = await req.text();
+    if (!text || text.length > MAX_BODY) return null;
+    const value: unknown = JSON.parse(text);
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as { model?: unknown; messages?: unknown }) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The models San AI may ask for: the same list, in the same order, as `MODELS` in the app. */
+const MODELS = new Set([
+  'nvidia/nemotron-3.5-super-vl-120b-a12b',
+  'nvidia/nemotron-3-ultra-550b-a55b',
+  'nvidia/nemotron-3.5-lightning-30b-a3b',
+]);
+
+/**
+ * Requests per account per UTC day. The app stops at 50 a day by its own clock (`AI_DAILY_LIMIT`);
+ * this is the server's limit for a client that does not, set a little higher so a day boundary in a
+ * different time zone never refuses a request the app thinks is allowed. Each model tried counts.
+ */
+const DAILY_LIMIT = 150;
+
+const MAX_MESSAGES = 60;
+const MAX_CONTENT = 12000;
+const UPSTREAM_TIMEOUT_MS = 40000;
+
+type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+
+function readMessages(raw: unknown): ChatMessage[] | null {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_MESSAGES) return null;
+  const out: ChatMessage[] = [];
+  for (const m of raw) {
+    if (!m || typeof m !== 'object') return null;
+    const role = (m as { role?: unknown }).role;
+    const content = (m as { content?: unknown }).content;
+    if (role !== 'system' && role !== 'user' && role !== 'assistant') return null;
+    if (typeof content !== 'string') return null;
+    out.push({ role, content: content.slice(0, MAX_CONTENT) });
+  }
+  return out;
+}
+
+/** Counts this request against the account's day and says whether it is still within it. */
+async function withinDailyLimit(env: Env, userId: string): Promise<boolean> {
+  const day = new Date().toISOString().slice(0, 10);
+  try {
+    const row = await queryOne<{ count: number }>(
+      env,
+      `INSERT INTO ai_usage (user_id, day, count) VALUES (?, ?, 1)
+         ON CONFLICT (user_id, day) DO UPDATE SET count = count + 1
+       RETURNING count`,
+      [userId, day],
+    );
+    return !row || Number(row.count) <= DAILY_LIMIT;
+  } catch {
+    // The count is a guard, not the feature: a failed write lets the request through, like the
+    // rate limits do.
+    return true;
+  }
+}
+
+register('POST', '/v1/ai/complete', async (req, env, _ctx, _params, authedUserId) => {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  if (!env.NVIDIA_API_KEY) return fail(req, 'ai_not_configured', 503);
+
+  const body = await readBody(req);
+  if (!body) return fail(req, 'invalid body', 400);
+  const model = typeof body.model === 'string' ? body.model : '';
+  if (!MODELS.has(model)) return fail(req, 'invalid model', 400);
+  const messages = readMessages(body.messages);
+  if (!messages) return fail(req, 'invalid messages', 400);
+
+  if (!(await withinDailyLimit(env, authedUserId))) return fail(req, 'daily_limit', 429);
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(NVIDIA_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${env.NVIDIA_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        // San AI's own settings (see `requestCompletion` in the app), fixed here so the key cannot be
+        // used for anything longer or different.
+        temperature: 0.3,
+        max_tokens: 400,
+        chat_template_kwargs: { enable_thinking: false },
+      }),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const timedOut = (e as Error)?.name === 'TimeoutError' || (e as Error)?.name === 'AbortError';
+    return fail(req, timedOut ? 'upstream_timeout' : 'upstream_unreachable', 504);
+  }
+
+  if (!upstream.ok) {
+    // The status decides what the app does next (busy, skip a retired model, try the next one), so
+    // it is passed on; NVIDIA's error body is not.
+    return ok(req, { status: upstream.status, text: null });
+  }
+  let text: string | null = null;
+  try {
+    const data = (await upstream.json()) as { choices?: { message?: { content?: unknown } }[] };
+    const raw = data?.choices?.[0]?.message?.content;
+    text = typeof raw === 'string' ? raw : null;
+  } catch {
+    return ok(req, { status: 502, text: null });
+  }
+  return ok(req, { status: 200, text });
+});
