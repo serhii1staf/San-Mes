@@ -2652,6 +2652,9 @@ export default function ChatScreen() {
   // row carries.
   const entityConv = useEntityStore((s) => s.conversations.find((c) => c.id === conversationId) || s.conversations.find((c) => c.id === id));
   const participantId = paramParticipantId || entityConv?.participantId || (conversation as any)?.participantId || id;
+  // For the realtime handlers, which are set up once per conversation (see "ONLY THE AUTHOR").
+  const participantIdRef = useRef(participantId);
+  participantIdRef.current = participantId;
 
   // Synchronously read this chat's cached messages ONCE so the very first render
   // already has content (no blank frame). Memoized per id so it's a single MMKV
@@ -4756,8 +4759,15 @@ export default function ChatScreen() {
     // server itself refuses (DELETE and PATCH /v1/messages/:id are sender-only).
     const publisherOf = (msg: { clientId?: unknown }): string | null =>
       typeof msg?.clientId === 'string' && msg.clientId.length > 0 ? msg.clientId : null;
-    /** Who wrote a stored message; old caches can still say 'current' for this account. */
-    const authorOf = (m: ChatMessage): string | undefined => (m.senderId === 'current' ? ownUserId : m.senderId);
+    /**
+     * Who wrote a stored message. Old caches (and a notification without a sender) can still say
+     * 'current' for this account or 'peer' for the other person (see `healLegacySender`).
+     */
+    const authorOf = (m: ChatMessage): string | undefined => {
+      if (m.senderId === 'current') return ownUserId;
+      if (m.senderId === 'peer') return participantIdRef.current;
+      return m.senderId;
+    };
 
     const onNewMessage = (msg: { data?: any; clientId?: string }) => {
       const payload = msg?.data;
