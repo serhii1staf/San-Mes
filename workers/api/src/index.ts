@@ -17,11 +17,12 @@
 // is a single file + a single import — `index.ts` doesn't need to know
 // the route's shape.
 
-import { extractBearer, verifyToken } from './auth';
+import { extractBearer, rememberClaims, verifyToken } from './auth';
 import { isInstallAllowed } from './revocation';
 import { Env } from './db';
 import { ROUTES } from './router';
 import { corsHeaders, fail } from './http';
+import { clientIp, rateClassFor, withinLimit } from './guards';
 
 // ─── Route modules ─────────────────────────────────────────────────────────
 //
@@ -88,6 +89,7 @@ export default {
       const allowed = await isInstallAllowed(env, authedUserId, verified.installId);
       if (!allowed) authedUserId = null;
     }
+    if (authedUserId) rememberClaims(req, verified);
 
     const url = new URL(req.url);
     const path = url.pathname.replace(/\/+$/, '') || '/';
@@ -97,14 +99,41 @@ export default {
       const m = route.pattern.exec(path);
       if (!m) continue;
       const params: Record<string, string> = {};
-      route.paramNames.forEach((name, i) => {
-        params[name] = decodeURIComponent(m[i + 1]);
-      });
+      try {
+        route.paramNames.forEach((name, i) => {
+          params[name] = decodeURIComponent(m[i + 1]);
+        });
+      } catch {
+        // A malformed %-sequence threw outside the handler's try, which Cloudflare answers with its
+        // own error page (1101) instead of our envelope.
+        return fail(req, 'bad request', 400);
+      }
+      // ── RATE LIMITS, BEFORE THE HANDLER ───────────────────────────────────────────────────────
+      // See guards.ts. Per account when signed in, per address otherwise and for sign-in and sign-up
+      // (which have no account yet). 'rate_limited' is retryable for the client's offline queue, and
+      // a queued send keeps its clientMutationId, so the retry does not duplicate it.
+      // Anonymous reads are not limited: they are the public pages and link previews, and they come
+      // from shared addresses (Vercel's renderer, carrier NAT), where a per-address limit would refuse
+      // ordinary readers. Everything that writes needs an account, and that is where abuse costs.
+      const cls = rateClassFor(req.method, path);
+      const perAddress = cls === 'AUTH' || cls === 'SIGNUP' || !authedUserId;
+      const key = perAddress ? `ip:${clientIp(req)}` : `u:${authedUserId}`;
+      const limited = !(cls === 'READ' && !authedUserId);
+      if (limited && !(await withinLimit(env, cls, key))) {
+        const res = fail(req, 'rate_limited', 429);
+        res.headers.set('Retry-After', '30');
+        return res;
+      }
       try {
         return await route.handler(req, env, ctx, params, authedUserId);
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : 'internal error';
-        return fail(req, msg, 500);
+        // ── NO DATABASE ERROR TEXT IN RESPONSES ───────────────────────────────────────────────
+        // This returned `e.message`, which handed callers D1's own wording ("no such column ...",
+        // "UNIQUE constraint failed: profiles.username"): the schema, to anyone who could provoke an
+        // error. Logged for us, generic for them. The client treats 'internal error' as retryable.
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log(JSON.stringify({ evt: 'route_error', method: req.method, path, error: msg.slice(0, 300) }));
+        return fail(req, 'internal error', 500);
       }
     }
 

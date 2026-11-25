@@ -104,6 +104,21 @@ export async function signToken(env: Env, userId: string, installId?: string | n
     .sign(getSecret(env));
 }
 
+// ── THE VERIFIED CLAIMS OF THE REQUEST BEING HANDLED ───────────────────────────────────────────
+//
+// Handlers receive only the user id. The refresh route needs the token's own install claim (see
+// routes/auth.ts, "A REFRESH KEEPS THE TOKEN'S OWN INSTALL"), so the dispatcher records the verified
+// token here, keyed by the request object, and the route reads it back.
+const claimsByRequest = new WeakMap<Request, VerifiedToken>();
+
+export function rememberClaims(req: Request, verified: VerifiedToken | null): void {
+  if (verified) claimsByRequest.set(req, verified);
+}
+
+export function claimsOf(req: Request): VerifiedToken | null {
+  return claimsByRequest.get(req) ?? null;
+}
+
 /** Extract the bearer token from a request, or `null` if absent. */
 export function extractBearer(req: Request): string | null {
   const auth = req.headers.get('Authorization') || req.headers.get('authorization');

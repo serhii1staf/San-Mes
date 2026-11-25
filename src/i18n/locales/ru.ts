@@ -1165,6 +1165,7 @@ const ru: Record<string, string> = {
   // ─── Auth / supabase error strings ─────────────────────────────────────
   'auth.error.username_taken': 'Это имя пользователя уже занято',
   'auth.error.invalid_key_or_pin': 'Неверный ключ или код',
+  'auth.error.too_many_attempts': 'Слишком много неверных попыток. Попробуйте позже.',
   'auth.error.invalid_pin': 'Неверный код',
   'auth.error.delete_partial': 'Не удалось полностью удалить аккаунт. Попробуйте ещё раз.',
   'auth.error.delete_generic': 'Не удалось удалить аккаунт',

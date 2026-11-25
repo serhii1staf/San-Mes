@@ -32,11 +32,20 @@ export async function readJson<T = unknown>(req: Request): Promise<Result<T>> {
     }
     return { ok: false, error: 'expected application/json' };
   }
+  // Refused before reading when the client declares more than the cap: the whole body used to be
+  // buffered first and measured after.
+  const declared = Number(req.headers.get('Content-Length') || '0');
+  if (Number.isFinite(declared) && declared > 64 * 1024) return { ok: false, error: 'body too large' };
   try {
     const text = await req.text();
     if (!text) return { ok: true, value: {} as T };
     if (text.length > 64 * 1024) return { ok: false, error: 'body too large' };
-    return { ok: true, value: JSON.parse(text) as T };
+    const parsed: unknown = JSON.parse(text);
+    // Every route reads named fields off an object. `null`, a number or a string threw a TypeError in
+    // the handler (a 500); an array would have been read as an object with no fields.
+    if (parsed === null) return { ok: true, value: {} as T };
+    if (typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false, error: 'invalid json' };
+    return { ok: true, value: parsed as T };
   } catch {
     return { ok: false, error: 'invalid json' };
   }

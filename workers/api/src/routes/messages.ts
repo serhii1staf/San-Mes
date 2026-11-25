@@ -20,6 +20,7 @@ import { asStr, readJson } from '../validate';
 import { channels, publishEvent } from '../realtime';
 import { sendPushToUser, cleanPushBody } from '../push';
 import { findDedupResultId, maybeCleanupDedup, parseClientMutationId, recordDedup } from '../dedup';
+import { blockedBetween, otherParticipant, withinLimit } from '../guards';
 
 /**
  * Validate one image dimension off the wire. Returns `null` for anything unusable.
@@ -76,7 +77,16 @@ register('POST', '/v1/conversations', async (req, env, _ctx, _params, authedUser
       LIMIT 1`,
     [authedUserId, otherUserId],
   );
+  // An existing chat keeps answering with its id, block or not: the chat screen resolves its
+  // conversation through this route, and the person who blocked must still be able to open it.
   if (existing) return ok(req, { conversation_id: existing.conversation_id });
+
+  // A NEW conversation needs a real person on the other end who has not blocked the caller (and whom
+  // the caller has not blocked). Any uuid used to be accepted, which is how anyone could open a chat
+  // with anyone and push to their phone. See guards.ts.
+  const other = await queryOne<{ id: string }>(env, `SELECT id FROM profiles WHERE id = ? LIMIT 1`, [otherUserId]);
+  if (!other) return fail(req, 'not found', 404);
+  if (await blockedBetween(env, authedUserId, otherUserId)) return fail(req, 'forbidden', 403);
 
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -149,6 +159,11 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
       // and create a fresh message rather than returning an empty body.
     }
   }
+
+  // Blocked either way: refused, so nothing is stored and nobody is pushed. After the retry check
+  // above, so a send that was stored before the block still answers its own retry.
+  const peer = await otherParticipant(env, conversationId, authedUserId);
+  if (peer && (await blockedBetween(env, authedUserId, peer))) return fail(req, 'forbidden', 403);
 
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -259,6 +274,11 @@ async function fanOutNewMessage(
     );
     // Off-screen / backgrounded recipients get a real push too. Clean the
     // body so storage markers (::gif::, ::re:: …) never leak into the banner.
+    //
+    // At most a burst per sender and recipient (guards.ts, `RL_PUSH`): past it the message is still
+    // stored and still reaches the open app over realtime, but no more banners, so a flood cannot
+    // fill someone's lock screen. Ordinary fast typing stays well under it.
+    if (!(await withinLimit(env, 'PUSH', `${authedUserId}>${row.user_id}`))) continue;
     const pushBody = cleanPushBody(text).slice(0, 200);
     sendPushToUser(env, ctx, row.user_id, {
       title: sender?.display_name || sender?.username || 'New message',
