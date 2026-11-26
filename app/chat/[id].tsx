@@ -7882,6 +7882,10 @@ export default function ChatScreen() {
           downward overhang on a TOP scrim lands squarely on the first message rows, which
           is exactly the complaint. The wrapper is the chrome's own footprint again, so the
           ramp finishes where the header finishes. */}
+      {/* The band is its own layer, under the header's controls and over the transcript: inside the header's
+          wrapper its corners were cut at the wrapper's bottom on Android, and making the wrapper taller moved
+          the controls down. See ChatHeaderSheet. */}
+      <ChatHeaderSheet isDark={theme.isDark} bgColor={bgColor} edgeY={headerContentHeight + 8} />
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         {/* ── THE PEER'S BANNER, BEHIND THE SCRIM ─────────────────────────────────
             Asked for: the header is "too banal, one to one with Telegram" — could it merge with the
@@ -7915,7 +7919,6 @@ export default function ChatScreen() {
             Replaced the dimming ramp. Asked for: the header "looks the same as in every app"; the
             shape of the profile banner card instead, a little bigger, blurred, and no outlines around
             the back button, the name and the avatar. See ChatHeaderSheet. */}
-        <ChatHeaderSheet isDark={theme.isDark} bgColor={bgColor} solid={headerContentHeight - 12} />
         {searchMode ? (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
             {glassActive ? (

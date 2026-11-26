@@ -1,32 +1,48 @@
-// The soft inverted corner for the chat header band (src/components/chat/ChatHeaderSheet.tsx):
-// white with alpha, the top-left corner; the right one is the same image mirrored.
+// The corners of the chat header band (src/components/chat/ChatHeaderSheet.tsx): white with alpha,
+// the top-left corner; the right one is the same image mirrored.
 //
-// The band is solid down to its edge, and below the edge the transcript reads as a card with rounded
-// TOP corners tucked under it. Inside the corner tile the alpha falls off with the distance into that
-// card (smoothstep over FADE pt, the same curve as the band's straight edge), and the shoulder fades
-// out toward the tile's bottom so the corner has no hard end at the screen edge.
+// The conversation reads as a card with rounded TOP corners tucked under the band. Alpha is a
+// function of one distance, from the card's edge out into the band (a signed distance field), so the
+// band's colour and the iOS blur follow exactly the same rounded line; only how far each one takes to
+// come in differs (`FADE` per asset). The tile covers the corner quadrant from `FADE_MAX` above the
+// card's top edge down to where the arc meets the screen's side, so it joins the straight edge
+// gradient (same curve, same distance) without a seam and ends without a cut.
+//
+// Run with `node scripts/make-chat-header-corner.js` after changing a constant here, and keep RADIUS,
+// FADE_* and FADE_MAX equal to the ones in ChatHeaderSheet.tsx.
 const fs = require('fs');
-const { PNG } = require('C:/Users/Bruker/Downloads/San-Mes/node_modules/pngjs');
-const R = 34;
-const FADE = 26;
-const S = 3;
-const N = R * S;
-const png = new PNG({ width: N, height: N });
+const path = require('path');
+const { PNG } = require(path.join(__dirname, '..', 'node_modules', 'pngjs'));
+
+const RADIUS = 56;
+const FADE_MAX = 20;
+const SCALE = 3;
 const smooth = (t) => t * t * (3 - 2 * t);
-for (let py = 0; py < N; py++) {
-  for (let px = 0; px < N; px++) {
-    const x = (px + 0.5) / S;
-    const y = (py + 0.5) / S;
-    const dist = Math.hypot(R - x, R - y);
-    let a = dist >= R ? 1 : 1 - smooth(Math.min(1, (R - dist) / FADE));
-    a *= 1 - smooth(Math.min(1, Math.max(0, (y / R - 0.5) / 0.5)));
-    const i = (py * N + px) * 4;
-    png.data[i] = 255;
-    png.data[i + 1] = 255;
-    png.data[i + 2] = 255;
-    png.data[i + 3] = Math.round(a * 255);
+
+function corner(file, fade) {
+  const w = RADIUS * SCALE;
+  const h = (FADE_MAX + RADIUS) * SCALE;
+  const png = new PNG({ width: w, height: h });
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      const x = (px + 0.5) / SCALE;
+      // From the card's top edge, positive downward.
+      const y = (py + 0.5) / SCALE - FADE_MAX;
+      // Distance from the arc (centre RADIUS, RADIUS) out into the band; negative inside the card.
+      const d = Math.hypot(RADIUS - x, RADIUS - y) - RADIUS;
+      const a = d <= 0 ? 0 : smooth(Math.min(1, d / fade));
+      const i = (py * w + px) * 4;
+      png.data[i] = 255;
+      png.data[i + 1] = 255;
+      png.data[i + 2] = 255;
+      png.data[i + 3] = Math.round(a * 255);
+    }
   }
+  const out = path.join(__dirname, '..', 'assets', file);
+  fs.writeFileSync(out, PNG.sync.write(png));
+  console.log(`wrote ${out} ${w}x${h}`);
 }
-const out = 'C:/Users/Bruker/Downloads/San-Mes/assets/chat-header-corner.png';
-fs.writeFileSync(out, PNG.sync.write(png));
-console.log(`wrote ${out} ${N}x${N}`);
+
+// The colour comes in over 20 pt, so the band stays soft; the blur over 8, so the line reads clearly.
+corner('chat-header-corner.png', 20);
+corner('chat-header-corner-blur.png', 8);
