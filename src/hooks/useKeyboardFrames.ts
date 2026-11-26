@@ -1,5 +1,6 @@
 import { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useKeyboardHandler } from 'react-native-keyboard-controller';
+import { browserBandHeightSV } from '../lib/browserBandShared';
 
 /**
  * The keyboard's height on the UI thread, updated on every frame of its movement (0 when closed).
@@ -41,11 +42,16 @@ export function useKeyboardFrames(): SharedValue<number> {
  * The view keeps `restPadding` (usually the safe area) as its bottom padding at all times and rises
  * by whatever the keyboard covers beyond `restPadding - gap`, so its content ends `gap` above the
  * keyboard. Animating the padding instead would be a layout change on every keyboard move.
+ *
+ * `underBand`: the screen sits above the minimized-session bar when it shows (every pushed screen
+ * and tab), so the keyboard, measured from the bottom of the window, covers the bar before the
+ * screen. False for a screen presented over the whole window (an iOS native modal).
  */
-export function useKeyboardRiseStyle(restPadding: number, gap = 8) {
+export function useKeyboardRiseStyle(restPadding: number, gap = 8, underBand = true) {
   const keyboard = useKeyboardFrames();
   const covered = restPadding - gap;
-  return useAnimatedStyle(() => ({
-    transform: [{ translateY: -Math.max(0, keyboard.value - covered) }],
-  }));
+  return useAnimatedStyle(() => {
+    const band = underBand ? browserBandHeightSV.value : 0;
+    return { transform: [{ translateY: -Math.max(0, keyboard.value - band - covered) }] };
+  });
 }

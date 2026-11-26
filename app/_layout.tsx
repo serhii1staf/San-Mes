@@ -944,19 +944,13 @@ function RootLayout() {
             `openShareSheet` — see `src/store/shareSheetStore.ts` for why this is a store and not a prop.
             Renders literally nothing until the first time it is opened. */}
         <ShareSheetHost />
-        {/* The Stack and the minimized-session band share one flex column, so the
-            band occupies its own height and the Stack — including the chat input bar
-            and the floating tab bar inside it — is pushed up by exactly that much.
-            
-            That lift is REQUIRED, not incidental: the band, the input bar and the tab
-            bar all live at the bottom of the screen, so a band that reserved no space
-            would necessarily cover one of them. It did, and the report was "I can't
-            see what I'm tapping".
-            
-            Layout commits twice per session (show / finished-hiding), owned by React
-            state inside the band. What must not come back is animating that height
-            frame by frame, which re-laid out this whole tree ~23 times per
-            transition. */}
+        {/* The Stack and the minimized-session bar share one flex column: while the bar shows, a
+            spacer of its height sits under the Stack, so the tab bar and every composer sit ON the
+            bar instead of behind it ("I can't see what I'm tapping" was a bar that reserved no
+            space). The bar itself is drawn over the bottom of this column and moves only by
+            transform; the spacer changes once when it appears and once when it goes. Never animate
+            the spacer's height: that re-laid out this whole tree ~23 times per transition. See
+            BrowserBottomBand. */}
         <View style={styles.rootColumn}>
           <View style={styles.stackWrapper}>
             <AppStack />

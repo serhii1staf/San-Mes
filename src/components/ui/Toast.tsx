@@ -8,6 +8,7 @@ import { Text } from './Text';
 import { useToastStore } from '../../store/toastStore';
 import { NativeGlassView, useLiquidGlassActive } from './LiquidGlass';
 import { getTabBarHeight } from '../navigation/CustomTabBar';
+import { useBottomChromeInset, useBrowserBandHeight } from '../../lib/browserWidget';
 
 // Breathing room between the toast and whatever sits below/above it.
 const GAP = 12;
@@ -59,8 +60,12 @@ export function Toast() {
   // toast fully off-screen regardless of font scaling / message length.
   const [measuredH, setMeasuredH] = useState(DEFAULT_H);
 
-  // Resting bottom/top offset for the surface.
-  const bottomOffset = isTabScreen ? getTabBarHeight(insets.bottom) + GAP : 0;
+  // Resting bottom/top offset for the surface. With the minimized-session bar under the app the tab
+  // bar sits on that bar, not on the window's edge, and pads by none of the safe area
+  // (src/lib/browserWidget.ts).
+  const bandH = useBrowserBandHeight();
+  const chromeInset = useBottomChromeInset();
+  const bottomOffset = isTabScreen ? bandH + getTabBarHeight(chromeInset) + GAP : 0;
   const topOffset = Math.max(insets.top, 8) + GAP;
 
   // Distance needed to push the toast completely past the nearest screen edge.

@@ -11,10 +11,9 @@ const appStorage: StateStorage = {
 interface SettingsState {
   hapticEnabled: boolean;
   useInAppBrowser: boolean;
-  // Where the minimized browser/mini-app pill appears. "top" floats it under
-  // the status bar (default), "bottom" docks it above the tab bar with the
-  // same rounded glass styling — the rest of the UI keeps full reach without
-  // the pill cutting into the safe-area indicator at the top of the screen.
+  // Where the minimized browser/mini-app widget appears. "bottom" (the default since Nov 2026) is
+  // Telegram's minimized app bar under the app (BrowserBottomBand); "top" floats a pill under the
+  // status bar (BrowserMiniBar).
   browserWidgetPosition: 'top' | 'bottom';
   // In-app perf monitor — small draggable bubble that shows live JS/UI FPS
   // and opens a panel with recent navigation/timing events. Default ON so
@@ -146,7 +145,7 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       hapticEnabled: true,
       useInAppBrowser: true,
-      browserWidgetPosition: 'top',
+      browserWidgetPosition: 'bottom',
       // ── PERF MONITOR DEFAULTS OFF ─────────────────────────────────────────
       //
       // This used to default ON, with the reasoning "so QA / the dev can spot
@@ -285,18 +284,21 @@ export const useSettingsStore = create<SettingsState>()(
       // all survive. Returning `migrate`'s result unmerged for unknown future
       // versions is fine because `merge` still layers it over the current
       // defaults, so a field added later simply takes its default.
-      version: 1,
+      //
+      // Version 2 (Nov 2026) moves the minimized-session widget to the bottom, once, for everyone.
+      // Until now the bottom bar was switched off in code and every install saw the top pill
+      // whatever it had stored, so a stored 'top' is almost always just the old default rather than
+      // a choice. Asked for: the widget at the bottom, like Telegram's. The setting stays, so anyone
+      // who wants the pill back picks it again in Settings → Browser.
+      version: 2,
       migrate: (persistedState, version) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState as SettingsState;
         }
-        if (version < 1) {
-          return {
-            ...(persistedState as Partial<SettingsState>),
-            perfMonitorEnabled: false,
-          } as SettingsState;
-        }
-        return persistedState as SettingsState;
+        let state = persistedState as Partial<SettingsState>;
+        if (version < 1) state = { ...state, perfMonitorEnabled: false };
+        if (version < 2) state = { ...state, browserWidgetPosition: 'bottom' };
+        return state as SettingsState;
       },
     }
   )

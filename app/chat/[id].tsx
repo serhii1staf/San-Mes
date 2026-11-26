@@ -49,7 +49,7 @@ import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useMessageGestures, useReplyIconStyle } from '../../src/hooks/useMessageGestures';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
-import { useBrowserStore } from '../../src/store/browserStore';
+import { browserBandHeightSV, getBrowserBandHeightNow } from '../../src/lib/browserBandShared';
 import { ChatBackgroundLayer, isAnimatedUri } from '../../src/components/ui/ChatBackgroundLayer';
 import { useAmbientMotionAllowed } from '../../src/hooks/useAmbientMotionAllowed';
 import { useIsFocused } from '@react-navigation/native';
@@ -61,7 +61,8 @@ import { firstImageUrlFromStoredText, messageImageUrls } from '../../src/utils/c
 import { reportImageDims } from '../../src/services/imageDimsReporter';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
-import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
+import { useBottomChromeInset, useBrowserBandHeight } from '../../src/lib/browserWidget';
+import { BandFollowLayer } from '../../src/components/ui/BandFollowLayer';
 import { composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { addTombstones, filterTombstoned, isTombstoned } from '../../src/services/messageTombstones';
@@ -2729,7 +2730,11 @@ export default function ChatScreen() {
   // never opened in this session.
   const lastKbHeightRef = useRef(0);
   const captureKbHeight = useCallback((h: number) => {
-    if (h > 1) lastKbHeightRef.current = h;
+    // What the keyboard covered of THIS screen: with the minimized-session bar under the app, the
+    // part over the bar is not the screen's. The panel replaces exactly that, so it opens without
+    // moving the composer.
+    const covered = h - getBrowserBandHeightNow();
+    if (covered > 1) lastKbHeightRef.current = covered;
   }, []);
   // A GIF wallpaper holds still while the list scrolls or the keyboard moves. See `ChatWallpaper`.
   const wallpaperPauseRef = useRef<WallpaperPause | null>(null);
@@ -3219,7 +3224,13 @@ export default function ChatScreen() {
   // finishing level with the pill rather than a little past it. Both the gradient AND the
   // transcript's top spacer move together — see `headerScrimHeights`.
   const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top, 8);
-  const inputBarBottomPad = Math.max(insets.bottom, 12);
+  // The bottom inset this screen's own chrome pads by: 0 while the minimized-session bar is under
+  // the app (the home indicator is then under the bar, see `useBottomChromeInset`).
+  const chromeInset = useBottomChromeInset();
+  const inputBarBottomPad = Math.max(chromeInset, 12);
+  // The bar's height while it is under the app, 0 without it: how far above the screen's top the
+  // bottom chrome's layer starts (BandFollowLayer), so the transcript inside starts this far down.
+  const bandH = useBrowserBandHeight();
 
   // Gradient backdrop is now rendered as a STATIC absolute-positioned
   // element pinned to the bottom of the screen (see the JSX further down)
@@ -3234,24 +3245,10 @@ export default function ChatScreen() {
   // the same 8 pt gap above the keyboard now comes from the transform (`composerRise`).
   const inputRowStyle = useMemo(() => ({ paddingBottom: inputBarBottomPad }), [inputBarBottomPad]);
 
-  // Compensate the KeyboardStickyView's `offset.opened` for the bottom-
-  // docked browser widget. When the band is active it lives INSIDE the
-  // root flex column as a 56-px-tall sibling of the Stack wrapper, which
-  // squeezes every screen (including this chat) so its bottom edge is
-  // 56 px above the actual screen bottom. The chat input sticks to the
-  // chat-screen bottom, and KSV translates the sticky surface upward by
-  // the keyboard height when the keyboard appears — but because the
-  // chat screen is already 56 px above the screen bottom, the input
-  // ends up 56 px ABOVE the keyboard top instead of right on it. The
-  // user perceives this as an unexpectedly large gap between the input
-  // bar and the keyboard whenever a browser widget is docked at the
-  // bottom. Adding `BAND_HEIGHT` to KSV's `translateY` when the
-  // keyboard is open pushes the input back down into the band's
-  // overlapped region (the keyboard hides the band anyway), so the
-  // input lands flush against the keyboard top in both states.
-  const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
-  const browserWidgetPosition = useEffectiveBrowserWidgetPosition();
-  const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
+  // With the minimized-session bar under the app this screen ends the bar's height above the bottom
+  // of the window, and the keyboard (measured from the window's bottom) covers the bar first: the
+  // keyboard maths below subtract `browserBandHeightSV`, the bar's height on the UI thread. The keyboard
+  // hides the bar anyway, so the field still lands 8 pt above the keys.
 
   // ── ONE SOURCE, FRAME BY FRAME, FOR EVERYTHING THAT MOVES WITH THE KEYBOARD ──
   //
@@ -3303,8 +3300,8 @@ export default function ChatScreen() {
   //   • Open emoji: kb 300→0, panel 300 → max stays 300 (no move)
   //   • Back to kb: kb 0→300, panel 300 → max stays 300 (no move)
   // A MAX, so the keyboard↔panel handoff is monotonic: it can never dip and snap back.
-  // `stickyOpenedOffset`: with the browser widget docked at the bottom this screen ends 56 pt above
-  // the window bottom, so the keyboard first has to cover that band.
+  // `browserBandHeightSV`: with the minimized-session bar under the app this screen ends that much
+  // above the window bottom, so the keyboard first has to cover the bar.
   //
   // The transcript and the scroll button move by exactly as much as the bar (the same style), so the
   // gap between the newest message and the field is the same with the keyboard up, down, or
@@ -3312,7 +3309,7 @@ export default function ChatScreen() {
   // which opened that gap by the safe-area height whenever the keyboard came up.
   const padDelta = inputBarBottomPad - 8;
   const barWrapStyle = useAnimatedStyle(() => {
-    const lift = Math.max(kbFrames.value - stickyOpenedOffset, liftSV.value * emojiPanelSV.value);
+    const lift = Math.max(kbFrames.value - browserBandHeightSV.value, liftSV.value * emojiPanelSV.value);
     return { transform: [{ translateY: -Math.max(0, lift - padDelta) }] };
   });
   const listShiftStyle = barWrapStyle;
@@ -3337,10 +3334,11 @@ export default function ChatScreen() {
   // keyboard regardless of this constant.
   const INPUT_BAR_HEIGHT = 60;
   const LIST_FOOTER_HEIGHT = INPUT_BAR_HEIGHT + inputBarBottomPad + 12;
-  // Resting top edge of the composer stack (typing strip + reply banner + input bar), in screen
-  // coordinates. Layout only, so the keyboard's translate does not move it; read when the message
-  // menu opens, which dismisses the keyboard first. A ref, so a growing input never re-renders the
-  // screen for it.
+  // Resting top edge of the composer stack (typing strip + reply banner + input bar), measured from
+  // the top of the bottom chrome's layer (BandFollowLayer), which starts `bandH` above the screen's
+  // top: subtract `bandH` for screen coordinates. Layout only, so the keyboard's translate does not
+  // move it; read when the message menu opens, which dismisses the keyboard first. A ref, so a
+  // growing input never re-renders the screen for it.
   const composerTopRef = useRef<number | null>(null);
   const onComposerLayout = useCallback((e: { nativeEvent: { layout: { y: number } } }) => {
     composerTopRef.current = e.nativeEvent.layout.y;
@@ -7583,7 +7581,11 @@ export default function ChatScreen() {
           driven by the keyboard frame on the UI thread, so when the keyboard
           rises every message rides up with it (last message stays visible
           above the input bar) without triggering FlatList layout. */}
-      <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
+      {/* Everything pinned to the bottom, down to the photo panel, glides with the minimized-session
+          bar when it comes or goes instead of dropping by its height in one frame (BandFollowLayer).
+          The transcript fills the screen inside it from `top: bandH`. */}
+      <BandFollowLayer>
+      <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, top: bandH }, listShiftStyle]} pointerEvents="box-none">
       <SkipCorrectionAtNewest data={windowedMessages} atNewest={isAtNewest} listRef={flatListRef} />
       <GestureDetector gesture={panelDismissTap}>
       {transcriptEl}
@@ -7620,7 +7622,7 @@ export default function ChatScreen() {
             library keeps its overhang, where there is no field for the ramp to climb over. */}
       <View
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 12) }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(chromeInset, 12) }}
       >
         {/* Shared scrim ramp (src/theme/scrim.ts). These stops used to be local
             (`[bgTransparent, bgColor + 'B3', bgColor]`, midpoint 0.45) — a
@@ -7841,7 +7843,7 @@ export default function ChatScreen() {
         <SearchActionBar
           visible={!!activeMatchMessage}
           isPinned={!!activeMatchMessage && pinnedIds.includes(activeMatchMessage.id)}
-          bottomInset={insets.bottom}
+          bottomInset={chromeInset}
           keyboardHeight={kbFrames}
           glassActive={glassActive}
           theme={theme}
@@ -7875,7 +7877,7 @@ export default function ChatScreen() {
               recentEmoji={recentEmoji}
               recentGifs={recentGif}
               theme={theme}
-              bottomInset={insets.bottom}
+              bottomInset={chromeInset}
               labels={mediaPanelLabels}
               onSendEmoji={onSendEmojiMessage}
               onCopyEmoji={onCopyEmoji}
@@ -7897,7 +7899,7 @@ export default function ChatScreen() {
       {!searchMode && photoPanelOpen && (
         <PhotoPickerPanel
           collapsedHeight={emojiPanelHeight}
-          bottomInset={insets.bottom}
+          bottomInset={chromeInset}
           theme={theme}
           selectionLimit={Math.max(1, 6 - pendingImages.length)}
           labels={{
@@ -7915,6 +7917,7 @@ export default function ChatScreen() {
           onClose={closePhotoPanel}
         />
       )}
+      </BandFollowLayer>
 
       {/* Gradient fade header — three stops with a translucent middle so
           content scrolling under the header reads as a soft ghost rather
@@ -8291,7 +8294,7 @@ export default function ChatScreen() {
             visibleBounds={{
               top: headerContentHeight + (activePin ? PINNED_BAR_BAND : 0),
               bottom:
-                (composerTopRef.current ?? SCREEN_HEIGHT - (INPUT_BAR_HEIGHT + inputBarBottomPad)) -
+                (composerTopRef.current != null ? composerTopRef.current - bandH : SCREEN_HEIGHT - bandH - (INPUT_BAR_HEIGHT + inputBarBottomPad)) -
                 // The composer rises by the panel height less its resting padding (`barWrapStyle`).
                 (emojiOpen || gifOpen || keepLifted ? Math.max(0, emojiPanelHeight - padDelta) : 0),
             }}
@@ -8327,7 +8330,7 @@ export default function ChatScreen() {
         onClose={closeImageViewer}
         onIndexChange={onViewerIndexChange}
         topInset={insets.top}
-        bottomInset={insets.bottom}
+        bottomInset={chromeInset}
         proxyWidth={CHAT_IMG_MAX_W}
         header={viewerHeader}
         footer={viewerFooter}
@@ -8474,8 +8477,9 @@ const SearchActionBar = React.memo(function SearchActionBar({
     // While the keyboard is up the bottom inset is already inside the keyboard's
     // footprint, so only what it covers beyond that inset lifts the bar. A plain
     // max(), not a step at kb > 1: with a value that moves every frame, the step
-    // dipped the bar by the inset on the first frame of each keyboard move.
-    const kbLift = Math.max(0, kb - bottomInset);
+    // dipped the bar by the inset on the first frame of each keyboard move. The minimized-session bar
+    // under the app is covered by the keyboard first, like the inset.
+    const kbLift = Math.max(0, kb - bottomInset - browserBandHeightSV.value);
     const enter = interpolate(progress.value, [0, 1], [140, 0]);
     return { transform: [{ translateY: enter - kbLift }] };
   });

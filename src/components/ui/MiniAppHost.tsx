@@ -206,8 +206,15 @@ export function MiniAppHost() {
       // Open / restore. Starting a new timing on slideY implicitly cancels any
       // in-flight minimize/close slide, so a quick restore mid-collapse simply
       // reverses cleanly from the CURRENT position — no stale state.
-      Animated.timing(slideY, { toValue: 0, duration: 400, easing: OPEN_EASING, useNativeDriver: true }).start();
-      try { useBrowserStore.getState().clearMinimized(); } catch {}
+      //
+      // The minimized widget is cleared once the panel has covered the screen, not as it starts to
+      // rise. With the bar at the bottom (BrowserBottomBand) clearing gives the bar's space back to
+      // the screen underneath, and under the panel nothing is seen moving. A minimize that interrupts
+      // the open leaves it set, which is right: the session is minimized again.
+      Animated.timing(slideY, { toValue: 0, duration: 400, easing: OPEN_EASING, useNativeDriver: true }).start(({ finished }) => {
+        if (!finished || useMiniAppStore.getState().mode !== 'full') return;
+        try { useBrowserStore.getState().clearMinimized(); } catch {}
+      });
     } else if (mode === 'min') {
       cancelHandoff();
       Animated.timing(slideY, { toValue: SCREEN_H, duration: DISMISS_MS, easing: DISMISS_EASING, useNativeDriver: true }).start(({ finished }) => {

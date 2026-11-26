@@ -144,6 +144,13 @@ interface ActionMenuProps<Id extends string> {
    * card while everything else dims. Without it such an item stays lit where it is.
    */
   longPreview?: (maxHeight: number) => React.ReactNode;
+  /**
+   * How much of the bottom of the window is not the menu's, for a menu drawn inside a screen with
+   * something under that screen: the minimized-session bar (BrowserBottomBand), which shortens every
+   * screen above it and is drawn over the bottom of the window. Without this the card could be
+   * placed partly under that bar. A menu drawn over the whole window (in a Modal) leaves it out.
+   */
+  bottomReserve?: number;
 }
 
 // ── THE WHOLE ITEM, ALWAYS ───────────────────────────────────────────────────────────────────────
@@ -465,6 +472,7 @@ function ActionMenuInner<Id extends string>(
   {
     anchor, align = 'left', title, top, items, onSelect, onWillSelect, onClosing, onClose, zones, hovered,
     spotlightRadius, spotlightBounds, spotlightLift = 1, captureHeld, onHeldPreview, longPreview,
+    bottomReserve = 0,
   }: ActionMenuProps<Id>,
   ref: React.ForwardedRef<ActionMenuHandle>,
 ) {
@@ -500,12 +508,15 @@ function ActionMenuInner<Id extends string>(
     (items.length > 0 ? items.length * ROW_H + LIST_PAD * 2 : 0);
   const keyboardH = keyboardHeightNow();
   const minTop = insets.top + 8;
-  const maxBottom = H - Math.max(insets.bottom, 10) - 8 - keyboardH;
+  // What the card must stay above: the safe area (and the keyboard), or the bar under the screen this
+  // menu is drawn in (`bottomReserve`), whichever reaches higher. The keyboard covers that bar first.
+  const bottomEdge = Math.max(insets.bottom, 10);
+  const maxBottom = H - Math.max(bottomEdge + keyboardH, bottomReserve) - 8;
   // The band the held item can be seen in (see `spotlightBounds`).
   const bandTop = spotlightBounds?.top ?? minTop;
   const bandBottom = spotlightBounds?.bottom ?? maxBottom;
   // The keyboard is dismissed once a snapshot is up, so the free space is then the whole screen.
-  const freeBottom = H - Math.max(insets.bottom, 10) - 8;
+  const freeBottom = H - Math.max(bottomEdge, bottomReserve) - 8;
   // The most of an item a snapshot window can show above the card.
   const windowRoom = Math.max(80, freeBottom - minTop - GAP - menuH);
 

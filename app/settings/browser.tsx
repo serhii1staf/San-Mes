@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Pressable, Switch, ScrollView } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import Svg, { Path } from 'react-native-svg';
 import { BlurView } from '../../src/components/ui/AppBlurView';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -118,9 +119,10 @@ function PositionCard({
   const inkStrong = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)';
 
   // The minimised browser pill, matched to the real widgets:
-  //  • top  → a floating glass pill (BrowserMiniBar / BlurView, rounded 16)
-  //  • bottom → a docked band with rounded top corners (BrowserBottomBand)
-  // Both show: favicon/emoji dot + a short title line + a tiny ✕.
+  //  • top  → a floating glass pill (BrowserMiniBar / BlurView, rounded 16): favicon/emoji dot,
+  //    a short title line, a tiny ✕ on the right
+  //  • bottom → Telegram's minimized app bar under the app (BrowserBottomBand): a centred title
+  //    line and the ✕ on the left
   const renderPill = () => {
     if (kind === 'top') {
       return (
@@ -162,37 +164,48 @@ function PositionCard({
         </View>
       );
     }
-    // Bottom docked band — solid surface, rounded top corners, centered title.
+    // Bottom bar, drawn the way BrowserBottomBand draws it (Telegram's minimized app bar): the app
+    // ends above it with black rounded corners, then a thin black gap, then a solid bar with rounded
+    // top corners, the title centred and the ✕ on the LEFT. No icon, as in Telegram.
+    const barBg = isDark ? theme.colors.background.secondary : '#FFFFFF';
     return (
-      <View
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 22,
-          borderTopLeftRadius: 11,
-          borderTopRightRadius: 11,
-          backgroundColor: surfaceBg,
-          borderTopWidth: active ? 1.5 : 1,
-          borderColor: active ? accent : stroke,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 4,
-          shadowColor: active ? accent : '#000',
-          shadowOpacity: active ? 0.45 : 0.12,
-          shadowRadius: active ? 5 : 2,
-          shadowOffset: { width: 0, height: -1 },
-        }}
-      >
-        {/* favicon/emoji dot */}
-        <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: accent }} />
-        {/* title line */}
-        <View style={{ width: 30, height: 3.5, borderRadius: 2, backgroundColor: inkStrong }} />
-        {/* tiny ✕ pinned to the right, like the real band */}
-        <Feather name="x" size={8} color={theme.colors.text.tertiary} style={{ position: 'absolute', right: 7 }} />
-      </View>
+      <>
+        <Svg width={8} height={8} style={{ position: 'absolute', left: 0, bottom: 22 }} pointerEvents="none">
+          <Path d="M0,0 A8,8 0 0 0 8,8 L0,8 Z" fill="#000" />
+        </Svg>
+        <Svg width={8} height={8} style={{ position: 'absolute', right: 0, bottom: 22, transform: [{ scaleX: -1 }] }} pointerEvents="none">
+          <Path d="M0,0 A8,8 0 0 0 8,8 L0,8 Z" fill="#000" />
+        </Svg>
+        <View
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 22,
+            paddingTop: 1.5,
+            backgroundColor: '#000',
+          }}
+        >
+          <View
+            style={{
+              flex: 1,
+              borderTopLeftRadius: 7,
+              borderTopRightRadius: 7,
+              backgroundColor: barBg,
+              borderTopWidth: active ? 1.5 : 0,
+              borderColor: accent,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {/* title line */}
+            <View style={{ width: 30, height: 3.5, borderRadius: 2, backgroundColor: inkStrong }} />
+            {/* tiny ✕ pinned to the left, like the real bar */}
+            <Feather name="x" size={8} color={inkStrong} style={{ position: 'absolute', left: 7 }} />
+          </View>
+        </View>
+      </>
     );
   };
 
