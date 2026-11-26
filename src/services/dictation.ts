@@ -13,10 +13,9 @@
  * ── ONLY ON BINARIES THAT MAY RECORD ─────────────────────────────────────────────────────────────
  *
  * Recording needs NSMicrophoneUsageDescription on iOS (without it the first request crashes the app)
- * and RECORD_AUDIO on Android. Both came with the build that also added expo-application, and updates
- * reach older binaries over the air (the runtime version is the app version), so that module's presence
- * is the test: without it `dictationAvailable()` is false and the composer keeps its send button. Do
- * not remove expo-application without moving this test to something else that came with that build.
+ * and RECORD_AUDIO on Android, and updates reach older binaries over the air (the runtime version is
+ * the app version). So the mic is shown only on a binary whose build number is at least the first one
+ * that declares them; see "THE TEST WAS WRONG" below.
  *
  * ── PRIVACY ──────────────────────────────────────────────────────────────────────────────────────
  *
@@ -27,7 +26,7 @@
  * phone right after; the Worker hands it to Workers AI (zero data retention) and keeps nothing.
  * See docs/privacy.html §3 and §4.
  */
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
 type ExpoAudio = typeof import('expo-audio');
@@ -48,12 +47,30 @@ const WARM_PATH = '/v1/ai/transcribe/warm';
 const TRANSCRIBE_TIMEOUT_MS = 45_000;
 const CONSENT_KEY = 'dictation_consent_v1';
 
+// ── THE TEST WAS WRONG: EXPO-APPLICATION WAS ALREADY IN EVERY BINARY (Nov 2026) ──────────────────
+//
+// The first version of this file took the presence of expo-application as the sign of a binary that
+// may record, on the belief that it came with build 108. It did not: expo-notifications depends on it,
+// so autolinking had put it into every earlier build too. On those iPhones the mic showed, and the
+// first tap would have asked for the microphone with no NSMicrophoneUsageDescription in Info.plist,
+// which iOS answers by terminating the app. Now the test is the binary's own build number
+// (CFBundleVersion / versionCode): the microphone string first shipped in iOS build 108. No Android
+// build has been made with RECORD_AUDIO yet (every earlier one removed it, see app.json), so Android
+// shows no mic until `ANDROID_FIRST_MIC_BUILD` is set to that build's versionCode.
+const IOS_FIRST_MIC_BUILD = 108;
+const ANDROID_FIRST_MIC_BUILD = Number.POSITIVE_INFINITY;
+
 let availableCache: boolean | undefined;
-/** Whether this binary may record (see "ONLY ON BINARIES THAT MAY RECORD"). Cached. */
+/** Whether this binary may record (see above). Cached. */
 export function dictationAvailable(): boolean {
   if (availableCache !== undefined) return availableCache;
+  availableCache = false;
   try {
-    availableCache = !!requireOptionalNativeModule('ExpoApplication');
+    if (!requireOptionalNativeModule('ExpoApplication')) return false;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const build = Number((require('expo-application') as typeof import('expo-application')).nativeBuildVersion);
+    const first = Platform.OS === 'ios' ? IOS_FIRST_MIC_BUILD : Platform.OS === 'android' ? ANDROID_FIRST_MIC_BUILD : Number.POSITIVE_INFINITY;
+    availableCache = Number.isFinite(build) && build >= first;
   } catch {
     availableCache = false;
   }
