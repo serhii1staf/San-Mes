@@ -59,7 +59,7 @@ import { useMediaPanelLabels } from '../../src/components/chat/useMediaPanelLabe
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useBottomChromeInset, useBrowserBandHeight } from '../../src/lib/browserWidget';
 import { browserBandHeightSV, getBrowserBandHeightNow } from '../../src/lib/browserBandShared';
-import { BandFollowLayer } from '../../src/components/ui/BandFollowLayer';
+import { BandFollowLayer, useBandFollowOffset } from '../../src/components/ui/BandFollowLayer';
 import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
@@ -669,8 +669,8 @@ export default function CommentsScreen() {
   // Resting top edge of the composer stack and the keyboard's current height, both as refs: read
   // only when the long-press menu opens, to clip its lit cut-out to the area between the header and
   // the composer. Refs, so neither the input growing nor the keyboard moving re-renders the screen.
-  // The composer's `y` is measured from the top of its layer (BandFollowLayer), `bandH` above the
-  // screen's top: subtract `bandH` for screen coordinates.
+  // The composer's `y` is measured from the top of its layer (BandFollowLayer), `composerLayerTop`
+  // above the screen's top: subtract that for screen coordinates.
   const composerTopRef = useRef<number | null>(null);
   const onComposerLayout = useCallback((e: { nativeEvent: { layout: { y: number } } }) => {
     composerTopRef.current = e.nativeEvent.layout.y;
@@ -716,11 +716,19 @@ export default function CommentsScreen() {
   // transform (`barWrapStyle`).
   // 0 for the safe area while the minimized-session bar is under the app (see `useBottomChromeInset`).
   const chromeInset = useBottomChromeInset();
-  // The bar's height while it is under the app, 0 without it: how far above the screen's top the
-  // composer's layer starts (BandFollowLayer).
+  // The bar's height while it is under the app, 0 without it.
   const bandH = useBrowserBandHeight();
-  const restPad = chromeInset > 0 ? chromeInset : 14;
-  const inputPadStyle = useMemo(() => ({ paddingBottom: restPad }), [restPad]);
+  // The composer pads by its no-bar value always; while the bar is shown its layer (BandFollowLayer
+  // `sink`) sits lower by `composerSink`, which is where the 14 pt it used to pad by with the bar put
+  // it. Nothing inside the layer changes when the bar comes or goes, so the field, the reply strip and
+  // the fade glide with it instead of hopping by the difference first (20 pt on an iPhone).
+  const composerRestPad = Math.max(insets.bottom, 14);
+  const composerSink = bandH > 0 ? composerRestPad - 14 : 0;
+  // The padding in effect on screen: 14 with the bar, the safe area without.
+  const restPad = composerRestPad - composerSink;
+  // Where the screen's top is inside the composer's layer.
+  const composerLayerTop = useBandFollowOffset(composerSink);
+  const inputPadStyle = useMemo(() => ({ paddingBottom: composerRestPad }), [composerRestPad]);
 
   // With the minimized-session bar under the app this screen ends the bar's height above the bottom
   // of the window, and the keyboard covers the bar first: the keyboard maths below subtract
@@ -2120,8 +2128,10 @@ export default function CommentsScreen() {
         )}
 
         {/* The fade, the composer and the media panel glide with the minimized-session bar when it
-            comes or goes instead of dropping by its height in one frame (BandFollowLayer). */}
-        <BandFollowLayer>
+            comes or goes instead of dropping by its height in one frame (BandFollowLayer). The fade
+            and the composer pad by their no-bar values in a layer that sinks under the bar; the panel,
+            sized from the keyboard, is in a plain one above it. */}
+        <BandFollowLayer sink={composerSink}>
         {/* Static under-input fade — pinned to the screen bottom and kept
             OUTSIDE the KeyboardStickyView so it does NOT ride up with the
             keyboard. Mirrors the user/music/ai chats: the solid composer
@@ -2131,7 +2141,7 @@ export default function CommentsScreen() {
           colors={bottomScrimColorsStrong(theme.isDark, bgColor)}
           locations={SCRIM_LOCATIONS}
           pointerEvents="none"
-          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(chromeInset, 14) }}
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 14) }}
         />
 
         {/* Input area — manually keyboard-stuck via `barWrapStyle`
@@ -2247,7 +2257,9 @@ export default function CommentsScreen() {
           </Reanimated.View>
           )}
         </Reanimated.View>
+        </BandFollowLayer>
 
+        <BandFollowLayer>
         {/* Media panel (emoji / GIF) — twin of the chat composer's. Mounted
             while open at the screen bottom; the keyboard's slide-down (or the
             animated liftSV rise when the keyboard is already down) reveals it.
@@ -2302,7 +2314,7 @@ export default function CommentsScreen() {
               visibleBounds={{
                 top: headerContentHeight,
                 bottom:
-                  (composerTopRef.current != null ? composerTopRef.current - bandH : SCREEN_HEIGHT - bandH - chromeInset - 64) -
+                  (composerTopRef.current != null ? composerTopRef.current - composerLayerTop : SCREEN_HEIGHT - bandH - chromeInset - 64) -
                   // The composer rises by this less its resting padding (`barWrapStyle`). The keyboard
                   // covers the minimized-session bar first.
                   Math.max(0, Math.max(keyboardUpRef.current - getBrowserBandHeightNow(), emojiOpen || gifOpen || keepLifted ? emojiPanelHeight : 0) - padDelta),

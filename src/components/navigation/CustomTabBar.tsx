@@ -1021,7 +1021,8 @@ const RING_LEN = 2 * Math.PI * RING_R;
 //
 // The dial is laid out in the wrapper's flow, above the row, rather than absolutely positioned over
 // it: Android does not deliver touches to a child outside its parent's bounds, so the wrapper has to
-// actually grow to contain the buttons. Mounted only while open or closing.
+// contain the buttons. Mounted only while open or closing; while closed an empty, untouchable view
+// of the same height (`dialStyles.room`) holds its place, so the wrapper never changes height.
 
 const DIAL_BUTTON = 50;
 const DIAL_GAP = 10;
@@ -1134,6 +1135,8 @@ const ProfileQuickDial = memo(function ProfileQuickDial({
 const dialStyles = StyleSheet.create({
   // Same width and centring as the row below, so the column lands exactly over the capsule.
   track: { width: DIAL_TRACK_WIDTH, alignSelf: 'center', alignItems: 'flex-end' },
+  // The dial's height while it is closed: its column is two buttons, each with a gap below it.
+  room: { height: 2 * (DIAL_BUTTON + DIAL_GAP) },
   column: { width: PROFILE_CAPSULE_WIDTH, alignItems: 'center' },
   button: {
     width: DIAL_BUTTON,
@@ -1689,7 +1692,9 @@ export const CustomTabBar = React.memo(function CustomTabBar({
       pointerEvents={hidden ? 'none' : 'box-none'}
       // The minimized-session bar takes or gives back space under the app in one commit; this eases
       // the bar's own move up or down onto it on the bar's spring, instead of a jump. The frame
-      // changes for no other reason (it is pinned to the bottom of the tab navigator).
+      // must change for no other reason: it is pinned to the bottom of the tab navigator, and the
+      // quick dial keeps its room while closed (see below), because this transition animates ANY
+      // change of the frame.
       layout={BAND_LAYOUT_TRANSITION}
     >
       {/* Bottom fade — the mirror of the home feed's top header fade, but it
@@ -1709,7 +1714,14 @@ export const CustomTabBar = React.memo(function CustomTabBar({
       />
 
       {/* QR + Settings, rising out of the profile capsule. BEFORE the row so the capsule covers
-          the buttons at their start position. */}
+          the buttons at their start position.
+
+          While the dial is closed its room stays, empty and untouchable, so the wrapper is always
+          the same height. Mounting the dial used to make the wrapper 120 pt taller, and the
+          wrapper's layout transition (BAND_LAYOUT_TRANSITION, for the minimized-session bar) then
+          animated that growth: the whole bar was drawn 120 pt lower and sprang back up, on every
+          double tap of the profile button ("it jumps down and then back up"), and again when the
+          dial closed. Now the wrapper's frame changes only with the minimized-session bar. */}
       {dialMounted ? (
         <ProfileQuickDial
           open={dialOpen}
@@ -1722,7 +1734,9 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           onSettings={onDialSettings}
           onClosed={onDialClosed}
         />
-      ) : null}
+      ) : (
+        <View style={dialStyles.room} pointerEvents="none" />
+      )}
 
       {/* Split navigation row: main capsule (flex:1) + gap + detached profile
           capsule. `box-none` lets taps fall through the gap between them. The

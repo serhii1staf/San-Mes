@@ -2,8 +2,9 @@ import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, LayoutAnimation, UIManager, InteractionManager, Animated, Alert, Share } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import { useKeyboardRiseStyle } from '../../src/hooks/useKeyboardFrames';
-import { useBottomChromeInset, useBrowserBandHeight } from '../../src/lib/browserWidget';
-import { BandFollowLayer } from '../../src/components/ui/BandFollowLayer';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useBrowserBandHeight } from '../../src/lib/browserWidget';
+import { BandFollowLayer, useBandFollowOffset } from '../../src/components/ui/BandFollowLayer';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { bottomScrimColorsStrong, composerScrimHeight, SCRIM_LOCATIONS } from '../../src/theme/scrim';
@@ -323,11 +324,17 @@ export default function AIChatScreen() {
   // The floating music mini-player (MusicBottomIndicator, bottom: 102) sits over the end of the
   // transcript while a track is loaded; reserve its height so the newest reply is not under it.
   const musicBarShown = useMusicStore((s) => !!s.current && !s.playerOpen);
-  // 0 for the safe area while the minimized-session bar is under the app (see `useBottomChromeInset`).
-  const chromeInset = useBottomChromeInset();
+  const insets = useSafeAreaInsets();
   // The bar's height while it is under the app, 0 without it (see BandFollowLayer below).
   const bandH = useBrowserBandHeight();
-  const LIST_BOTTOM_SPACER = INPUT_BAR + chromeInset + (musicBarShown ? 96 : 0);
+  // The transcript, the fade and the composer pad by their no-bar values always. While the bar is
+  // shown their layer (BandFollowLayer `sink`) sits lower by `composerSink`, which is where the 16 pt
+  // the composer used to pad by with the bar put it; nothing in the layer changes with the bar, so
+  // it all glides with it instead of hopping by the difference first.
+  const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom + (musicBarShown ? 96 : 0);
+  const composerRestPad = Math.max(insets.bottom, 16);
+  const composerSink = bandH > 0 ? composerRestPad - 16 : 0;
+  const composerLayerTop = useBandFollowOffset(composerSink);
 
   // ── THE COMPOSER AND THE TRANSCRIPT RISE WITH THE KEYBOARD, FRAME BY FRAME ──
   //
@@ -337,10 +344,10 @@ export default function AIChatScreen() {
   // jump) whenever a React commit is in flight. See `useKeyboardFrames`. Now one per-frame transform
   // moves both by the same amount, as in the user chat, so the gap above the field never changes.
   // The padding under the field stays at its resting value: it used to drop to 8 as the keyboard
-  // started to move, which was itself a jump by the safe-area height.
-  const restPad = chromeInset > 0 ? chromeInset : 16;
-  const inputPadStyle = useMemo(() => ({ paddingBottom: restPad }), [restPad]);
-  const riseStyle = useKeyboardRiseStyle(restPad);
+  // started to move, which was itself a jump by the safe-area height. The keyboard has to clear the
+  // padding in effect on screen.
+  const inputPadStyle = useMemo(() => ({ paddingBottom: composerRestPad }), [composerRestPad]);
+  const riseStyle = useKeyboardRiseStyle(composerRestPad - composerSink);
   const [remaining, setRemaining] = useState(() => getRemainingRequestsSync());
   const flatListRef = useRef<FlatList>(null);
 
@@ -938,9 +945,9 @@ export default function AIChatScreen() {
           floating input bar. */}
       {/* The transcript, the fade and the composer glide with the minimized-session bar when it
           comes or goes instead of dropping by its height in one frame (BandFollowLayer). The
-          transcript fills the screen inside it from `marginTop: bandH`. */}
-      <BandFollowLayer>
-      <Reanimated.View style={[{ flex: 1, marginTop: bandH }, riseStyle]}>
+          transcript fills the screen inside it from `marginTop: composerLayerTop`. */}
+      <BandFollowLayer sink={composerSink}>
+      <Reanimated.View style={[{ flex: 1, marginTop: composerLayerTop }, riseStyle]}>
         <FlatList
           ref={flatListRef}
           data={invertedData}
@@ -974,7 +981,7 @@ export default function AIChatScreen() {
         colors={bottomScrimColorsStrong(theme.isDark, theme.colors.background.primary)}
         locations={SCRIM_LOCATIONS}
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(chromeInset, 16) }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 16) }}
       />
 
       {/* Input — sticks to keyboard (smooth, no lag). No solid backgroundColor:
