@@ -46,6 +46,11 @@ export interface Env {
    * answers 503 `ai_not_configured`.
    */
   NVIDIA_API_KEY?: string;
+  /**
+   * Workers AI (`[ai]` in wrangler.toml): Whisper for the chat's voice input, `POST /v1/ai/transcribe`
+   * (routes/ai.ts). Optional: without it that route answers 503 `ai_not_configured`.
+   */
+  AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 }
 
 export type Row = Record<string, unknown>;

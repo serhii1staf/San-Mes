@@ -193,9 +193,9 @@ async function releaseAudioSessionIfIdle() {
 }
 
 /**
- * Voice dictation (src/services/dictation.ts) listens through the shared audio session, and the speech
- * module leaves it in its record category when it ends. This puts the player's mode back while a track
- * is loaded, or the idle one otherwise. Never throws.
+ * Voice dictation (src/services/dictation.ts) records through the shared audio session, switched to
+ * its record category. Once it is done, this puts the player's mode back while a track is loaded, or
+ * the idle one otherwise. Never throws.
  */
 export async function reassertAudioMode(): Promise<void> {
   audioModeSet = false;

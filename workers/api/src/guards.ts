@@ -119,7 +119,9 @@ export function rateClassFor(method: string, path: string): RateClass {
     path === '/v1/posts/repost' ||
     path === '/v1/reports' ||
     path === '/v1/mini-apps' ||
-    path === '/v1/ai/complete'
+    path === '/v1/ai/complete' ||
+    path === '/v1/ai/transcribe' ||
+    path === '/v1/ai/transcribe/warm'
   )) return 'HEAVY';
   return 'WRITE';
 }
