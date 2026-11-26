@@ -167,7 +167,9 @@ export default function NewPostScreen() {
   // its end position once and jumped there whenever a React commit was in flight, as one always is
   // here: the field autofocuses while the sheet is still opening.
   const bottomPad = Math.max(insets.bottom, 12);
-  const toolbarRiseStyle = useKeyboardRiseStyle(bottomPad);
+  // On iOS this sheet is presented over the whole window, minimized-session bar included, so the
+  // keyboard is not measured past that bar. On Android it is a screen above the bar like any other.
+  const toolbarRiseStyle = useKeyboardRiseStyle(bottomPad, 8, Platform.OS !== 'ios');
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>

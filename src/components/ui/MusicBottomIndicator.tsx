@@ -7,6 +7,7 @@ import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { useMusicStore } from '../../store/musicStore';
 import { triggerHaptic } from '../../utils/haptics';
+import { BAND_SPRING, useBrowserBandHeight } from '../../lib/browserWidget';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -67,12 +68,28 @@ export function MusicBottomIndicator() {
 
   // Slide-in/out from below — native-driven so it stays smooth on weak devices.
   // Initial offset is large enough to fully clear the screen bottom: indicator
-  // sits at `bottom: 102` and is ~60 tall, so 180 px of downward translation
-  // puts the entire card below the device's bottom edge before showing. The
-  // result: it spawns from off-screen and rises into place rather than
-  // appearing in the middle of the tab-bar area.
-  const HIDDEN_Y = 180;
+  // sits at `bottom: 92` and is ~60 tall (plus ~18 of shadow), and with the
+  // minimized-session bar showing it is lifted by up to ~110 more (`bandLift`,
+  // below), so 300 px of downward translation puts the entire card below the
+  // device's bottom edge in every case, including while the bar comes or goes
+  // with the card hidden. The result: it spawns from off-screen and rises into
+  // place rather than appearing in the middle of the tab-bar area.
+  const HIDDEN_Y = 300;
   const slideY = useRef(new Animated.Value(HIDDEN_Y)).current;
+  // The minimized-session bar under the app (BrowserBottomBand) shortens it, so the tab bar sits
+  // that much higher and the card rises with it, on the bar's spring, keeping its 6 px gap above
+  // the tab bar the whole way. A separate value from `slideY`, so the bar coming or going never
+  // restarts the card's own show / hide spring. Added once: recreating the node on a re-render
+  // could reset it mid-animation.
+  const bandH = useBrowserBandHeight();
+  const bandLift = useRef(new Animated.Value(-bandH)).current;
+  const lastBandH = useRef(bandH);
+  useEffect(() => {
+    if (lastBandH.current === bandH) return;
+    lastBandH.current = bandH;
+    Animated.spring(bandLift, { toValue: -bandH, ...BAND_SPRING, useNativeDriver: true }).start();
+  }, [bandH, bandLift]);
+  const liftY = useRef(Animated.add(slideY, bandLift)).current;
   // Horizontal swipe-to-dismiss offset.
   const dragX = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
@@ -175,7 +192,7 @@ export function MusicBottomIndicator() {
           // above its top edge so the two read as a tight stacked pair
           // (was 16 — that left too big a gap above the tab bar).
           bottom: 24 + 62 + 6,
-          transform: [{ translateY: slideY }],
+          transform: [{ translateY: liftY }],
         },
       ]}
     >

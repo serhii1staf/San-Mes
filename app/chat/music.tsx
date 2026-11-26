@@ -2,8 +2,9 @@ import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { View, Pressable, TextInput, FlatList, ActivityIndicator, Platform, LayoutAnimation, UIManager, Alert, Animated, InteractionManager, StyleSheet } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import { useKeyboardRiseStyle } from '../../src/hooks/useKeyboardFrames';
+import { useBottomChromeInset, useBrowserBandHeight } from '../../src/lib/browserWidget';
+import { BandFollowLayer } from '../../src/components/ui/BandFollowLayer';
 import { Feather } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { bottomScrimColorsStrong, composerScrimHeight, SCRIM_LOCATIONS } from '../../src/theme/scrim';
 import { useTheme } from '../../src/theme';
@@ -44,7 +45,6 @@ const styles = StyleSheet.create({
 export default function MusicChatScreen() {
   useScreenMountMark('chat/music');
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
   const t = useT();
   // Android: while focused, stop the OS window resize so ONLY our JS-driven
   // input lift moves content (kills the first-focus jump). No-op on iOS.
@@ -81,12 +81,16 @@ export default function MusicChatScreen() {
 
   const INPUT_BAR = 60;
   // The bottom spacer stays STATIC: it only reserves room for the floating input bar.
-  const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom;
+  // 0 for the safe area while the minimized-session bar is under the app (see `useBottomChromeInset`).
+  const chromeInset = useBottomChromeInset();
+  // The bar's height while it is under the app, 0 without it (see BandFollowLayer below).
+  const bandH = useBrowserBandHeight();
+  const LIST_BOTTOM_SPACER = INPUT_BAR + chromeInset;
   // The composer and the transcript rise with the keyboard frame by frame, by the same amount, as
   // in the AI chat (see the note there and `useKeyboardFrames`). KeyboardStickyView and
   // KeyboardChatScrollView write their end position once on iOS, and that landed as a jump whenever
   // a React commit was in flight. The padding under the field stays at its resting value.
-  const restPad = insets.bottom > 0 ? insets.bottom : 16;
+  const restPad = chromeInset > 0 ? chromeInset : 16;
   const inputPadStyle = useMemo(() => ({ paddingBottom: restPad }), [restPad]);
   const riseStyle = useKeyboardRiseStyle(restPad);
 
@@ -349,8 +353,12 @@ export default function MusicChatScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       <SpecialChatHeader title={t('music_chat.title')} subtitle={t('music_chat.subtitle')} icon="music-note" />
 
+      {/* The transcript, the fade and the composer glide with the minimized-session bar when it
+          comes or goes instead of dropping by its height in one frame (BandFollowLayer). The
+          transcript fills the screen inside it from `marginTop: bandH`. */}
+      <BandFollowLayer>
       {/* Rides up with the keyboard on the composer's own transform (`riseStyle`). */}
-      <Reanimated.View style={[{ flex: 1 }, riseStyle]}>
+      <Reanimated.View style={[{ flex: 1, marginTop: bandH }, riseStyle]}>
         <FlatList
           ref={listRef}
           data={invertedData}
@@ -387,7 +395,7 @@ export default function MusicChatScreen() {
         colors={bottomScrimColorsStrong(theme.isDark, theme.colors.background.primary)}
         locations={SCRIM_LOCATIONS}
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 16) }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(chromeInset, 16) }}
       />
 
       {/* Input bar — no solid backgroundColor: the fade above supplies the
@@ -543,6 +551,7 @@ export default function MusicChatScreen() {
           </View>
         </View>
       </Reanimated.View>
+      </BandFollowLayer>
 
       <AuthorInfoModal visible={!!authorTrack} track={authorTrack} onClose={() => setAuthorTrack(null)} />
       <PlaylistSheet visible={playlistOpen} tracks={allUniqueTracks} onClose={() => setPlaylistOpen(false)} />

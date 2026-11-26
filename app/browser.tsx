@@ -50,27 +50,36 @@ export default function BrowserScreen() {
   const setMinimized = useBrowserStore((s) => s.setMinimized);
   const clearMinimized = useBrowserStore((s) => s.clearMinimized);
 
-  // Clear minimized state when browser opens (user tapped the mini-bar)
+  // Opened from the minimized bar: the session ends once this screen has finished rising over it, not
+  // when it mounts. With the bar at the bottom (BrowserBottomBand), clearing gives the bar's space
+  // back to the screen underneath, and done while this sheet covers it nothing is seen dropping.
+  // The timer is the fallback for a transition that never reports its end.
   useEffect(() => {
-    clearMinimized();
-  }, []);
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearMinimized();
+    };
+    const unsubscribe = navigation.addListener('transitionEnd' as never, (e: { data?: { closing?: boolean } }) => {
+      if (!e?.data?.closing) finish();
+    });
+    const fallback = setTimeout(finish, 700);
+    return () => {
+      unsubscribe();
+      clearTimeout(fallback);
+    };
+  }, [navigation, clearMinimized]);
 
-  // When modal is dismissed via swipe (not X button), minimize to bar.
-  // We deliberately defer the `setMinimized` flip past the iOS dismiss
-  // animation (`presentation: 'modal' / slide_from_bottom` ≈ 280 ms) so
-  // the bottom widget rises into place AFTER the page finishes sliding
-  // away — without the timeout the widget popped in instantly while the
-  // page was still mid-animation, racing the dismissal and reading as a
-  // visual glitch. We snapshot the URL at gesture-start because the
-  // screen is already unmounting by the time the timer fires.
+  // When the modal is dismissed by a swipe (not the X), the page is minimized to the bar. At once,
+  // not after the dismissal: on iOS this sheet is presented over the whole window and the bottom of
+  // the screen stays covered until the very end of its slide, so the bar rises into place and the
+  // screen under it makes room for it behind the sheet. Deferred (the old 280 ms), all of that
+  // happened in plain view after the sheet had gone. The URL is read now: the screen is unmounting.
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', () => {
       if (!closedManually.current) {
-        const url = currentUrl || decodedUrl;
-        const domain = displayDomain;
-        setTimeout(() => {
-          setMinimized(url, domain);
-        }, 280);
+        setMinimized(currentUrl || decodedUrl, displayDomain);
       }
     });
     return unsubscribe;

@@ -2,8 +2,9 @@ import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, LayoutAnimation, UIManager, InteractionManager, Animated, Alert, Share } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import { useKeyboardRiseStyle } from '../../src/hooks/useKeyboardFrames';
+import { useBottomChromeInset, useBrowserBandHeight } from '../../src/lib/browserWidget';
+import { BandFollowLayer } from '../../src/components/ui/BandFollowLayer';
 import { Feather } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { bottomScrimColorsStrong, composerScrimHeight, SCRIM_LOCATIONS } from '../../src/theme/scrim';
 import { BlurView } from '../../src/components/ui/AppBlurView';
@@ -268,7 +269,6 @@ const LIST_CONTENT_EMPTY_STYLE = { flexGrow: 1 };
 export default function AIChatScreen() {
   useScreenMountMark('chat/ai');
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
   const t = useT();
   // Android: while focused, stop the OS window resize so ONLY our JS-driven
   // input lift moves content (kills the first-focus jump). No-op on iOS.
@@ -323,7 +323,11 @@ export default function AIChatScreen() {
   // The floating music mini-player (MusicBottomIndicator, bottom: 102) sits over the end of the
   // transcript while a track is loaded; reserve its height so the newest reply is not under it.
   const musicBarShown = useMusicStore((s) => !!s.current && !s.playerOpen);
-  const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom + (musicBarShown ? 96 : 0);
+  // 0 for the safe area while the minimized-session bar is under the app (see `useBottomChromeInset`).
+  const chromeInset = useBottomChromeInset();
+  // The bar's height while it is under the app, 0 without it (see BandFollowLayer below).
+  const bandH = useBrowserBandHeight();
+  const LIST_BOTTOM_SPACER = INPUT_BAR + chromeInset + (musicBarShown ? 96 : 0);
 
   // ── THE COMPOSER AND THE TRANSCRIPT RISE WITH THE KEYBOARD, FRAME BY FRAME ──
   //
@@ -334,7 +338,7 @@ export default function AIChatScreen() {
   // moves both by the same amount, as in the user chat, so the gap above the field never changes.
   // The padding under the field stays at its resting value: it used to drop to 8 as the keyboard
   // started to move, which was itself a jump by the safe-area height.
-  const restPad = insets.bottom > 0 ? insets.bottom : 16;
+  const restPad = chromeInset > 0 ? chromeInset : 16;
   const inputPadStyle = useMemo(() => ({ paddingBottom: restPad }), [restPad]);
   const riseStyle = useKeyboardRiseStyle(restPad);
   const [remaining, setRemaining] = useState(() => getRemainingRequestsSync());
@@ -932,7 +936,11 @@ export default function AIChatScreen() {
           message keeps its distance from the field while the keyboard moves.
           The bottom spacer stays a STATIC height: it only reserves room for the
           floating input bar. */}
-      <Reanimated.View style={[{ flex: 1 }, riseStyle]}>
+      {/* The transcript, the fade and the composer glide with the minimized-session bar when it
+          comes or goes instead of dropping by its height in one frame (BandFollowLayer). The
+          transcript fills the screen inside it from `marginTop: bandH`. */}
+      <BandFollowLayer>
+      <Reanimated.View style={[{ flex: 1, marginTop: bandH }, riseStyle]}>
         <FlatList
           ref={flatListRef}
           data={invertedData}
@@ -966,7 +974,7 @@ export default function AIChatScreen() {
         colors={bottomScrimColorsStrong(theme.isDark, theme.colors.background.primary)}
         locations={SCRIM_LOCATIONS}
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 16) }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(chromeInset, 16) }}
       />
 
       {/* Input — sticks to keyboard (smooth, no lag). No solid backgroundColor:
@@ -1137,6 +1145,7 @@ export default function AIChatScreen() {
           </View>
         </View>
       </Reanimated.View>
+      </BandFollowLayer>
 
       {/* Emoji picker — auto-shown during the create_emoji / edit_emoji
           steps. Closing without a pick cancels the flow back to idle so

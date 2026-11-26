@@ -38,6 +38,8 @@ import { useTabBarStore } from '../../store/tabBarStore';
 import { useAuthStore } from '../../store';
 import { useChatUnread, totalChatUnread } from '../../store/chatUnreadStore';
 import { openProfileQr } from '../../store/profileQrStore';
+import { useBottomChromeInset } from '../../lib/browserWidget';
+import { BAND_LAYOUT_TRANSITION } from '../../lib/browserBandShared';
 import { useT } from '../../i18n/store';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -1629,8 +1631,11 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   // (activeMainSlot === -1, profile lives in its own capsule).
   const pillVisible = activeMainSlot >= 0;
   const pillBaseWidth = Math.max(0, slotWidth - 2 * PILL_INSET_X);
+  // With the minimized-session bar under the app, the navigation bar is under that bar, not under
+  // this one (see `useBottomChromeInset`).
+  const chromeInset = useBottomChromeInset();
   const barMarginBottom =
-    BAR_BOTTOM_MARGIN + (Platform.OS === 'android' ? insets.bottom : 0);
+    BAR_BOTTOM_MARGIN + (Platform.OS === 'android' ? chromeInset : 0);
 
   // ── Temporary hide (a screen is presenting its own bottom bar) ────────────
   //
@@ -1682,6 +1687,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     <Animated.View
       style={[styles.wrapper, hideStyle]}
       pointerEvents={hidden ? 'none' : 'box-none'}
+      // The minimized-session bar takes or gives back space under the app in one commit; this eases
+      // the bar's own move up or down onto it on the bar's spring, instead of a jump. The frame
+      // changes for no other reason (it is pinned to the bottom of the tab navigator).
+      layout={BAND_LAYOUT_TRANSITION}
     >
       {/* Bottom fade — the mirror of the home feed's top header fade, but it
           never reaches full opacity: the bottom stop is ~80% so feed content
@@ -1694,7 +1703,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         locations={SCRIM_LOCATIONS}
         style={[
           styles.bottomFade,
-          { height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0) },
+          { height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? chromeInset : 0) },
         ]}
         pointerEvents="none"
       />

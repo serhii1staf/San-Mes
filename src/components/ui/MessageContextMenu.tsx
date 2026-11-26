@@ -23,6 +23,7 @@ import { FormattedText } from './FormattedText';
 import type { ChatMessage } from '../../types';
 import { useT } from '../../i18n/store';
 import { useTheme } from '../../theme';
+import { useBrowserBandHeight } from '../../lib/browserWidget';
 
 /** Characters of a long message the copy lays out at most: about twice a screenful. */
 const COPY_MAX_CHARS = 1600;
@@ -143,6 +144,8 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
 ) {
   const t = useT();
   const theme = useTheme();
+  // The chat is drawn above the minimized-session bar when it shows; the card stays above it.
+  const bandH = useBrowserBandHeight();
   // Only drawn when the menu decides the message is too long to be shown whole.
   const longPreview = useCallback(
     (maxHeight: number) =>
@@ -221,6 +224,7 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       captureHeld={captureHeld}
       onHeldPreview={onHeldPreview ? (state) => onHeldPreview(state, message.id) : undefined}
       longPreview={longPreview}
+      bottomReserve={bandH}
       align={isOwn ? 'right' : 'left'}
       top={top}
       items={items}

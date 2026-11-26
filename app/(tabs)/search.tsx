@@ -31,6 +31,8 @@ import { useT } from '../../src/i18n/store';
 import { emojiTextStyle } from '../../src/components/ui/emojiText';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
+import { useBottomChromeInset } from '../../src/lib/browserWidget';
+import { browserBandHeightSV, BAND_LAYOUT_TRANSITION } from '../../src/lib/browserBandShared';
 
 /**
  * Search: people and mini apps.
@@ -644,9 +646,12 @@ export default function SearchScreen() {
   // ── The field's place ─────────────────────────────────────────────────────
   // At rest it floats just above the tab bar. With the keyboard up it sits just above the keyboard:
   // the lift is whatever the keyboard covers beyond the field's resting height (`kb`, above).
-  const restBottom = getTabBarHeight(insets.bottom) + FIELD_GAP_ABOVE_BAR;
+  // `chromeInset`: the tab bar's own Android inset, 0 while the minimized-session bar is under the
+  // app; and the keyboard covers that bar first (`browserBandHeightSV`).
+  const chromeInset = useBottomChromeInset();
+  const restBottom = getTabBarHeight(chromeInset) + FIELD_GAP_ABOVE_BAR;
   const fieldLiftStyle = useAnimatedStyle(() => {
-    return { transform: [{ translateY: -Math.max(0, kb.value + FIELD_GAP_ABOVE_KEYBOARD - restBottom) }] };
+    return { transform: [{ translateY: -Math.max(0, kb.value - browserBandHeightSV.value + FIELD_GAP_ABOVE_KEYBOARD - restBottom) }] };
   }, [restBottom]);
 
   // The content's bottom padding clears the field at rest and nothing more. It used to follow the
@@ -851,7 +856,9 @@ export default function SearchScreen() {
       </View>
 
       {/* The field, above the tab bar, riding up with the keyboard. */}
-      <Reanimated.View style={[styles.fieldDock, { bottom: restBottom }, fieldLiftStyle]} pointerEvents="box-none">
+      {/* `layout`: glides with the tab bar when the minimized-session bar takes or gives back space
+          under the app, instead of jumping (its frame changes for no other reason). */}
+      <Reanimated.View style={[styles.fieldDock, { bottom: restBottom }, fieldLiftStyle]} pointerEvents="box-none" layout={BAND_LAYOUT_TRANSITION}>
         <SearchField
           value={query}
           onChangeText={setQuery}
