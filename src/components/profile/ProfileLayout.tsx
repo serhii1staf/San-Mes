@@ -42,6 +42,33 @@ import { triggerHaptic } from '../../utils/haptics';
 import { useTransitionSettled } from '../../hooks/useTransitionSettled';
 import { useAmbientMotionAllowed } from '../../hooks/useAmbientMotionAllowed';
 import { useT } from '../../i18n/store';
+import { getMaskedView } from '../ui/FadingBlurHeader';
+
+// ── THE BANNER MELTS INTO THE PAGE (Nov 2026) ───────────────────────────────────────────────────
+//
+// Asked: instead of the banner's rounded bottom corners, a smooth transition into the page where the
+// tabs (Публикации / Медиа / Ответы) begin, "like Telegram", without cropping or shrinking anything.
+// The card keeps its size and the banner its framing. Over the card's last `BANNER_FADE_H` points the
+// banner blurs a little and then fades into the page's own colour, which it reaches exactly at the
+// card's edge, so no edge is left to see. The curve is a smoothstep, flat at both ends, so there is no
+// line where the fade starts or ends. The blur is a copy of the image blurred once when it is decoded
+// and shown through a gradient mask: nothing is blurred per frame. A GIF banner gets the fade without
+// the blur (a still copy would not follow the animation). Without a banner the card keeps its rounded
+// tinted shape.
+const BANNER_FADE_H = 140;
+const BANNER_BLUR_RADIUS = 18;
+const FADE_STOPS = [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1] as const;
+const smoothstep = (t: number) => t * t * (3 - 2 * t);
+type GradientColors = readonly [string, string, ...string[]];
+/** `bg` (#RRGGBB) at the fade's alpha at each of `FADE_STOPS`. */
+function fadeColors(bg: string): GradientColors {
+  const base = bg.length === 9 ? bg.slice(0, 7) : bg;
+  return FADE_STOPS.map((s) => base + Math.round(smoothstep(s) * 255).toString(16).padStart(2, '0')) as unknown as GradientColors;
+}
+// The blur's mask: none at the top of the fade, fully in by a little past its middle, where the page
+// colour has started to cover it.
+const BLUR_MASK_STOPS = [0, 0.12, 0.24, 0.36, 0.48, 0.6, 1] as const;
+const BLUR_MASK_COLORS = BLUR_MASK_STOPS.map((s) => `rgba(0,0,0,${smoothstep(Math.min(1, s / 0.6)).toFixed(3)})`) as unknown as GradientColors;
 
 // ─── Scroll-driven values (same curves as the original screens) ─────────────
 
@@ -214,16 +241,31 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
   const nameColor = onMedia ? '#FFFFFF' : theme.colors.text.primary;
   const handleColor = onMedia ? 'rgba(255,255,255,0.85)' : theme.colors.text.secondary;
   const shadow = onMedia ? styles.textShadow : null;
+  const cardTint = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)';
+  const pageBg = theme.colors.background.primary;
+  const fade = useMemo(() => fadeColors(pageBg), [pageBg]);
+  const bannerImageStyle = { width: '100%' as const, height: '100%' as const, transform: [{ translateX: bannerTransform.translateX }, { translateY: bannerTransform.translateY }, { scale: bannerTransform.scale }] };
+  // iOS only: Android's masked view draws its subtree in software, which a hardware bitmap cannot be
+  // drawn into. There the fade alone carries it.
+  const FadeMask = Platform.OS === 'ios' && bannerUrl && !bannerAnimated ? getMaskedView() : null;
   return (
-    <View style={{ borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+    <View
+      style={
+        bannerUrl
+          // A banner ends in a fade to the page instead of rounded corners (see "THE BANNER MELTS
+          // INTO THE PAGE"). Still clipped: the banner's own position can scale it past the card.
+          ? styles.cardWithBanner
+          : [styles.cardRounded, { backgroundColor: cardTint }]
+      }
+    >
       {bannerUrl ? (
-        <View style={StyleSheet.absoluteFill}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: cardTint }]} pointerEvents="none">
           {/* No shimmer: a shimmer on every cold open is exactly the "it is loading" look that was
               reported. The banner is warmed into memory at launch (see _layout.tsx) and otherwise
               fades in over the card's own background on its first appearance in the session. */}
           <CachedImage
             uri={bannerUrl}
-            style={{ width: '100%', height: '100%', transform: [{ translateX: bannerTransform.translateX }, { translateY: bannerTransform.translateY }, { scale: bannerTransform.scale }] }}
+            style={bannerImageStyle}
             resizeMode="cover"
             proxyWidth={Math.round(width)}
             // A GIF banner plays only while the header is on screen and in the clear: not under the
@@ -232,7 +274,24 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
             // "гифки в профиле… нужно, чтобы она не лагала". Still banners get no prop at all.
             autoplay={bannerAnimated ? headerMoving && motionAllowed : undefined}
           />
-          <LinearGradient colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '55']} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          <LinearGradient colors={[pageBg + '00', pageBg + '55']} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          {/* The blur that comes in toward the bottom: the same image, blurred once, shown through a
+              gradient mask. Still banners only (a still copy would not follow a GIF). */}
+          {FadeMask ? (
+            <FadeMask
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+              shouldRasterizeIOS
+              maskElement={
+                <View style={StyleSheet.absoluteFill}>
+                  <LinearGradient colors={BLUR_MASK_COLORS} locations={BLUR_MASK_STOPS} style={styles.bannerFade} />
+                </View>
+              }
+            >
+              <CachedImage uri={bannerUrl} style={bannerImageStyle} resizeMode="cover" proxyWidth={Math.round(width)} blurRadius={BANNER_BLUR_RADIUS} />
+            </FadeMask>
+          ) : null}
+          <LinearGradient colors={fade} locations={FADE_STOPS} style={styles.bannerFade} pointerEvents="none" />
         </View>
       ) : null}
 
@@ -274,6 +333,9 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
         <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: anim.headerOpacity }]}>
           <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
           <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.isDark ? 'rgba(20,21,28,0.32)' : 'rgba(255,255,255,0.34)' }]} />
+          {/* The frost ends in the page's colour too, so the card's edge stays invisible while it
+              frosts over (see "THE BANNER MELTS INTO THE PAGE"). */}
+          {bannerUrl ? <LinearGradient colors={fade} locations={FADE_STOPS} style={styles.bannerFade} /> : null}
         </Animated.View>
       ) : null}
 
@@ -390,5 +452,9 @@ const styles = StyleSheet.create({
   chrome: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 },
   avatarTile: { width: 84, height: 84, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  cardRounded: { borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden' },
+  // Square: its bottom edge is the page's own colour (see "THE BANNER MELTS INTO THE PAGE").
+  cardWithBanner: { overflow: 'hidden' },
+  bannerFade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: BANNER_FADE_H },
   textShadow: { textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
 });

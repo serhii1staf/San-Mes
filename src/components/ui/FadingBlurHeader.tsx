@@ -34,6 +34,11 @@ export function isFadingBlurAvailable(): boolean {
   return !!MaskedView;
 }
 
+/** The masked-view component, or null on a binary without it (see the guarded load above). */
+export function getMaskedView(): React.ComponentType<any> | null {
+  return MaskedView;
+}
+
 interface FadingBlurHeaderProps {
   isDark: boolean;
   /** 'down' = opaque at top, fades out at bottom (page header).
