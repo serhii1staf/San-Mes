@@ -285,6 +285,9 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       onHeldPreview={onHeldPreview ? (state) => onHeldPreview(state, message.id) : undefined}
       longPreview={longPreview}
       bottomReserve={bandH}
+      // iOS: the chat behind is blurred, not only dimmed (asked: the banner editor's blur, wherever
+      // the message is). See "THE BACKDROP IS FROSTED ON IOS" in ActionMenu.
+      blurBackdrop
       // Always on the right side of the screen, own message or not, so the actions are in the same
       // place every time and under the thumb. Asked: it "keeps changing its position — left, top";
       // it was lined up with the bubble, so peer messages put it on the left.

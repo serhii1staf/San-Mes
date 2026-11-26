@@ -37,6 +37,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { BlurView as ExpoBlurView } from 'expo-blur';
 import { KeyboardController } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Reanimated, {
@@ -44,6 +45,7 @@ import Reanimated, {
   Extrapolation,
   interpolate,
   runOnJS,
+  useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -156,6 +158,11 @@ interface ActionMenuProps<Id extends string> {
    * placed partly under that bar. A menu drawn over the whole window (in a Modal) leaves it out.
    */
   bottomReserve?: number;
+  /**
+   * iOS: blur what is behind the menu, not only dim it (see "THE BACKDROP IS FROSTED ON IOS"). Needs
+   * `captureHeld`, so that the held item can be shown above the blur; ignored on Android.
+   */
+  blurBackdrop?: boolean;
 }
 
 // ── THE WHOLE ITEM, ALWAYS ───────────────────────────────────────────────────────────────────────
@@ -238,6 +245,9 @@ const CARD_WAIT_MS = 300;
 // Measured on the emulator for a 4,790 pt message (4 M px): 500 ms to draw and encode, 750 ms with
 // the menu opening, about 1 s until the image is decoded and shown.
 const SHOT_TIMEOUT_MS = 4000;
+// For a snapshot taken only for the blur (`inPlace`): a bubble of at most `SHOT_DELAY_PIXELS`, which
+// should be shown well within this; past it the item lifts in its cut-out without the blur.
+const INPLACE_SHOT_TIMEOUT_MS = 400;
 // iOS draws the snapshot on the main thread, which also runs the open animations, so a big one
 // starts once the dim has faded in rather than stall it, and the card waits for it (see "THE CARD'S
 // WAIT STARTS WHEN THE SNAPSHOT DOES"). A small one (most bubbles) is cheap enough to take at once,
@@ -247,17 +257,22 @@ const SHOT_TIMEOUT_MS = 4000;
 const SHOT_DELAY_MS = Platform.OS === 'ios' ? 320 : 0;
 const SHOT_DELAY_PIXELS = 1_000_000;
 
-/** How the snapshot of `plan`'s item is taken: its scale (1 = full size) and the wait before it starts. */
+/**
+ * How the snapshot of `plan`'s item is taken: its scale (1 = full size) and the wait before it starts.
+ * One taken only for the blur (`inPlace`) is never delayed: the card has not waited for it, and the
+ * item is not lifted until it is shown. So it is capped at `SHOT_DELAY_PIXELS` instead, the size iOS
+ * draws at once anyway; a photo bubble then comes out at about 2.5x instead of 3x, under a 1.04 lift.
+ */
 function shotGeometry(plan: PreviewPlan): { fit: number; delayMs: number } {
   const density = PixelRatio.get();
   const fullPixels = plan.width * plan.fullHeight * density * density;
   const fit = Math.min(
     1,
-    Math.sqrt(MAX_SHOT_PIXELS / fullPixels),
+    Math.sqrt((plan.inPlace ? SHOT_DELAY_PIXELS : MAX_SHOT_PIXELS) / fullPixels),
     MAX_SHOT_SIDE / (plan.fullHeight * density),
     MAX_SHOT_SIDE / (plan.width * density),
   );
-  const delayMs = !plan.keyboardUp && fullPixels * fit * fit > SHOT_DELAY_PIXELS ? SHOT_DELAY_MS : 0;
+  const delayMs = !plan.keyboardUp && !plan.inPlace && fullPixels * fit * fit > SHOT_DELAY_PIXELS ? SHOT_DELAY_MS : 0;
   return { fit, delayMs };
 }
 
@@ -279,6 +294,12 @@ type PreviewPlan = {
   menuTop: number;
   /** The keyboard was up: dismissing it moves the item, so the snapshot does not return to it. */
   keyboardUp: boolean;
+  /**
+   * Taken only so the item can sit above the blur (see "THE BACKDROP IS FROSTED ON IOS"): the item
+   * is seen whole where it is, so the snapshot stays there, the card goes where it would for the
+   * cut-out (`menuTop` is not used) and opens at once.
+   */
+  inPlace: boolean;
 };
 
 export const MENU_WIDTH = 254;
@@ -318,6 +339,32 @@ const SURFACE_OUT = CLOSE_TIMING;
 const LIFT_SPRING = { damping: 15, stiffness: 260, mass: 0.7 };
 // Gap between the held item and the edge of its cut-out in the dim.
 const SPOT_PAD = 6;
+
+// ── THE BACKDROP IS FROSTED ON IOS (Nov 2026) ──────────────────────────────────────────────────
+//
+// Asked: behind a held message, wherever it is, the blur of the banner position editor, instead of a
+// dim the chat shows through. On iOS a blur view (UIVisualEffectView, through expo-blur) now goes
+// under the dim, as in the chat list's peek menu (ChatPeekMenu). Its intensity is animated, not its
+// alpha (an effect view under an alpha below 1 renders broken): in as the held item is shown above
+// it, out with `c` on the close. The dim lightens to `FROST_DIM_*` while the blur comes in.
+//
+// The blur covers everything under it, so what is held has to be drawn above it: a long item's copy
+// already is, and anything else as its snapshot. An item seen whole where it is had no snapshot (the
+// cut-out showed the live item); with the blur it gets one where it is (`inPlace`). The card still
+// opens at once, the item lifts once its snapshot is shown, and the blur comes in from then. If the
+// snapshot fails, the menu keeps the lit cut-out and no blur.
+//
+// Not on Android: a live blur there (expo-blur's experimental method redraws and blurs the screen
+// on every frame) made 37 % of an open's frames janky on the emulator.
+const AnimatedBlur = Reanimated.createAnimatedComponent(ExpoBlurView);
+const FROST_INTENSITY = 60;
+const FROST_IN = { duration: 260, easing: Easing.out(Easing.quad) };
+// The dim over the blur. ChatPeekMenu has 0.28 / 0.12 over its own; a touch more here, where the
+// dim alone is 0.5 / 0.26, so the change from one to the other does not read as a flash.
+const FROST_DIM_DARK = 0.3;
+const FROST_DIM_LIGHT = 0.14;
+const DIM_DARK = 0.5;
+const DIM_LIGHT = 0.26;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
@@ -482,7 +529,7 @@ function ActionMenuInner<Id extends string>(
   {
     anchor, align = 'left', title, top, items, onSelect, onWillSelect, onClosing, onClose, zones, hovered,
     spotlightRadius, spotlightBounds, spotlightLift = 1, captureHeld, onHeldPreview, longPreview,
-    bottomReserve = 0,
+    bottomReserve = 0, blurBackdrop = false,
   }: ActionMenuProps<Id>,
   ref: React.ForwardedRef<ActionMenuHandle>,
 ) {
@@ -495,6 +542,8 @@ function ActionMenuInner<Id extends string>(
   const p = useSharedValue(0);
   const cp = useSharedValue(0);
   const c = useSharedValue(0);
+  // The blur coming in (see "THE BACKDROP IS FROSTED ON IOS"); it goes out with `c`.
+  const bp = useSharedValue(0);
   // The card leaving: its icons and labels, then its surface (see `contentStyle`).
   const contentOut = useSharedValue(0);
   const surfaceOut = useSharedValue(0);
@@ -562,6 +611,8 @@ function ActionMenuInner<Id extends string>(
   // message is lifted beside its card. Nothing is snapshotted, and the copy is clipped to what fits,
   // so the cost is that of a few lines of text however long the item is.
   const [longCopy] = useState(() => longItem && !!longPreview && !!anchor);
+  // See "THE BACKDROP IS FROSTED ON IOS". Without a way to show the held item above the blur, none.
+  const [frostWanted] = useState(() => blurBackdrop && Platform.OS === 'ios' && (!anchor || !!captureHeld));
 
   // Decided once, on mount, from the item's rect: the parent hands a new anchor object on every
   // render, and the plan must not change under an open menu. See "THE WHOLE ITEM, ALWAYS".
@@ -569,7 +620,23 @@ function ActionMenuInner<Id extends string>(
     if (!captureHeld || !anchor || anchor.width < 1 || anchor.height < 1 || longItem) return null;
     const whollyVisible = anchor.y >= bandTop - 1 && anchor.y + anchor.height <= bandBottom + 1;
     const fitsBeside = anchor.y + anchor.height + GAP + menuH <= maxBottom || anchor.y - GAP - menuH >= minTop;
-    if (whollyVisible && fitsBeside && keyboardH === 0) return null;
+    if (whollyVisible && fitsBeside && keyboardH === 0) {
+      if (!frostWanted) return null;
+      // Only for the blur: the snapshot stays exactly where the item is (`inPlace`).
+      return {
+        left: anchor.x,
+        width: anchor.width,
+        fullHeight: anchor.height,
+        height: anchor.height,
+        startHeight: anchor.height,
+        top: anchor.y,
+        scroll: 0,
+        startShift: 0,
+        menuTop: 0,
+        keyboardUp: false,
+        inPlace: true,
+      };
+    }
     // The snapshot lifts in its window the way a bubble lifts in its cut-out (see `previewLift`), so
     // the window is sized and placed for its lifted size: `pad` is what the lift adds at each end.
     const height = Math.min(anchor.height, windowRoom / lift);
@@ -590,8 +657,12 @@ function ActionMenuInner<Id extends string>(
       startShift: anchor.y + scroll - topY,
       menuTop: topY + height + pad + GAP,
       keyboardUp: keyboardH > 0,
+      inPlace: false,
     };
   });
+  // The blur, when what is held is drawn above it: as a snapshot, as a long item's copy, or there is
+  // no item. A long item without a copy stays lit in its cut-out, so it gets none.
+  const frost = frostWanted && (!anchor || longCopy || !!plan);
 
   let menuTop: number;
   // The lifted item grows about its centre, so the card keeps its gap from the grown edge.
@@ -600,7 +671,7 @@ function ActionMenuInner<Id extends string>(
   // composer that is the band's edge, not the item's (an item seen whole is unchanged by this).
   const seenTop = anchor ? Math.max(anchor.y - liftPad, bandTop) : 0;
   const seenBottom = anchor ? Math.min(anchor.y + anchor.height + liftPad, bandBottom) : 0;
-  if (plan) {
+  if (plan && !plan.inPlace) {
     menuTop = plan.menuTop;
   } else if (longCopy) {
     // At the bottom, so the copy above it gets the most room (no keyboard: see `longItem`).
@@ -632,8 +703,10 @@ function ActionMenuInner<Id extends string>(
   // With the keyboard up it waits for the snapshot (or its failure) however long that takes: its
   // place is where the keyboard is until the snapshot is shown and the keyboard goes, and opened
   // early only its top row showed above the keyboard (a long message, emulator, about 0.8 s).
-  const [cardOpen, setCardOpen] = useState(!plan);
-  const cardStarted = useRef(!plan);
+  // A snapshot taken only for the blur (`inPlace`) is not waited for: the item does not move, so the
+  // card cannot be crossed by it.
+  const [cardOpen, setCardOpen] = useState(!plan || plan.inPlace);
+  const cardStarted = useRef(!plan || plan.inPlace);
   // ── THE CARD'S WAIT STARTS WHEN THE SNAPSHOT DOES (Nov 2026) ─────────────────────────────────
   //
   // On iOS a big snapshot starts `SHOT_DELAY_MS` (320) after the open, so that its main-thread draw
@@ -663,14 +736,17 @@ function ActionMenuInner<Id extends string>(
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
       p.value = withSpring(1, OPEN_SPRING);
+      // Nothing to wait for when no snapshot is taken: a long item's copy is above the blur from
+      // the start, and a card with no item has nothing to show through it.
+      if (frost && !plan) bp.value = withTiming(1, FROST_IN);
     });
-    if (!plan || plan.keyboardUp) return () => cancelAnimationFrame(raf);
+    if (!plan || plan.keyboardUp || plan.inPlace) return () => cancelAnimationFrame(raf);
     const t = setTimeout(startCard, shotDelayMs + CARD_WAIT_MS);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(t);
     };
-  }, [p, plan, startCard, shotDelayMs]);
+  }, [p, bp, frost, plan, startCard, shotDelayMs]);
   // After the commit that mounts it: a glass card waiting for the snapshot is not mounted (see below),
   // and a spring started before the mount would spend its first frames on nothing. A frame later still,
   // for the reason above.
@@ -770,7 +846,9 @@ function ActionMenuInner<Id extends string>(
         fail();
       }
     };
-    shotTimer.current = setTimeout(fail, delayMs + SHOT_TIMEOUT_MS);
+    // One taken for the blur alone is given up on early: the item waits for it to lift, and without
+    // it the menu is what it was before the blur, the item lifting in its cut-out.
+    shotTimer.current = setTimeout(fail, plan.inPlace ? INPLACE_SHOT_TIMEOUT_MS : delayMs + SHOT_TIMEOUT_MS);
     const delay = delayMs > 0 ? setTimeout(take, delayMs) : null;
     if (!delay) take();
     return () => {
@@ -795,9 +873,11 @@ function ActionMenuInner<Id extends string>(
       shift.value = withSpring(0, PREVIEW_SPRING);
       if (plan) windowH.value = withSpring(plan.height, PREVIEW_SPRING);
       if (lift !== 1) previewLift.value = withSpring(lift, LIFT_SPRING);
+      // The item is above the blur now (see "THE BACKDROP IS FROSTED ON IOS").
+      if (frost) bp.value = withTiming(1, FROST_IN);
       startCard();
     });
-  }, [shift, windowH, previewLift, lift, plan, startCard]);
+  }, [shift, windowH, previewLift, lift, plan, startCard, frost, bp]);
   const onShotError = useCallback(() => {
     if (shotSettled.current) return;
     shotSettled.current = true;
@@ -980,9 +1060,18 @@ function ActionMenuInner<Id extends string>(
     if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { opacity: 0 };
     return { opacity: interpolate(cp.value, [0.2, 0.75], [0, 1], Extrapolation.CLAMP) * (1 - contentOut.value) };
   });
+  // Over the blur the dim lightens as the blur comes in, to `FROST_DIM_*` (see "THE BACKDROP IS
+  // FROSTED ON IOS"). Only the spotlight's dim: a card with no item has a light one already.
+  const dimRelief = frost && !!anchor && spotlightRadius !== undefined
+    ? 1 - (theme.isDark ? FROST_DIM_DARK / DIM_DARK : FROST_DIM_LIGHT / DIM_LIGHT)
+    : 0;
   const dimStyle = useAnimatedStyle(() => {
     if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { opacity: 0 };
-    return { opacity: Math.min(1, Math.max(0, p.value)) * (1 - c.value) };
+    return { opacity: Math.min(1, Math.max(0, p.value)) * (1 - c.value) * (1 - dimRelief * Math.min(1, bp.value)) };
+  });
+  const blurProps = useAnimatedProps(() => {
+    if (UI_RUNTIME_MAPPERS && !globalThis._WORKLET) return { intensity: 0 };
+    return { intensity: Math.min(1, Math.max(0, bp.value)) * (1 - c.value) * FROST_INTENSITY };
   });
 
   // ── The held item stays lit ──────────────────────────────────────────────
@@ -1058,12 +1147,22 @@ function ActionMenuInner<Id extends string>(
   const flatSurface = isDark ? theme.colors.background.elevated : '#FFFFFF';
 
   const dimColor = spotHole
-    ? isDark ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.26)'
+    ? `rgba(0,0,0,${isDark ? DIM_DARK : DIM_LIGHT})`
     : isIOS ? 'rgba(0,0,0,0.10)' : 'rgba(0,0,0,0.32)';
 
   return (
     <View style={StyleSheet.absoluteFill} accessibilityViewIsModal>
       <ModalStatusBar hidden={!statusBarBack} />
+      {/* Under everything, the dim included (see "THE BACKDROP IS FROSTED ON IOS"). */}
+      {frost ? (
+        <AnimatedBlur
+          pointerEvents="none"
+          animatedProps={blurProps}
+          intensity={0}
+          tint={isDark ? 'dark' : 'light'}
+          style={StyleSheet.absoluteFill}
+        />
+      ) : null}
       <Reanimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.dimClip, dimStyle]}>
         {spotHole && spotHole !== 'all' ? (
           <SpotlightDim hole={spotHole} color={dimColor} W={W} H={H} />
