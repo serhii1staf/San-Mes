@@ -204,8 +204,9 @@ export default function MiniAppsScreen() {
         </View>
       )}
 
-      {/* Apps list */}
-      {isLoading ? (
+      {/* Apps list. The spinner only when there is nothing to show yet: the stored list stays on
+          screen while it is refreshed. */}
+      {isLoading && apps.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={theme.colors.accent.primary} />
         </View>

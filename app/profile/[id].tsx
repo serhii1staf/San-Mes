@@ -9,6 +9,7 @@ import { Text } from '../../src/components/ui';
 import { useAuthStore, useEntityStore } from '../../src/store';
 import { getProfile } from '../../src/lib/supabase';
 import { syncProfile } from '../../src/services/syncService';
+import { cacheProfile, getCachedProfileSync } from '../../src/services/cacheService';
 import { markSynced } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -55,7 +56,11 @@ export default function UserProfileScreen() {
 
   const cachedProfile = useEntityStore((s) => s.profiles[profileId]);
   const [fallbackProfile, setFallbackProfile] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(!cachedProfile);
+  // Not in the entity store (opened before its hydrate finished, or older than the 200 profiles its
+  // batch keeps): the copy kept per profile on disk, read synchronously, so the screen opens on it
+  // instead of a full-screen spinner while the fetch below runs.
+  const [diskProfile, setDiskProfile] = useState<any>(() => (cachedProfile || !profileId ? null : getCachedProfileSync(profileId)));
+  const [isLoading, setIsLoading] = useState(!cachedProfile && !diskProfile);
   const [showMenu, setShowMenu] = useState(false);
 
   useEffect(() => {
@@ -66,8 +71,15 @@ export default function UserProfileScreen() {
       didDirectFetch = true;
       setIsLoading(true);
       getProfile(profileId)
-        .then(({ profile: p }) => {
+        .then(({ profile: p, error }) => {
           if (cancelled) return;
+          // A deleted account must not live on in the disk copy (see `syncProfile`). A failed request
+          // keeps it: offline, the copy is the best there is.
+          const gone = !p && (!error || /not[ _-]?found|404/i.test(error));
+          if (gone) {
+            setDiskProfile(null);
+            void cacheProfile(profileId, null).catch(() => {});
+          }
           if (p) {
             setFallbackProfile(p);
             useEntityStore.getState().upsertProfile({
@@ -102,7 +114,7 @@ export default function UserProfileScreen() {
     return () => { cancelled = true; handle.cancel(); };
   }, [profileId]);
 
-  const profile: any = cachedProfile || fallbackProfile;
+  const profile: any = cachedProfile || fallbackProfile || diskProfile;
   const { screenshotDetected } = useScreenCaptureGuard(!!profile?.screenshots_disabled, 'profile-' + profileId);
 
   const bannerUrlRaw = profile?.banner_url as string | null | undefined;

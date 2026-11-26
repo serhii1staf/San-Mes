@@ -186,6 +186,25 @@ export async function getCachedProfile(id: string): Promise<LocalProfile | null>
   return cacheGet<LocalProfile | null>(KEYS.profile(id), null);
 }
 
+/**
+ * The same per-profile copy, read synchronously (MMKV only; null without it or without a copy).
+ *
+ * For a first frame that must not wait: a profile missing from the entity store (opened before its
+ * hydrate finished, or older than the 200 profiles its batch blob keeps) opened on a full-screen
+ * spinner even though `upsertProfile` had written this copy the last time it was seen.
+ */
+export function getCachedProfileSync(id: string): LocalProfile | null {
+  if (!id || !isMMKVAvailable()) return null;
+  try {
+    const raw = kvGetStringRawSync(namespaced(KEYS.profile(id)));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && typeof parsed.id === 'string' ? (parsed as LocalProfile) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function cacheConversations(conversations: LocalConversation[]): Promise<void> {
   await cacheSet(KEYS.conversations, conversations);
 }

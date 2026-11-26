@@ -4,8 +4,8 @@
  * There is no feed: a post is read on its author's profile («Публикации» / «Медиа») and in its own
  * thread (`app/comments/[id].tsx`); a person's comments are listed under «Ответы» on their profile.
  *
- * Caching: one page per profile, in memory for the session and on disk (with the time it was
- * fetched) for the first paint of the next session. A page younger than FRESH_MS is not refetched,
+ * Caching: one page of posts and one of replies per profile, in memory for the session and on disk
+ * (with the time it was fetched) for the first paint of the next session. A page younger than FRESH_MS is not refetched,
  * whether it came from memory or from disk; older pages are shown at once and refreshed in the
  * background. Composing, editing or deleting a post calls `invalidateProfilePosts`, and commenting
  * calls `invalidateProfileReplies`, which refetch whatever profile is on screen.
@@ -81,6 +81,7 @@ const repliesMem = new Map<string, Entry<ProfileReply>>();
 const listeners = new Set<(profileId: string | null, kind: InvalidationKind) => void>();
 
 const diskKey = (profileId: string) => `profile_posts:${profileId}`;
+const repliesDiskKey = (profileId: string) => `profile_replies:${profileId}`;
 
 /** Reposts are a feed concept; they are not shown on profiles. */
 function isRepostContent(content: unknown): boolean {
@@ -118,9 +119,9 @@ export function invalidateProfilePosts(profileId?: string | null): void {
   if (profileId) {
     postsMem.delete(profileId);
     repliesMem.delete(profileId);
-    // The disk copy carries its fetch time now, so it must not be able to vouch for itself either.
-    const onDisk = postsDisk.read(profileId);
-    if (onDisk) postsDisk.write(profileId, onDisk.items, 0);
+    // The disk copies carry their fetch time now, so they must not be able to vouch for themselves.
+    markDiskStale(postsDisk, profileId);
+    markDiskStale(repliesDisk, profileId);
   } else {
     postsMem.clear();
     repliesMem.clear();
@@ -136,7 +137,14 @@ export function invalidateProfilePosts(profileId?: string | null): void {
 export function invalidateProfileReplies(profileId: string | null | undefined): void {
   if (!profileId) return;
   repliesMem.delete(profileId);
+  markDiskStale(repliesDisk, profileId);
   notify(profileId, 'replies');
+}
+
+/** Keep the page on disk for the next first paint, but too old to skip the refetch. */
+function markDiskStale<T>(disk: DiskCache<T>, profileId: string): void {
+  const onDisk = disk.read(profileId);
+  if (onDisk && onDisk.at !== 0) disk.write(profileId, onDisk.items, 0);
 }
 
 async function fetchPosts(profileId: string): Promise<ProfilePost[] | null> {
@@ -263,26 +271,35 @@ function useCachedList<T>(
   return { items, loading };
 }
 
-const postsDisk: DiskCache<ProfilePost> = {
-  read: (id: string) => {
-    try {
-      const v = kvGetJSONSync<unknown>(diskKey(id), null);
-      // Written as a bare array before the fetch time was stored: usable for the first paint, but
-      // too old to vouch for, so it is still refreshed.
-      if (Array.isArray(v)) return { at: 0, items: v as ProfilePost[] };
-      if (v && typeof v === 'object' && Array.isArray((v as any).items)) {
-        const at = Number((v as any).at);
-        return { at: Number.isFinite(at) ? at : 0, items: (v as any).items as ProfilePost[] };
+/** One page per profile on disk, `{ at, items }`, under `keyOf(profileId)`. */
+function diskCache<T>(keyOf: (id: string) => string): DiskCache<T> {
+  return {
+    read: (id: string) => {
+      try {
+        const v = kvGetJSONSync<unknown>(keyOf(id), null);
+        // Written as a bare array before the fetch time was stored: usable for the first paint, but
+        // too old to vouch for, so it is still refreshed.
+        if (Array.isArray(v)) return { at: 0, items: v as T[] };
+        if (v && typeof v === 'object' && Array.isArray((v as any).items)) {
+          const at = Number((v as any).at);
+          return { at: Number.isFinite(at) ? at : 0, items: (v as any).items as T[] };
+        }
+        return null;
+      } catch {
+        return null;
       }
-      return null;
-    } catch {
-      return null;
-    }
-  },
-  write: (id: string, items: ProfilePost[], at: number = Date.now()) => {
-    try { kvSetJSON(diskKey(id), { at, items: items.slice(0, PAGE) }); } catch {}
-  },
-};
+    },
+    write: (id: string, items: T[], at: number = Date.now()) => {
+      try { kvSetJSON(keyOf(id), { at, items: items.slice(0, PAGE) }); } catch {}
+    },
+  };
+}
+
+const postsDisk = diskCache<ProfilePost>(diskKey);
+// «Ответы» on disk too. It was memory only, so after every launch the first open of the tab showed a
+// spinner over a page this device had already loaded; now it opens on that page and refreshes it in
+// the background, like «Публикации».
+const repliesDisk = diskCache<ProfileReply>(repliesDiskKey);
 
 /** The cached first page for a profile (memory, else disk), without fetching. For warm-ups. */
 export function peekCachedProfilePosts(profileId: string): ProfilePost[] {
@@ -298,6 +315,6 @@ export function useProfilePosts(profileId: string | undefined) {
 
 /** Pass `undefined` until the «Ответы» tab is opened, so the request is only made when needed. */
 export function useProfileReplies(profileId: string | undefined) {
-  const { items, loading } = useCachedList<ProfileReply>(profileId, 'replies', repliesMem, fetchReplies);
+  const { items, loading } = useCachedList<ProfileReply>(profileId, 'replies', repliesMem, fetchReplies, repliesDisk);
   return { replies: items, loading };
 }

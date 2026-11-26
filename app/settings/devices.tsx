@@ -31,7 +31,7 @@
 // news is delivered. A device that never reaches the network keeps what it has cached until it does —
 // which is true of every token-based session, and is why the footnote says it out loud.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, View, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -41,6 +41,7 @@ import { Text } from '../../src/components/ui';
 import { useT, useI18nStore } from '../../src/i18n/store';
 import { apiGet, apiPost } from '../../src/services/apiClient';
 import { getInstallId } from '../../src/services/installId';
+import { getCacheAccount } from '../../src/services/cacheAccount';
 import { formatDaySeparator } from '../../src/utils/chatDaySeparators';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
@@ -55,6 +56,12 @@ interface DeviceRow {
   last_seen_at: string;
 }
 
+/**
+ * The list this screen last showed, in memory for the session only: it describes the account's
+ * devices, so it is not written to disk.
+ */
+let lastList: { account: string; rows: DeviceRow[] } | null = null;
+
 export default function DevicesScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -63,7 +70,11 @@ export default function DevicesScreen() {
   // the user reads the app in English on a Russian phone.
   const locale = useI18nStore((s) => s.locale);
 
-  const [rows, setRows] = useState<DeviceRow[] | null>(null);
+  // Reopened in the same session, the screen starts on the list it showed last (for this account),
+  // and the refresh replaces it in place, instead of a spinner on every open.
+  const [rows, setRows] = useState<DeviceRow[] | null>(() => (lastList && lastList.account === getCacheAccount() ? lastList.rows : null));
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   const [error, setError] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   // Read once per mount: it is a synchronous MMKV read and cannot change while this screen is open.
@@ -73,18 +84,26 @@ export default function DevicesScreen() {
 
   const load = useCallback(async () => {
     setError(false);
-    setRows(null);
+    // The spinner only while there is nothing to show; a list on screen stays until the answer.
+    setRows((prev) => (prev && prev.length > 0 ? prev : null));
     const { data, error: err } = await apiGet<DeviceRow[]>('/v1/devices');
     // `apiGet` resolves with an error string rather than throwing, so this is the whole failure
     // surface. An empty array is a legitimate success and must not read as an error — hence a separate
     // flag rather than treating `!data` as failure.
     if (err) {
+      // A list already on screen stays (the last one the server gave); the error is for an empty screen.
+      if (rowsRef.current && rowsRef.current.length > 0) return;
       setError(true);
       setRows([]);
       return;
     }
     setRows(Array.isArray(data) ? data : []);
   }, []);
+
+  // What the next open starts on: the list as it is now, revocations included.
+  useEffect(() => {
+    if (rows && !error) lastList = { account: getCacheAccount(), rows };
+  }, [rows, error]);
 
   useEffect(() => {
     void load();

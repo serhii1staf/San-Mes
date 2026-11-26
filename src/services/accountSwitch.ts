@@ -32,6 +32,7 @@ import { useFeedStore } from '../store/feedStore';
 import { useChatStore } from '../store/chatStore';
 import { useBlockedUsersStore } from '../store/blockedUsersStore';
 import { useChatUnread } from '../store/chatUnreadStore';
+import { syncMiniAppsAccount } from '../store/miniAppsStore';
 import { disconnectRealtime } from './realtime/ably';
 
 export function switchAccount(accountId: string | null | undefined): void {
@@ -39,6 +40,8 @@ export function switchAccount(accountId: string | null | undefined): void {
   setCacheAccount(accountId);
   setThrottleAccount(accountId);
   try { resetAllThrottles?.(); } catch {}
+  // The mini-apps list is stored per account: show the new account's (or none), not the old one.
+  try { syncMiniAppsAccount(); } catch {}
 
   // 2) Wipe in-memory state from the previous account. These are pure
   //    setState calls that fan out to subscribers — they're cheap on

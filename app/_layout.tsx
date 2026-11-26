@@ -26,6 +26,7 @@ import { useConnectivityStore } from '../src/services/connectivityMonitor';
 import { useEntityStore } from '../src/services/entityStore';
 import { setCacheAccount } from '../src/services/cacheService';
 import { useChatUnread } from '../src/store/chatUnreadStore';
+import { syncMiniAppsAccount } from '../src/store/miniAppsStore';
 import { setThrottleAccount } from '../src/services/syncThrottle';
 import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -694,6 +695,8 @@ function RootLayout() {
     const currentUser = useAuthStore.getState().user;
     setCacheAccount(currentUser?.id);
     setThrottleAccount(currentUser?.id);
+    // The mini-apps list is stored per account; re-read it if it was read before the line above.
+    try { syncMiniAppsAccount(); } catch {}
     // ── RE-READ UNREAD STATE NOW THAT THE NAMESPACE IS CORRECT ────────────────
     //
     // `chatUnreadStore` is imported statically by CustomTabBar, RealtimeAccountBridge,
