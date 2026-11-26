@@ -42,6 +42,10 @@ bucket_name = "san"
 
 # ── Rate limits (src/guards.ts) ─────────────────────────────────────────────────────────────────
 #
+# Workers AI: Whisper for the chat's voice input (routes/ai.ts, POST /v1/ai/transcribe).
+[ai]
+binding = "AI"
+
 # Workers rate-limiting bindings: counted per Cloudflare location, in 10 or 60 s windows, approximate.
 # For bursts and abuse, not quotas. Each `namespace_id` must be unique on the account. The Worker lets
 # a request through if a binding is missing or fails, so removing one of these never breaks the API.

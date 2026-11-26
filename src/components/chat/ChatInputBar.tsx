@@ -206,6 +206,9 @@ interface ChatFieldProps {
   // Fires only when emptiness flips (true ⇄ false) — drives `canSend` without a
   // per-keystroke parent render.
   onHasTextChange: (hasText: boolean) => void;
+  // Shown instead of the placeholder while dictating ("Говорите…", "Распознаю…"). Changes twice a
+  // session, so it costs the field two renders.
+  hint?: string;
   onFocus: () => void;
   onPaste: (payload: any) => void;
   // Fires on EVERY keystroke, unlike `onHasTextChange`. Safe only because the
@@ -216,7 +219,7 @@ interface ChatFieldProps {
 }
 
 const ChatField = memo(forwardRef<ChatFieldHandle, ChatFieldProps>(function ChatField(
-  { onHasTextChange, onFocus, onPaste, onTyping },
+  { onHasTextChange, onFocus, onPaste, onTyping, hint },
   ref,
 ) {
   const theme = useTheme();
@@ -260,8 +263,8 @@ const ChatField = memo(forwardRef<ChatFieldHandle, ChatFieldProps>(function Chat
       ref={textInputRef}
       value={text}
       onChangeText={handleChangeText}
-      placeholder={t('chat.input_placeholder')}
-      placeholderTextColor={theme.colors.text.tertiary}
+      placeholder={hint ?? t('chat.input_placeholder')}
+      placeholderTextColor={hint ? theme.colors.accent.primary : theme.colors.text.tertiary}
       style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'stretch', textAlign: 'left' }}
       // There was NO limit here. The only bound was the server truncating at 16 000 after the
       // fact, which loses text silently, and before that a single pasted wall of text is one
@@ -337,7 +340,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   stopDictationRef.current = dictation.stop;
   const handleFieldFocus = useCallback(() => {
     perfMonitor.markInputFocus('chat');
-    // A tap on the field while dictating stops it, keeping the words, so they can be edited.
+    // A tap on the field while recording stops it; the words arrive at the end of what is typed.
     stopDictationRef.current();
     // Tapping the field while a panel is open should close it and return to the
     // keyboard (which is already coming up).
@@ -433,6 +436,13 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
             onHasTextChange={handleHasTextChange}
             onFocus={handleFieldFocus}
             onPaste={handleNativePaste}
+            hint={
+              dictation.phase === 'recording'
+                ? t('chat.dictation.listening', 'Говорите…')
+                : dictation.phase === 'transcribing'
+                  ? t('chat.dictation.transcribing', 'Распознаю…')
+                  : undefined
+            }
           />
           <Pressable
             onPress={panelOpen ? onToggleEmoji : onOpenEmoji}
@@ -483,6 +493,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
               color={theme.colors.accent.primary}
               size={BTN}
               label={t('chat.composer.dictate_stop_a11y', 'Остановить голосовой ввод')}
+              busy={dictation.phase === 'transcribing'}
               onPress={dictation.stop}
             />
           ) : (

@@ -27,8 +27,7 @@
         "NSPhotoLibraryUsageDescription": "San uses your photo library so you can attach photos to posts and chat messages and set your profile banner or a chat background.",
         "NSPhotoLibraryAddUsageDescription": "San saves a photo from a chat, or a profile QR code, to your photo library when you tap Save.",
         "NSCameraUsageDescription": "San uses the camera only to scan QR codes, such as someone's profile code. Nothing is recorded or sent.",
-        "NSMicrophoneUsageDescription": "San uses the microphone only while you dictate a message, to turn your speech into the text of that message. Nothing is recorded or saved.",
-        "NSSpeechRecognitionUsageDescription": "When you dictate a message, San turns your speech into text with Apple's speech recognition. Only the text goes into your message; San does not keep the audio.",
+        "NSMicrophoneUsageDescription": "San uses the microphone only while you dictate a message. The recording is sent to San's server, turned into text there and deleted; only the text goes into your message.",
         "ReactNativeReleaseLevel": "experimental"
       },
       "entitlements": {
@@ -55,8 +54,8 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "San uses the microphone only while you dictate a message, to turn your speech into the text of that message. Nothing is recorded or saved.",
-          "recordAudioAndroid": false,
+          "microphonePermission": "San uses the microphone only while you dictate a message. The recording is sent to San's server, turned into text there and deleted; only the text goes into your message.",
+          "recordAudioAndroid": true,
           "enableBackgroundRecording": false
         }
       ],
@@ -64,23 +63,15 @@
         "expo-image-picker",
         {
           "cameraPermission": "San uses the camera only to scan QR codes, such as someone's profile code. Nothing is recorded or sent.",
-          "microphonePermission": "San uses the microphone only while you dictate a message, to turn your speech into the text of that message. Nothing is recorded or saved."
+          "microphonePermission": "San uses the microphone only while you dictate a message. The recording is sent to San's server, turned into text there and deleted; only the text goes into your message."
         }
       ],
       [
         "expo-camera",
         {
           "cameraPermission": "San uses the camera only to scan QR codes, such as someone's profile code. Nothing is recorded or sent.",
-          "microphonePermission": "San uses the microphone only while you dictate a message, to turn your speech into the text of that message. Nothing is recorded or saved.",
+          "microphonePermission": "San uses the microphone only while you dictate a message. The recording is sent to San's server, turned into text there and deleted; only the text goes into your message.",
           "recordAudioAndroid": false
-        }
-      ],
-      [
-        "expo-speech-recognition",
-        {
-          "microphonePermission": "San uses the microphone only while you dictate a message, to turn your speech into the text of that message. Nothing is recorded or saved.",
-          "speechRecognitionPermission": "When you dictate a message, San turns your speech into text with Apple's speech recognition. Only the text goes into your message; San does not keep the audio.",
-          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox", "com.google.android.as"]
         }
       ],
       [

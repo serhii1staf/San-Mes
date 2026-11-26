@@ -75,9 +75,14 @@ function readMessages(raw: unknown): ChatMessage[] | null {
   return out;
 }
 
-/** Counts this request against the account's day and says whether it is still within it. */
-async function withinDailyLimit(env: Env, userId: string): Promise<boolean> {
-  const day = new Date().toISOString().slice(0, 10);
+/**
+ * Counts this request against the account's day and says whether it is still within it. `bucket`
+ * keeps another feature's count apart in the same table (its rows are `<bucket>:<day>`), so voice
+ * input does not use up San AI's requests.
+ */
+async function withinDailyLimit(env: Env, userId: string, bucket = '', limit = DAILY_LIMIT): Promise<boolean> {
+  const date = new Date().toISOString().slice(0, 10);
+  const day = bucket ? `${bucket}:${date}` : date;
   try {
     const row = await queryOne<{ count: number }>(
       env,
@@ -86,7 +91,7 @@ async function withinDailyLimit(env: Env, userId: string): Promise<boolean> {
        RETURNING count`,
       [userId, day],
     );
-    return !row || Number(row.count) <= DAILY_LIMIT;
+    return !row || Number(row.count) <= limit;
   } catch {
     // The count is a guard, not the feature: a failed write lets the request through, like the
     // rate limits do.
@@ -145,4 +150,125 @@ register('POST', '/v1/ai/complete', async (req, env, _ctx, _params, authedUserId
     return ok(req, { status: 502, text: null });
   }
   return ok(req, { status: 200, text });
+});
+
+// ── Voice input ─────────────────────────────────────────────────────────────────────────────────
+//
+// POST /v1/ai/transcribe   Body: { audio: base64 of the recording (AAC in .m4a, or WAV), lang?: 'ru' … }
+//                          → { text }
+//
+// The chat composer's voice input (src/services/dictation.ts in the app) records while the user speaks
+// and sends the recording here once, when they stop. Whisper large-v3-turbo on Workers AI (Cloudflare's
+// hosting of the open model, zero data retention) turns it into text. Nothing of it is stored or logged
+// here: the recording is passed through and only the text goes back; the only thing kept is the count.
+//
+// Why not the phone's own recogniser: that was the first version, and it was rejected for exactly
+// what the feature was asked for, "the built-in one always misunderstands speech and phrases it
+// strangely". Checked on Workers AI (Nov 2026): WAV and AAC/M4A both decode, and a spoken English
+// test sentence came back word for word, numbers and punctuation included.
+
+const WHISPER = '@cf/openai/whisper-large-v3-turbo';
+/** About 6 MB of base64, i.e. minutes of the app's 32 kbit/s AAC (the app stops at 3 minutes). */
+const TRANSCRIBE_MAX_BODY = 6 * 1024 * 1024;
+const TRANSCRIBE_DAILY_LIMIT = 400;
+const LANGS = new Set(['ru', 'en', 'uk', 'be', 'kk', 'de', 'fr', 'es', 'it', 'pt', 'pl', 'tr']);
+/**
+ * Whisper's well-known inventions on silence or noise, learned from film subtitles. Dropped only when
+ * they are the whole result, so a real sentence that mentions subtitles is kept.
+ */
+const HALLUCINATIONS = [
+  /^продолжение следует\.*$/i,
+  /^субтитры (сделал|создавал|подготовил|делал)\b/i,
+  /^редактор субтитров\b/i,
+  /^спасибо за просмотр[.!]*$/i,
+  /^(thanks|thank you) for watching[.!]*$/i,
+];
+
+// ── THE FIRST TRANSCRIPTION AFTER A PAUSE WAITED FOR THE MODEL (Nov 2026) ───────────────────────
+//
+// Measured: the same 8-second clip took 13.1 s the first time after a pause and 1.6 s right after
+// (greedy decoding, `beam_size: 1`, was no faster: 2.1 s). The model is unloaded when it has not been
+// used for a while, and loading it is most of that first wait. So the app calls
+// `POST /v1/ai/transcribe/warm` the moment recording starts: it runs the model on 0.4 s of silence in
+// the background and answers at once, and by the time the user has said their sentence the model is
+// usually up. It counts against the per-minute limit, not the daily one.
+
+let silentWavB64: string | null = null;
+/** 0.4 s of 16 kHz mono 16-bit silence as a WAV file, base64. */
+function silentWav(): string {
+  if (silentWavB64) return silentWavB64;
+  const dataLen = 6400 * 2;
+  const bytes = new Uint8Array(44 + dataLen);
+  const v = new DataView(bytes.buffer);
+  const tag = (at: number, s: string) => {
+    for (let i = 0; i < s.length; i++) v.setUint8(at + i, s.charCodeAt(i));
+  };
+  tag(0, 'RIFF');
+  v.setUint32(4, 36 + dataLen, true);
+  tag(8, 'WAVE');
+  tag(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, 16000, true);
+  v.setUint32(28, 32000, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  tag(36, 'data');
+  v.setUint32(40, dataLen, true);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  silentWavB64 = btoa(bin);
+  return silentWavB64;
+}
+
+register('POST', '/v1/ai/transcribe/warm', async (req, env, ctx, _params, authedUserId) => {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  if (!env.AI) return fail(req, 'ai_not_configured', 503);
+  const ai = env.AI;
+  // No voice activity filter: it would drop the silence before the model ever ran.
+  ctx.waitUntil(ai.run(WHISPER, { audio: silentWav(), task: 'transcribe', vad_filter: false }).catch(() => undefined));
+  return ok(req, { warming: true });
+});
+
+register('POST', '/v1/ai/transcribe', async (req, env, _ctx, _params, authedUserId) => {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  if (!env.AI) return fail(req, 'ai_not_configured', 503);
+
+  const declared = Number(req.headers.get('Content-Length') || '0');
+  if (Number.isFinite(declared) && declared > TRANSCRIBE_MAX_BODY) return fail(req, 'too_long', 413);
+  let audio = '';
+  let lang: string | undefined;
+  try {
+    const raw = await req.text();
+    if (!raw) return fail(req, 'invalid body', 400);
+    if (raw.length > TRANSCRIBE_MAX_BODY) return fail(req, 'too_long', 413);
+    const body = JSON.parse(raw) as { audio?: unknown; lang?: unknown };
+    if (typeof body.audio === 'string') audio = body.audio;
+    if (typeof body.lang === 'string' && LANGS.has(body.lang)) lang = body.lang;
+  } catch {
+    return fail(req, 'invalid body', 400);
+  }
+  // A cheap shape check; Workers AI rejects anything that is not audio.
+  if (audio.length < 512 || !/^[A-Za-z0-9+/]+={0,2}$/.test(audio.slice(-128))) return fail(req, 'invalid audio', 400);
+
+  if (!(await withinDailyLimit(env, authedUserId, 'dictation', TRANSCRIBE_DAILY_LIMIT))) return fail(req, 'daily_limit', 429);
+
+  let result: { text?: unknown } | null = null;
+  try {
+    result = (await env.AI.run(WHISPER, {
+      audio,
+      task: 'transcribe',
+      ...(lang ? { language: lang } : {}),
+      // Skips the silence before, between and after the words, where Whisper invents text.
+      vad_filter: true,
+      // Keeps one misheard phrase from repeating through the rest of a long recording.
+      condition_on_previous_text: false,
+    })) as { text?: unknown };
+  } catch {
+    return fail(req, 'transcribe_failed', 502);
+  }
+  let text = typeof result?.text === 'string' ? result.text.trim() : '';
+  if (HALLUCINATIONS.some((re) => re.test(text))) text = '';
+  return ok(req, { text });
 });

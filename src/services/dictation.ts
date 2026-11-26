@@ -1,155 +1,152 @@
 /**
- * Voice dictation for the chat composer: the phone's own speech recognition (Apple's Speech framework
- * on iOS, the system recognition service on Android) through expo-speech-recognition. The words
- * appear in the message field as they are recognised; nothing is recorded or stored by the app.
+ * Voice dictation for the chat composer: what the user says is recorded while they speak and turned
+ * into text by Whisper on our Worker (`POST /v1/ai/transcribe`, workers/api/src/routes/ai.ts).
  *
- * ── AN OPTIONAL NATIVE MODULE ────────────────────────────────────────────────────────────────────
+ * ── WHY NOT THE PHONE'S OWN RECOGNISER (Nov 2026) ────────────────────────────────────────────────
  *
- * The module is only in binaries built after it was added (Nov 2026). Updates reach older binaries
- * over the air (the runtime version is the app version), so it is looked up, never imported: without
- * it `dictationAvailable()` is false and the composer keeps its send button as before. Do not turn
- * the lookup into a static import; that would crash every older binary at launch.
+ * The first version used it (Apple's and Google's, through expo-speech-recognition), with the words
+ * appearing while they were heard. It was rejected for the very thing the feature was asked for: the
+ * built-in one "always misunderstands speech and phrases it strangely". Whisper large-v3-turbo hears
+ * Russian far better and punctuates. The text arrives a moment after the user stops, as in ChatGPT's
+ * dictation.
  *
- * ── PRIVACY ───────────────────────────────────────────────────────────────────────────────────────
+ * ── ONLY ON BINARIES THAT MAY RECORD ─────────────────────────────────────────────────────────────
  *
- * The microphone is open only while a session runs, and the composer shows it (the field glows and
- * the stop button moves with the voice). A session ends when it is stopped, cancelled, after
- * `SILENCE_STOP_MS` without speech, after `MAX_SESSION_MS`, and when the app leaves the foreground.
- * The audio is not persisted (`recordingOptions` is left off). See docs/privacy.html §3.
+ * Recording needs NSMicrophoneUsageDescription on iOS (without it the first request crashes the app)
+ * and RECORD_AUDIO on Android. Both came with the build that also added expo-application, and updates
+ * reach older binaries over the air (the runtime version is the app version), so that module's presence
+ * is the test: without it `dictationAvailable()` is false and the composer keeps its send button. Do
+ * not remove expo-application without moving this test to something else that came with that build.
+ *
+ * ── PRIVACY ──────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Before the first recording the user is told where it goes and agrees (`hasDictationConsent`). The
+ * microphone is on only while the composer shows it (the glow and the moving bars). A recording ends
+ * on stop, on the bin, after `SILENCE_STOP_MS` without speech, after `MAX_RECORDING_MS`, when the app
+ * leaves the foreground and when the chat closes. It is sent once, to our Worker, and deleted from the
+ * phone right after; the Worker hands it to Workers AI (zero data retention) and keeps nothing.
+ * See docs/privacy.html §3 and §4.
  */
-import { AppState, Platform } from 'react-native';
+import { AppState } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
-type SpeechLib = typeof import('expo-speech-recognition');
-type SpeechModule = SpeechLib['ExpoSpeechRecognitionModule'];
-type ResultEvent = import('expo-speech-recognition').ExpoSpeechRecognitionResultEvent;
-type ErrorEvent = import('expo-speech-recognition').ExpoSpeechRecognitionErrorEvent;
+type ExpoAudio = typeof import('expo-audio');
+type Recorder = import('expo-audio').AudioRecorder;
 
-/** A session stops by itself after this long without speech, so a forgotten microphone closes. */
-const SILENCE_STOP_MS = 10_000;
+/** A recording stops by itself after this long without speech, so a forgotten microphone closes. */
+const SILENCE_STOP_MS = 8000;
 /** And after this long in any case. */
-const MAX_SESSION_MS = 180_000;
-/** How often the input level is reported (the glow and the stop button follow it). */
-const LEVEL_INTERVAL_MS = 120;
-/** Waited for the module's `end` after `stop()` or an error, before the session is closed anyway. */
-const END_GRACE_MS = 2500;
-
-let speechMod: SpeechModule | null | undefined;
-function speech(): SpeechModule | null {
-  if (speechMod !== undefined) return speechMod;
-  speechMod = null;
-  try {
-    if (requireOptionalNativeModule('ExpoSpeechRecognition')) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      speechMod = (require('expo-speech-recognition') as SpeechLib).ExpoSpeechRecognitionModule;
-    }
-  } catch {
-    speechMod = null;
-  }
-  return speechMod;
-}
+const MAX_RECORDING_MS = 180_000;
+/** How often the input level is read (the glow and the stop button follow it). */
+const LEVEL_INTERVAL_MS = 100;
+/** Shorter than this is a slip of the finger: nothing is sent. */
+const MIN_RECORDING_MS = 700;
+/** Below this level (dBFS) counts as silence for `SILENCE_STOP_MS`. */
+const SILENCE_DB = -42;
+const TRANSCRIBE_PATH = '/v1/ai/transcribe';
+const WARM_PATH = '/v1/ai/transcribe/warm';
+const TRANSCRIBE_TIMEOUT_MS = 45_000;
+const CONSENT_KEY = 'dictation_consent_v1';
 
 let availableCache: boolean | undefined;
-/** Whether this binary has the module and the device has a recognition service. Cached. */
+/** Whether this binary may record (see "ONLY ON BINARIES THAT MAY RECORD"). Cached. */
 export function dictationAvailable(): boolean {
   if (availableCache !== undefined) return availableCache;
-  const m = speech();
   try {
-    availableCache = !!m && m.isRecognitionAvailable();
+    availableCache = !!requireOptionalNativeModule('ExpoApplication');
   } catch {
     availableCache = false;
   }
   return availableCache;
 }
 
-const LANG_TAGS: Record<string, string> = {
-  ru: 'ru-RU', en: 'en-US', uk: 'uk-UA', be: 'be-BY', kk: 'kk-KZ', de: 'de-DE', fr: 'fr-FR',
-  es: 'es-ES', it: 'it-IT', pt: 'pt-BR', pl: 'pl-PL', tr: 'tr-TR',
-};
-/** The recogniser's language tag for an app locale ('ru' → 'ru-RU'). */
-export function dictationLang(locale: string | undefined): string {
-  if (!locale) return 'ru-RU';
-  if (locale.includes('-')) return locale;
-  return LANG_TAGS[locale] ?? 'en-US';
+/** The account has been told where a recording goes and agreed. Stored per account. */
+export function hasDictationConsent(): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return (require('./kvStore') as typeof import('./kvStore')).kvGetStringSync(CONSENT_KEY) === '1';
+  } catch {
+    return false;
+  }
 }
 
-export type DictationError = 'permission' | 'unavailable' | 'language' | 'network' | 'busy' | 'other';
+export function grantDictationConsent(): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    (require('./kvStore') as typeof import('./kvStore')).kvSetString(CONSENT_KEY, '1');
+  } catch {}
+}
+
+export type DictationError = 'permission' | 'network' | 'limit' | 'other';
 
 export interface DictationHandlers {
-  /** What was recognised in this session so far: the settled part and the part still being heard. */
-  onText: (settled: string, pending: string) => void;
-  /** The input level, 0..1, about every `LEVEL_INTERVAL_MS` while listening. */
+  /** The input level, 0..1, about every `LEVEL_INTERVAL_MS` while recording. */
   onLevel?: (level: number) => void;
+  /** Recording has stopped and the recording is on its way to be turned into text. */
+  onTranscribing?: () => void;
+  /** What was said, as text (empty when nothing could be made out). */
+  onText: (text: string) => void;
   /**
    * The session is over. `error` is set for a failure worth telling the user about; `settingsOnly`
-   * when permission was refused for good (only Settings can grant it now).
+   * when the microphone was refused for good (only Settings can grant it now); `nothingHeard` when a
+   * real recording came back without words.
    */
-  onEnd: (info: { cancelled: boolean; error?: DictationError; settingsOnly?: boolean }) => void;
+  onEnd: (info: { cancelled: boolean; error?: DictationError; settingsOnly?: boolean; nothingHeard?: boolean }) => void;
 }
 
 export interface DictationSession {
-  /** Stop listening and keep what was recognised. */
+  /** Stop recording and turn what was said into text. */
   stop: () => void;
-  /** Stop listening and throw this session's words away. */
+  /** Stop and throw the recording away (also while it is being turned into text). */
   cancel: () => void;
 }
 
-/** Joins two runs of recognised words with one space. */
-export function joinWords(a: string, b: string): string {
-  if (!a) return b;
-  if (!b) return a;
-  return `${a} ${b}`;
-}
-
-/**
- * A recogniser that started over after a pause (iOS does this in long sessions) hands a short new
- * transcript that is not a continuation of the last one: what it had heard must be kept. A revision of
- * the same words (punctuation, a corrected word) stays about as long, so it is not mistaken for one.
- */
-function looksLikeRestart(prev: string, next: string): boolean {
-  if (next.length >= prev.length * 0.6) return false;
-  const head = (s: string) => s.slice(0, 6).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-  return head(next) !== head(prev);
-}
-
-function errorKind(code: string | undefined): DictationError | null {
-  switch (code) {
-    case 'no-speech':
-    case 'speech-timeout':
-    case 'aborted':
-      return null;
-    case 'not-allowed':
-      return 'permission';
-    case 'service-not-allowed':
-      return 'unavailable';
-    case 'language-not-supported':
-      return 'language';
-    case 'network':
-      return 'network';
-    case 'busy':
-      return 'busy';
-    default:
-      return 'other';
-  }
-}
-
-let current: { abort: () => void } | null = null;
-
-/**
- * Asks for the microphone and speech recognition (the system prompts once), then listens in `lang`.
- * Resolves to the running session, or null when it could not start (`onEnd` has been called then).
- */
-export async function startDictation(lang: string, h: DictationHandlers): Promise<DictationSession | null> {
-  const m = speech();
-  if (!m) {
-    h.onEnd({ cancelled: false, error: 'unavailable' });
+function audioLib(): ExpoAudio | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('expo-audio') as ExpoAudio;
+  } catch {
     return null;
   }
-  current?.abort();
+}
+
+/** Speech-sized: mono AAC at 16 kHz and 32 kbit/s, about 240 KB a minute. */
+function newRecorder(a: ExpoAudio): Recorder {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const AudioModule = (require('expo-audio/build/AudioModule') as { default: { AudioRecorder: new (o: unknown) => Recorder } }).default;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createRecordingOptions } = require('expo-audio/build/utils/options') as { createRecordingOptions: (o: unknown) => unknown };
+  return new AudioModule.AudioRecorder(
+    createRecordingOptions({
+      extension: '.m4a',
+      sampleRate: 16000,
+      numberOfChannels: 1,
+      bitRate: 32000,
+      isMeteringEnabled: true,
+      android: { extension: '.m4a', outputFormat: 'mpeg4', audioEncoder: 'aac' },
+      ios: { outputFormat: a.IOSOutputFormat.MPEG4AAC, audioQuality: a.AudioQuality.MEDIUM },
+      web: { mimeType: 'audio/webm', bitsPerSecond: 32000 },
+    }),
+  );
+}
+
+let current: { cancel: () => void } | null = null;
+
+/**
+ * Asks for the microphone (the system prompts once), then records. Resolves to the running session,
+ * or null when it could not start (`onEnd` has been called then).
+ */
+export async function startDictation(lang: string, h: DictationHandlers): Promise<DictationSession | null> {
+  const a = audioLib();
+  if (!a || !dictationAvailable()) {
+    h.onEnd({ cancelled: false, error: 'other' });
+    return null;
+  }
+  current?.cancel();
   current = null;
 
   try {
-    const perm = await m.requestPermissionsAsync();
+    const perm = await a.requestRecordingPermissionsAsync();
     if (!perm.granted) {
       h.onEnd({ cancelled: false, error: 'permission', settingsOnly: perm.canAskAgain === false });
       return null;
@@ -159,123 +156,161 @@ export async function startDictation(lang: string, h: DictationHandlers): Promis
     return null;
   }
 
-  let settled = '';
-  let pending = '';
-  let cancelled = false;
-  let error: DictationError | undefined;
-  let closed = false;
-  let lastActivity = Date.now();
-  const startedAt = lastActivity;
-  const subs: { remove: () => void }[] = [];
-  let watchdog: ReturnType<typeof setInterval> | null = null;
-  let grace: ReturnType<typeof setTimeout> | null = null;
-
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    if (watchdog) clearInterval(watchdog);
-    if (grace) clearTimeout(grace);
-    subs.forEach((s) => {
-      try {
-        s.remove();
-      } catch {}
-    });
-    if (current === handle) current = null;
-    // iOS: the module leaves the audio session in its record category; give the player its own back.
-    if (Platform.OS === 'ios') {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        void (require('../store/musicStore') as typeof import('../store/musicStore')).reassertAudioMode();
-      } catch {}
-    }
-    h.onEnd({ cancelled, error });
-  };
-  const closeSoon = () => {
-    if (closed || grace) return;
-    grace = setTimeout(close, END_GRACE_MS);
-  };
-  const stop = () => {
-    if (closed) return;
-    try {
-      m.stop();
-    } catch {
-      close();
-      return;
-    }
-    closeSoon();
-  };
-  const cancel = () => {
-    if (closed) return;
-    cancelled = true;
-    try {
-      m.abort();
-    } catch {}
-    // At once: the words go now, and nothing from this session may arrive after the field is restored.
-    close();
-  };
-  const handle = { abort: cancel };
-
-  subs.push(m.addListener('result', (e: ResultEvent) => {
-    if (closed || cancelled) return;
-    const text = (e.results?.[0]?.transcript ?? '').trim();
-    lastActivity = Date.now();
-    if (e.isFinal) {
-      settled = joinWords(settled, text);
-      pending = '';
-    } else {
-      if (pending && text && looksLikeRestart(pending, text)) settled = joinWords(settled, pending);
-      pending = text;
-    }
-    h.onText(settled, pending);
-  }));
-  subs.push(m.addListener('volumechange', (e: { value: number }) => {
-    if (closed) return;
-    // -2..10; below 0 is silence.
-    const level = Math.max(0, Math.min(1, e.value / 8));
-    if (level > 0.15) lastActivity = Date.now();
-    h.onLevel?.(level);
-  }));
-  subs.push(m.addListener('error', (e: ErrorEvent) => {
-    if (closed) return;
-    const kind = errorKind(e?.error);
-    if (kind && !cancelled) error = kind;
-    closeSoon();
-  }));
-  subs.push(m.addListener('end', () => {
-    // What was still being heard when it ended counts as said.
-    if (!closed && !cancelled && pending) {
-      settled = joinWords(settled, pending);
-      pending = '';
-      h.onText(settled, pending);
-    }
-    close();
-  }));
-  const appState = AppState.addEventListener('change', (s) => {
-    if (s !== 'active') stop();
-  });
-  subs.push(appState);
-
-  watchdog = setInterval(() => {
-    const now = Date.now();
-    if (now - lastActivity > SILENCE_STOP_MS || now - startedAt > MAX_SESSION_MS) stop();
-  }, 1000);
-
-  current = handle;
+  // Music would be recorded with the voice: it pauses, and plays on once the recording is done.
+  let musicPaused = false;
   try {
-    m.start({
-      lang,
-      interimResults: true,
-      // Android 12 and older cannot: there a session ends after the first pause.
-      continuous: Platform.OS === 'ios' || (Platform.Version as number) >= 33,
-      addsPunctuation: true,
-      maxAlternatives: 1,
-      iosTaskHint: 'dictation',
-      volumeChangeEventOptions: { enabled: true, intervalMillis: LEVEL_INTERVAL_MS },
-    });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const music = (require('../store/musicStore') as typeof import('../store/musicStore')).useMusicStore.getState();
+    if (music.isPlaying) {
+      await music.toggle();
+      musicPaused = true;
+    }
+  } catch {}
+
+  let recorder: Recorder | null = null;
+  try {
+    await a.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    recorder = newRecorder(a);
+    await recorder.prepareToRecordAsync();
+    recorder.record();
   } catch {
-    error = 'other';
-    close();
+    try {
+      recorder?.release();
+    } catch {}
+    await restoreAudio(a, musicPaused);
+    h.onEnd({ cancelled: false, error: 'other' });
     return null;
   }
-  return { stop, cancel };
+  const rec = recorder;
+  // Wakes the model up while the user is still speaking: after a pause the first transcription
+  // otherwise waits about 12 s for it to load (see workers/api/src/routes/ai.ts).
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    void (require('./apiClient') as typeof import('./apiClient')).apiPost(WARM_PATH, {}, { timeoutMs: 10_000 });
+  } catch {}
+
+  let phase: 'recording' | 'transcribing' | 'done' = 'recording';
+  let cancelled = false;
+  const startedAt = Date.now();
+  let lastSound = startedAt;
+  const abort = new AbortController();
+
+  const meter = setInterval(() => {
+    if (phase !== 'recording') return;
+    let db = -160;
+    try {
+      db = rec.getStatus().metering ?? -160;
+    } catch {}
+    const now = Date.now();
+    if (db > SILENCE_DB) lastSound = now;
+    // -50 dB and below is silence, -10 dB is a raised voice.
+    h.onLevel?.(Math.max(0, Math.min(1, (db + 50) / 40)));
+    if (now - lastSound > SILENCE_STOP_MS || now - startedAt > MAX_RECORDING_MS) void stop();
+  }, LEVEL_INTERVAL_MS);
+  const appState = AppState.addEventListener('change', (s) => {
+    if (s !== 'active') void stop();
+  });
+
+  const finish = (info: Parameters<DictationHandlers['onEnd']>[0]) => {
+    if (phase === 'done') return;
+    phase = 'done';
+    clearInterval(meter);
+    appState.remove();
+    if (current === handle) current = null;
+    h.onEnd(info);
+  };
+
+  /** Ends the recording and returns its file, or null. Leaves the audio as it was before. */
+  const endRecording = async (): Promise<string | null> => {
+    clearInterval(meter);
+    let uri: string | null = null;
+    try {
+      await rec.stop();
+      uri = rec.uri;
+    } catch {}
+    try {
+      rec.release();
+    } catch {}
+    await restoreAudio(a, musicPaused);
+    return uri;
+  };
+
+  const stop = async () => {
+    if (phase !== 'recording') return;
+    phase = 'transcribing';
+    const heardFor = Date.now() - startedAt;
+    const uri = await endRecording();
+    if (cancelled) return;
+    if (!uri || heardFor < MIN_RECORDING_MS) {
+      deleteFile(uri);
+      finish({ cancelled: false });
+      return;
+    }
+    h.onTranscribing?.();
+    let audio = '';
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { File } = require('expo-file-system') as typeof import('expo-file-system');
+      audio = await new File(uri).base64();
+    } catch {}
+    deleteFile(uri);
+    if (cancelled) return;
+    if (!audio) {
+      finish({ cancelled: false, error: 'other' });
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { apiPost } = require('./apiClient') as typeof import('./apiClient');
+    const res = await apiPost<{ text?: string }>(TRANSCRIBE_PATH, { audio, lang }, { timeoutMs: TRANSCRIBE_TIMEOUT_MS, signal: abort.signal });
+    if (cancelled) return;
+    if (res.error) {
+      const e = String(res.error);
+      finish({
+        cancelled: false,
+        error: e === 'offline' || /timeout|network|fetch/i.test(e) ? 'network' : /daily_limit|429/.test(e) ? 'limit' : 'other',
+      });
+      return;
+    }
+    const text = typeof res.data?.text === 'string' ? res.data.text.trim() : '';
+    if (text) h.onText(text);
+    finish({ cancelled: false, nothingHeard: !text });
+  };
+
+  const cancel = () => {
+    if (phase === 'done') return;
+    cancelled = true;
+    abort.abort();
+    if (phase === 'recording') {
+      phase = 'transcribing';
+      void endRecording().then(deleteFile);
+    }
+    // At once: the words go now, and nothing from this session may arrive after that.
+    finish({ cancelled: true });
+  };
+  const handle = { cancel };
+  current = handle;
+  return { stop: () => void stop(), cancel };
+}
+
+function deleteFile(uri: string | null) {
+  if (!uri) return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { File } = require('expo-file-system') as typeof import('expo-file-system');
+    const f = new File(uri);
+    if (f.exists) f.delete();
+  } catch {}
+}
+
+/** Back to playback: the record category off, the player's own mode, and the music if it was paused. */
+async function restoreAudio(a: ExpoAudio, resumeMusic: boolean) {
+  try {
+    await a.setAudioModeAsync({ allowsRecording: false });
+  } catch {}
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const m = require('../store/musicStore') as typeof import('../store/musicStore');
+    await m.reassertAudioMode();
+    if (resumeMusic && !m.useMusicStore.getState().isPlaying) await m.useMusicStore.getState().toggle();
+  } catch {}
 }

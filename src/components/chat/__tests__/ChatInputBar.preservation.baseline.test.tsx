@@ -106,6 +106,14 @@ jest.mock('../../ui/LiquidGlass', () => {
   };
 });
 
+// Voice input off: jest-expo mocks expo-application, which is how the bar tells a binary that may
+// record (src/services/dictation.ts), and the mic would take the round send button these tests check.
+jest.mock('../../../services/dictation', () => ({
+  dictationAvailable: () => false,
+  hasDictationConsent: () => false,
+  grantDictationConsent: () => {},
+  startDictation: async () => null,
+}));
 jest.mock('../AnimatedKeyboardIcon', () => ({ AnimatedKeyboardIcon: () => null }));
 jest.mock('../AnimatedEmojiIcon', () => ({ AnimatedEmojiIcon: () => null }));
 jest.mock('expo-paste-input', () => ({}), { virtual: true });
@@ -420,9 +428,9 @@ describe('ChatInputBar composer behaviour', () => {
       './AnimatedKeyboardIcon',
       './AnimatedEmojiIcon',
       'expo-paste-input',
-      // Voice dictation (Nov 2026). Its native module (expo-speech-recognition) is looked up at run
-      // time in src/services/dictation.ts, never imported, so the bar still loads on a binary
-      // without it (the mic is then not shown) and stays OTA-deliverable.
+      // Voice dictation (Nov 2026). It records with expo-audio (in every binary) and shows the mic only
+      // on binaries that may record, which it tells by expo-application being there (see
+      // src/services/dictation.ts), so the bar still loads everywhere and stays OTA-deliverable.
       './ChatDictation',
     ]);
 
@@ -442,12 +450,11 @@ describe('ChatInputBar composer behaviour', () => {
         // image-picker and expo-camera plugins carry the same string (app.json), with no microphone.
         'NSCameraUsageDescription',
         // Added deliberately in Nov 2026 for voice dictation in the chat composer (ChatDictation,
-        // src/services/dictation.ts): the microphone and Apple's speech recognition are used only
-        // while the user dictates; nothing is recorded or kept. The expo-audio, expo-image-picker,
-        // expo-camera and expo-speech-recognition plugins carry the same microphone string, so none
-        // of them removes it. They reach users only with a new native build.
+        // src/services/dictation.ts): the microphone records only while the user dictates, and the
+        // recording goes once to our server to be turned into text, then is deleted. The expo-audio,
+        // expo-image-picker and expo-camera plugins carry the same string, so none of them removes it
+        // (`false` deletes the key). It reaches users only with a new native build.
         'NSMicrophoneUsageDescription',
-        'NSSpeechRecognitionUsageDescription',
         'NSPhotoLibraryAddUsageDescription',
         'NSPhotoLibraryUsageDescription',
         // Not a permission: React Native's release level, read by ExpoReactNativeFactory. It turns
@@ -460,9 +467,10 @@ describe('ChatInputBar composer behaviour', () => {
     // No tracking / motion / mic / location keys snuck in (compliance).
     expect(keys).not.toContain('NSUserTrackingUsageDescription');
     expect(keys).not.toContain('NSMotionUsageDescription');
-    // The microphone and speech strings must say what they are for: dictating a message.
+    // The microphone string must say what it is for and where the recording goes.
     expect(String(appJson.expo.ios.infoPlist.NSMicrophoneUsageDescription)).toMatch(/dictate/);
-    expect(String(appJson.expo.ios.infoPlist.NSSpeechRecognitionUsageDescription)).toMatch(/dictate/);
+    expect(String(appJson.expo.ios.infoPlist.NSMicrophoneUsageDescription)).toMatch(/server/);
+    expect(keys).not.toContain('NSSpeechRecognitionUsageDescription');
     // No plugin may delete the microphone string (`false` removes the key from Info.plist).
     for (const p of appJson.expo.plugins) {
       if (Array.isArray(p) && p[1] && 'microphonePermission' in p[1]) {
