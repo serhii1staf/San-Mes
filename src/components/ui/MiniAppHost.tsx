@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animated, Dimensions, Easing, Alert } from 'react-native';
+import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animated, Dimensions, Easing, Alert, PixelRatio, StyleSheet } from 'react-native';
+import type { LayoutChangeEvent } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,43 +17,54 @@ import { triggerHaptic } from '../../utils/haptics';
 import { showToast } from '../../store/toastStore';
 import { submitReport } from '../../services/moderation';
 import { useTheme } from '../../theme';
+import { browserBandHeight, useEffectiveBrowserWidgetPosition } from '../../lib/browserWidget';
+import { APP_CORNER, AppCornerCutouts, MinimizedBarRow, minimizedBarStyles, useMinimizedBarColors } from './MinimizedBarRow';
 
 const SCREEN_H = Dimensions.get('window').height;
+/** Further down than the root reaches: where the panel waits out of sight. */
+const OFFSCREEN = Math.max(SCREEN_H, Dimensions.get('screen').height);
 
-// ── Motion curves for the mini-app overlay ───────────────────────────────────
+// ── Motion: the bar is the panel's top edge (Nov 2026) ───────────────────────
 //
-// Opening decelerates into rest (ease-out expo), which is the standard "arriving"
-// feel and was already correct.
+// Asked: the mini app and its bar should move the way the welcome screen's sheet and wordmark do,
+// rising together on «Войти» and coming down together on «Назад». It used to be two things: the panel
+// slid off the bottom of the screen and the bar then rose from below on its own, and opening, the panel
+// came up from under the screen over a bar that stayed put.
 //
-// Dismissing used `Easing.in(Easing.cubic)`, and that was the bug behind "closing
-// feels abrupt". `Easing.in` means the panel CREEPS at the start and reaches its
-// maximum velocity exactly as it leaves the screen — it slams out, and it is the
-// mirror image of the opening curve rather than its reverse. Motion that arrives
-// gently but departs at full speed reads as a glitch, not as a transition.
+// Now the bar is the panel's top edge. Minimizing, the panel slides down until its top is the bar's top,
+// carrying a copy of the bar (MinimizedBarRow) that fades in on it; opening from the bar, it rises from
+// there and the copy fades as it goes. The real bar is set as the panel starts down, so it rises under
+// the panel and is in place when the panel lands on it; a moment later the panel leaves the screen and
+// the bar, showing the same pixels, takes over (see BrowserBottomBand).
 //
-// The dismiss now uses a symmetric ease-in-out: it builds up and eases off, so
-// leaving looks like arriving played backwards. Duration is also matched to the
-// open so the two directions feel like one object, not two effects.
-const OPEN_EASING = Easing.bezier(0.16, 1, 0.3, 1);
+// One value, `progress` (1 covering the screen, 0 on the bar), moves the panel and the copy and fades
+// the copy, on the native driver, with the welcome screen's curve and durations
+// (app/(auth)/welcome.tsx). A fresh open comes up from below the screen on the same curve. The × still
+// slides the panel away with a symmetric ease-in-out: an ease-in there made closing slam out.
+const OPEN = { duration: 560, easing: Easing.bezier(0.22, 1, 0.36, 1) };
+const CLOSE = { duration: 460, easing: Easing.bezier(0.22, 1, 0.36, 1) };
 const DISMISS_EASING = Easing.bezier(0.33, 0, 0.67, 1);
 const DISMISS_MS = 360;
 
 /**
- * Fraction of the collapse after which the minimized widget is revealed.
- *
- * Not 1.0: revealing only on completion made the panel finish and the widget appear
- * from nothing, a hard cut between two separate events. Overlapping them reads as a
- * handoff. 0.62 is late enough that the widget is not competing with the panel for
- * attention, early enough that there is no gap.
+ * With the widget at the top (BrowserMiniBar) the panel still leaves downwards, and the widget appears
+ * this far into that exit, so the two overlap instead of one appearing after the other.
  */
 const HANDOFF_AT = 0.62;
 
+/**
+ * How long the panel stays on the bar after landing before it leaves the screen to it. The bar under
+ * it started rising (BAND_SPRING, about 0.4 s) a frame or two after the panel started down; this is the
+ * margin for a slow first frame, so the bar is at rest before it is uncovered.
+ */
+const PARK_AFTER_MS = 140;
+
 // Root-level persistent mini-app host. See src/store/miniAppStore.ts for the
 // state machine. The WebView is mounted while mode !== 'closed' and is NEVER
-// torn down on minimize — minimizing just parks the overlay off-screen
-// (translateY) at opacity 0 with pointerEvents 'none', keeping its zIndex
-// STABLE (no reorder repaint), so the page keeps its scroll/section/JS state
-// and restoring is instant with no reload.
+// torn down on minimize — minimizing parks the panel below the screen
+// (translateY) with pointerEvents 'none', keeping its zIndex STABLE (no
+// reorder repaint), so the page keeps its scroll/section/JS state and
+// restoring is instant with no reload.
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'spam', labelKey: 'report.cat.spam' },
@@ -126,6 +138,7 @@ export function MiniAppHost() {
   const theme = useTheme();
   const t = useT();
   const glassActive = useLiquidGlassActive();
+  const barColors = useMinimizedBarColors();
 
   const mode = useMiniAppStore((s) => s.mode);
   const url = useMiniAppStore((s) => s.url);
@@ -162,91 +175,153 @@ export function MiniAppHost() {
   useEffect(() => () => { if (loadTimeout.current) clearTimeout(loadTimeout.current); }, []);
 
   /**
-   * Hand control to the familiar minimized widget.
+   * Show the minimized bar (or the top widget) for this session.
    *
-   * Idempotent and mode-guarded, because it is now called from two places (a timer
-   * partway through the collapse and the animation's completion callback) and
-   * whichever fires first must be the only one that matters.
+   * Mode-guarded and idempotent: with the widget at the top it is called from a timer partway through
+   * the exit and from its end. It replaces a site's bar that is still showing (the panel clears that one
+   * only once it has covered the screen), so the bar the panel lands on is always its own.
    */
   const revealMinimizedWidget = useCallback(() => {
     try {
       const st = useMiniAppStore.getState();
       if (st.mode !== 'min') return;
-      if (useBrowserStore.getState().minimizedUrl) return; // already handed off
-      useBrowserStore.getState().setMinimized(normalizeUrl(st.url), st.name, true, st.emoji);
+      const target = normalizeUrl(st.url);
+      const bar = useBrowserStore.getState();
+      if (bar.isMiniApp && bar.minimizedUrl === target) return; // already this session's
+      bar.setMinimized(target, st.name, true, st.emoji);
     } catch {}
   }, []);
 
-  // Slide the overlay UP on open/restore and DOWN on minimize/close.
+  // ── Where the panel is ─────────────────────────────────────────────────────
   //
-  // The overlay's stacking (zIndex / elevation) and background are kept STABLE
-  // for the entire lifetime of a session — they are NEVER toggled at the end of
-  // an animation. On Android, reordering an absolutely-positioned view's zIndex
-  // (the old 9999 → -1 flip when minimize finished) forces a one-frame
-  // repaint, which is exactly the blink/artifact the user saw. Instead the
-  // overlay is "parked" purely by sliding it fully off-screen (translateY) and
-  // fading it out (opacity → 0), both driven by the SAME native-driver value
-  // below, so there is no JS-side style commit at the end of the slide.
-  const slideY = useRef(new Animated.Value(SCREEN_H)).current;
+  // The panel's stacking (zIndex / elevation) and background stay the same for the whole session and
+  // are never toggled at the end of an animation: on Android, reordering an absolutely positioned
+  // view's zIndex forces a one-frame repaint (the blink once seen when a minimize finished). It moves
+  // only by translateY, from two native-driver values, so nothing is committed from JS as it moves.
+  const toBar = useEffectiveBrowserWidgetPosition() === 'bottom';
+  const toBarRef = useRef(toBar);
+  toBarRef.current = toBar;
 
-  // Timer that hands the widget over PART WAY through the collapse (see below).
-  // Held in a ref so an interrupted collapse can cancel it.
-  const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelHandoff = useCallback(() => {
-    if (handoffTimer.current) {
-      clearTimeout(handoffTimer.current);
-      handoffTimer.current = null;
+  const bandH = browserBandHeight(insets.bottom);
+  // The panel's height is the root's, which the bar is laid out from as well.
+  const [hostH, setHostH] = useState(0);
+  const hostHRef = useRef(0);
+  const onPanelLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = e.nativeEvent.layout.height;
+    if (h > 0 && Math.abs(h - hostHRef.current) >= 0.5) {
+      hostHRef.current = h;
+      setHostH(h);
     }
   }, []);
-  useEffect(() => () => cancelHandoff(), [cancelHandoff]);
+  // The bar's top, on the pixel grid where layout puts it, so the panel's edge meets the copy's exactly.
+  const barTop = PixelRatio.roundToNearestPixel(Math.max(0, (hostH || SCREEN_H) - bandH));
+
+  // 1: the panel covers the screen. 0: its top is the bar's top.
+  const progress = useRef(new Animated.Value(1)).current;
+  // Added below that: 0 while the panel is in play; more while it comes up from under the screen,
+  // leaves through the bottom, or waits out of sight.
+  const away = useRef(new Animated.Value(OFFSCREEN)).current;
+  const motion = useMemo(() => ({
+    panelY: Animated.add(progress.interpolate({ inputRange: [0, 1], outputRange: [barTop, 0] }), away),
+    // The copy is laid out where the bar is, so at 0 it is the bar's pixels; above that it rides the
+    // panel's top edge.
+    copyY: Animated.add(progress.interpolate({ inputRange: [0, 1], outputRange: [0, -barTop] }), away),
+    // The bar fades in on the panel as it comes down, and out as it rises from the bar.
+    copyOpacity: progress.interpolate({ inputRange: [0, 0.6], outputRange: [1, 0], extrapolate: 'clamp' }),
+    // The rounded corners it gives the screen above its edge, only while it is between screen and bar: a
+    // fresh open from under the screen and the × keep the plain edge.
+    cornersOpacity: progress.interpolate({ inputRange: [0, 0.98, 1], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
+  }), [progress, away, barTop]);
+
+  // 'away': out of sight, or leaving. 'full': covering the screen, or on its way there. 'bar': on its
+  // way down to the bar, or on it. 'parked': it landed on the bar and left the screen to the bar.
+  const phase = useRef<'away' | 'full' | 'bar' | 'parked'>('away');
+  // The session the bar was set for by a minimize: only that one grows back out of it.
+  const barSession = useRef<number | null>(null);
+
+  const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const parkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealFrame = useRef<number | null>(null);
+  const cancelTimers = useCallback(() => {
+    if (handoffTimer.current) { clearTimeout(handoffTimer.current); handoffTimer.current = null; }
+    if (parkTimer.current) { clearTimeout(parkTimer.current); parkTimer.current = null; }
+    if (revealFrame.current != null) { cancelAnimationFrame(revealFrame.current); revealFrame.current = null; }
+  }, []);
+  useEffect(() => () => cancelTimers(), [cancelTimers]);
 
   useEffect(() => {
+    cancelTimers();
+    if (mode === 'closed') {
+      phase.current = 'away';
+      barSession.current = null;
+      return;
+    }
+
     if (mode === 'full') {
-      cancelHandoff();
-      // Open / restore. Starting a new timing on slideY implicitly cancels any
-      // in-flight minimize/close slide, so a quick restore mid-collapse simply
-      // reverses cleanly from the CURRENT position — no stale state.
-      //
-      // The minimized widget is cleared once the panel has covered the screen, not as it starts to
-      // rise. With the bar at the bottom (BrowserBottomBand) clearing gives the bar's space back to
-      // the screen underneath, and under the panel nothing is seen moving. A minimize that interrupts
-      // the open leaves it set, which is right: the session is minimized again.
-      Animated.timing(slideY, { toValue: 0, duration: 400, easing: OPEN_EASING, useNativeDriver: true }).start(({ finished }) => {
+      const ownBar = barSession.current === sessionKey && toBarRef.current;
+      if (ownBar && phase.current === 'parked') {
+        // Back onto the bar, which shows the same pixels, and up from there.
+        away.setValue(0);
+      } else if (!(ownBar && phase.current === 'bar')) {
+        // A fresh open, or another app: up from under the screen. (On its way down to the bar it simply
+        // turns back from where it is.)
+        progress.setValue(1);
+        away.setValue(hostHRef.current || OFFSCREEN);
+      }
+      phase.current = 'full';
+      // The bar is cleared once the panel covers the screen, not as it starts to rise: its space goes
+      // back to the screen underneath, and under the panel nothing is seen moving. A minimize that
+      // interrupts the open leaves it set, which is right: the session is minimized again.
+      Animated.parallel([
+        Animated.timing(progress, { toValue: 1, ...OPEN, useNativeDriver: true }),
+        Animated.timing(away, { toValue: 0, ...OPEN, useNativeDriver: true }),
+      ]).start(({ finished }) => {
         if (!finished || useMiniAppStore.getState().mode !== 'full') return;
+        barSession.current = null;
         try { useBrowserStore.getState().clearMinimized(); } catch {}
       });
-    } else if (mode === 'min') {
-      cancelHandoff();
-      Animated.timing(slideY, { toValue: SCREEN_H, duration: DISMISS_MS, easing: DISMISS_EASING, useNativeDriver: true }).start(({ finished }) => {
-        // Bail if the slide was interrupted (e.g. user restored / closed
-        // mid-collapse) — the new transition owns the value now.
-        if (!finished) return;
-        // Re-check the live mode: even a NATURALLY finished slide must no-op if
-        // the session is no longer minimized by the time this fires (a close or
-        // restore could have landed on the final frame). This prevents the
-        // familiar widget from popping in for a stale 'min' that already moved on.
-        if (useMiniAppStore.getState().mode !== 'min') return;
+      return;
+    }
+
+    // mode === 'min'
+    if (toBarRef.current) {
+      phase.current = 'bar';
+      barSession.current = sessionKey;
+      Animated.parallel([
+        Animated.timing(progress, { toValue: 0, ...CLOSE, useNativeDriver: true }),
+        Animated.timing(away, { toValue: 0, ...CLOSE, useNativeDriver: true }),
+      ]).start(({ finished }) => {
+        if (!finished || useMiniAppStore.getState().mode !== 'min') return;
+        parkTimer.current = setTimeout(() => {
+          parkTimer.current = null;
+          if (useMiniAppStore.getState().mode !== 'min' || phase.current !== 'bar') return;
+          // The bar under it shows the same pixels; the panel and its WebView leave the screen.
+          away.setValue(OFFSCREEN);
+          phase.current = 'parked';
+        }, PARK_AFTER_MS);
+      });
+      // The bar a frame later, once the panel is moving: setting it re-lays out the screens for its
+      // space, and that must not hold the panel's first frame. It rises under the panel and is in
+      // place when the panel lands on it.
+      revealFrame.current = requestAnimationFrame(() => {
+        revealFrame.current = null;
         revealMinimizedWidget();
       });
-
-      // ── Overlap the handoff ──────────────────────────────────────────────
-      //
-      // The widget used to be revealed ONLY in the completion callback, so the
-      // panel finished sliding and THEN the widget appeared from nothing. Two
-      // separate events with a hard cut between them, which is the second half of
-      // the "it used to descend smoothly, now it's abrupt" report.
-      //
-      // Revealing it while the panel is still travelling makes the two motions
-      // overlap, so it reads as one object handing off to another rather than one
-      // disappearing and another popping in. The timer is cancelled if the collapse
-      // is interrupted, and `revealMinimizedWidget` re-checks the live mode, so an
-      // interrupted collapse can never leave a stale widget behind.
-      handoffTimer.current = setTimeout(() => {
-        handoffTimer.current = null;
-        revealMinimizedWidget();
-      }, Math.round(DISMISS_MS * HANDOFF_AT));
+      return;
     }
-  }, [mode, slideY, cancelHandoff, revealMinimizedWidget]);
+
+    // The widget at the top: the panel leaves through the bottom and the widget appears partway through.
+    phase.current = 'away';
+    barSession.current = null;
+    Animated.timing(away, { toValue: hostHRef.current || OFFSCREEN, duration: DISMISS_MS, easing: DISMISS_EASING, useNativeDriver: true }).start(({ finished }) => {
+      if (!finished || useMiniAppStore.getState().mode !== 'min') return;
+      revealMinimizedWidget();
+    });
+    handoffTimer.current = setTimeout(() => {
+      handoffTimer.current = null;
+      revealMinimizedWidget();
+    }, Math.round(DISMISS_MS * HANDOFF_AT));
+  }, [mode, sessionKey, progress, away, cancelTimers, revealMinimizedWidget]);
 
   // While minimized, dismissing the widget (its x / swipe-away) clears
   // browserStore — observe that and tear the live WebView down so the two
@@ -267,16 +342,16 @@ export function MiniAppHost() {
     return unsub;
   }, [mode]);
 
-  // Animate the overlay down before tearing the WebView down (matches the old
-  // dismiss feel), then clear the familiar widget too.
+  // Slide the panel out through the bottom before tearing the WebView down, then clear the widget too.
   const requestClose = useCallback(() => {
     triggerHaptic('light');
-    cancelHandoff();
-    Animated.timing(slideY, { toValue: SCREEN_H, duration: DISMISS_MS, easing: DISMISS_EASING, useNativeDriver: true }).start(() => {
+    cancelTimers();
+    phase.current = 'away';
+    Animated.timing(away, { toValue: hostHRef.current || OFFSCREEN, duration: DISMISS_MS, easing: DISMISS_EASING, useNativeDriver: true }).start(() => {
       useMiniAppStore.getState().close();
       try { useBrowserStore.getState().clearMinimized(); } catch {}
     });
-  }, [slideY, cancelHandoff]);
+  }, [away, cancelTimers]);
 
   // Hardware back (Android): while fullscreen, back minimizes the mini-app
   // (Telegram-style) instead of leaving it on screen. No-op otherwise.
@@ -407,11 +482,12 @@ export function MiniAppHost() {
           alone keeps the parked overlay invisible. */}
       <Animated.View
         pointerEvents={full ? 'auto' : 'none'}
+        onLayout={onPanelLayout}
         style={{
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
           zIndex: 9999,
           backgroundColor: '#000',
-          transform: [{ translateY: slideY }],
+          transform: [{ translateY: motion.panelY }],
         }}
       >
         {isLoading && (
@@ -472,48 +548,64 @@ export function MiniAppHost() {
           userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         />
 
-        {full ? (
-          <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 60, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            {/* Collapse pill. Glass is rendered as a BACKGROUND layer (GlassBg)
-                with the icon+label as SIBLINGS on top — the codebase's proven
-                pattern. Putting content INSIDE a GlassView made the glass
-                collapse/disappear (and warp content). A dark tint keeps the
-                glass visible over the WebView, which the effect can't sample. */}
-            {/* Collapse / actions pills. Restored to the ORIGINAL structure
-                (content INSIDE NativeGlassView) — this is what rendered real
-                liquid glass before. The earlier GlassBg rewrite + the parent
-                `opacity` (now removed) were what killed the effect. */}
-            <Pressable onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().minimize(); }} style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
-              {glassActive ? (
-                <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14 }}>
-                  <Feather name="chevron-down" size={12} color="#FFFFFF" />
-                  <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
-                </NativeGlassView>
-              ) : (
-                <BlurView intensity={80} role="scrim" tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 }}>
-                  <Feather name="chevron-down" size={12} color="#FFFFFF" />
-                  <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
-                </BlurView>
-              )}
-            </Pressable>
-            <View style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
-              {glassActive ? (
-                <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14 }}>
-                  {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
-                  <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
-                  <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
-                </NativeGlassView>
-              ) : (
-                <BlurView intensity={80} role="scrim" tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
-                  {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
-                  <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
-                  <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
-                </BlurView>
-              )}
-            </View>
+        {/* The pills stay mounted while the session is open, so they ride down with the panel and up
+            again instead of popping out as it starts down; the bar's copy covers them on the bar, and
+            the panel takes no touches unless it is full. */}
+        <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 60, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          {/* Collapse / actions pills, content INSIDE NativeGlassView: the structure that renders real
+              liquid glass. A GlassBg rewrite and a parent `opacity` were what killed the effect. A dark
+              tint keeps the glass visible over the WebView, which the effect can't sample. */}
+          <Pressable onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().minimize(); }} style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14 }}>
+                <Feather name="chevron-down" size={12} color="#FFFFFF" />
+                <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
+              </NativeGlassView>
+            ) : (
+              <BlurView intensity={80} role="scrim" tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 }}>
+                <Feather name="chevron-down" size={12} color="#FFFFFF" />
+                <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
+              </BlurView>
+            )}
+          </Pressable>
+          <View style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14 }}>
+                {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
+                <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
+                <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
+              </NativeGlassView>
+            ) : (
+              <BlurView intensity={80} role="scrim" tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
+                {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
+                <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
+                <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
+              </BlurView>
+            )}
           </View>
-        ) : null}
+        </View>
       </Animated.View>
+
+      {toBar ? (
+        // The bar on the panel's top edge (see the Motion note at the top). Laid out like the bar itself,
+        // from the bottom of the same frame with the same height, so on the bar it is the bar's pixels.
+        // No touches: on the bar, the real one under it takes them.
+        <Animated.View
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[styles.barCopy, { height: APP_CORNER + bandH, transform: [{ translateY: motion.copyY }] }]}
+        >
+          <Animated.View style={{ opacity: motion.cornersOpacity }}>
+            <AppCornerCutouts />
+          </Animated.View>
+          <Animated.View renderToHardwareTextureAndroid style={[minimizedBarStyles.band, { height: bandH, opacity: motion.copyOpacity }]}>
+            <View style={[minimizedBarStyles.surface, { backgroundColor: barColors.surface }]}>
+              <MinimizedBarRow title={name} ink={barColors.ink} />
+            </View>
+          </Animated.View>
+        </Animated.View>
+      ) : null}
 
       {full ? (
         <SlideUpSheet visible={reportOpen} onClose={() => setReportOpen(false)}>
@@ -533,3 +625,8 @@ export function MiniAppHost() {
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  // Above the panel (9999), where the bar is: the bar's corners and band, laid out from the bottom.
+  barCopy: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 10000 },
+});

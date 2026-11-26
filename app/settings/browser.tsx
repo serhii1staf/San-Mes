@@ -16,6 +16,10 @@ import { triggerHaptic } from '../../src/utils/haptics';
 // minimised-session widget. Kept out of the generic Behavior/Appearance
 // sections so the user can land on a page dedicated to one feature.
 
+/** The preview's chat rows: the widths of their name and last-message lines. */
+const ROW_NAME_W = ['55%', '40%', '62%', '35%'] as const;
+const ROW_TEXT_W = ['35%', '50%', '28%', '44%'] as const;
+
 export default function BrowserSettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -255,94 +259,72 @@ function PositionCard({
           <View style={{ width: 26, height: 6, borderRadius: 3, backgroundColor: isDark ? '#000' : '#23252B' }} />
         </View>
 
-        {/* App header — title + bell */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
-          <View style={{ width: 18, height: 5, borderRadius: 2, backgroundColor: inkStrong }} />
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: skeleton }} />
+        {/* The chat list as the app shows it now: «Изм.», the title with the account's avatar, the
+            pencil; the search field; the folder chips; chat rows. (It was a feed with stories and post
+            cards, which the app no longer has.) */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <View style={{ width: 14, height: 7, borderRadius: 3.5, borderWidth: 1, borderColor: stroke, backgroundColor: skeletonFaint }} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: accent + 'AA' }} />
+            <View style={{ width: 16, height: 4.5, borderRadius: 2, backgroundColor: inkStrong }} />
+          </View>
+          <View style={{ width: 7, height: 7, borderRadius: 3.5, borderWidth: 1, borderColor: stroke, backgroundColor: skeletonFaint }} />
         </View>
 
-        {/* Story / quick-app row — a strip of round avatars */}
-        <View style={{ flexDirection: 'row', gap: 4, marginBottom: 7 }}>
-          {[0, 1, 2, 3].map((s) => (
-            <View
-              key={s}
-              style={{
-                width: 13,
-                height: 13,
-                borderRadius: 7,
-                backgroundColor: skeletonFaint,
-                borderWidth: 1,
-                borderColor: s === 0 ? accent : stroke,
-              }}
-            />
-          ))}
+        <View style={{ height: 8, borderRadius: 4, backgroundColor: skeletonFaint, marginBottom: 6 }} />
+
+        <View style={{ flexDirection: 'row', gap: 3, marginBottom: 7 }}>
+          <View style={{ width: 13, height: 6, borderRadius: 3, backgroundColor: accent + '55' }} />
+          <View style={{ width: 20, height: 6, borderRadius: 3, backgroundColor: skeletonFaint }} />
+          <View style={{ width: 12, height: 6, borderRadius: 3, backgroundColor: skeletonFaint }} />
         </View>
 
-        {/* Feed cards — avatar + lines, one with a media block */}
-        {[0, 1].map((i) => (
-          <View
-            key={i}
-            style={{
-              backgroundColor: surfaceBg,
-              borderRadius: 7,
-              padding: 5,
-              marginBottom: 5,
-              borderWidth: 1,
-              borderColor: stroke,
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-              <View style={{ width: 9, height: 9, borderRadius: 4.5, backgroundColor: accent + 'AA' }} />
-              <View style={{ flex: 1 }}>
-                <View style={{ width: '65%', height: 3, borderRadius: 1.5, backgroundColor: skeleton }} />
-                <View style={{ width: '40%', height: 2.5, borderRadius: 1.5, backgroundColor: skeletonFaint, marginTop: 2 }} />
-              </View>
+        {[0, 1, 2, 3].map((i) => (
+          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 7 }}>
+            <View style={{ width: 11, height: 11, borderRadius: 5.5, backgroundColor: i === 0 ? accent + 'AA' : skeleton }} />
+            <View style={{ flex: 1 }}>
+              <View style={{ width: ROW_NAME_W[i], height: 3, borderRadius: 1.5, backgroundColor: skeleton }} />
+              <View style={{ width: ROW_TEXT_W[i], height: 2.5, borderRadius: 1.5, backgroundColor: skeletonFaint, marginTop: 2.5 }} />
             </View>
-            {i === 0 ? (
-              <View style={{ height: 20, borderRadius: 4, backgroundColor: skeletonFaint }} />
-            ) : (
-              <>
-                <View style={{ width: '92%', height: 2.5, borderRadius: 1.5, backgroundColor: skeletonFaint, marginBottom: 2.5 }} />
-                <View style={{ width: '68%', height: 2.5, borderRadius: 1.5, backgroundColor: skeletonFaint }} />
-              </>
-            )}
           </View>
         ))}
 
-        {/* Floating tab bar — pill with 5 icons, first one active.
-            Lifted above the docked band on the bottom variant. */}
+        {/* The tab bar as it is now: a pill with search and chats (chats selected), and the profile
+            circle beside it. On the bottom variant it rests on the bar. */}
         <View
           style={{
             position: 'absolute',
-            left: 7,
-            right: 7,
-            bottom: kind === 'bottom' ? 28 : 6,
-            height: 15,
-            borderRadius: 8,
-            backgroundColor: surfaceBg,
-            borderWidth: 1,
-            borderColor: stroke,
+            left: 0,
+            right: 0,
+            bottom: kind === 'bottom' ? 27 : 7,
             flexDirection: 'row',
+            justifyContent: 'center',
             alignItems: 'center',
-            justifyContent: 'space-around',
-            paddingHorizontal: 5,
-            shadowColor: '#000',
-            shadowOpacity: 0.12,
-            shadowRadius: 3,
-            shadowOffset: { width: 0, height: 1 },
+            gap: 3,
           }}
         >
-          {[0, 1, 2, 3, 4].map((d) => (
-            <View
-              key={d}
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: 2.5,
-                backgroundColor: d === 0 ? accent : skeleton,
-              }}
-            />
-          ))}
+          <View
+            style={{
+              width: 44,
+              height: 15,
+              borderRadius: 7.5,
+              backgroundColor: surfaceBg,
+              borderWidth: 1,
+              borderColor: stroke,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-around',
+              paddingHorizontal: 3,
+            }}
+          >
+            <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: skeleton }} />
+            <View style={{ width: 18, height: 10, borderRadius: 5, backgroundColor: skeletonFaint, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: accent }} />
+            </View>
+          </View>
+          <View style={{ width: 15, height: 15, borderRadius: 7.5, backgroundColor: surfaceBg, borderWidth: 1, borderColor: stroke, alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: skeleton }} />
+          </View>
         </View>
 
         {/* The minimised browser pill in its real position */}
