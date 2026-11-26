@@ -6,12 +6,11 @@ import Reanimated, { useAnimatedStyle, interpolate, useSharedValue, withSpring, 
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
-import { MaterialIcons } from '@expo/vector-icons';
+import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, router, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
-import { stripBannerTransform } from '../../src/utils/bannerTransform';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { proxiedImageUrl, wasShownAtWidth } from '../../src/components/ui/CachedImage';
@@ -31,6 +30,7 @@ import { warmActionMenu } from '../../src/components/ui/ActionMenu';
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { ChatHeaderStatus } from '../../src/components/chat/ChatHeaderStatus';
+import { ChatHeaderSheet } from '../../src/components/chat/ChatHeaderSheet';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { PhotoPickerPanel } from '../../src/components/chat/PhotoPickerPanel';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
@@ -63,7 +63,7 @@ import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 import { useBottomChromeInset, useBrowserBandHeight } from '../../src/lib/browserWidget';
 import { BandFollowLayer, useBandFollowOffset } from '../../src/components/ui/BandFollowLayer';
-import { composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
+import { composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { addTombstones, filterTombstoned, isTombstoned } from '../../src/services/messageTombstones';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
@@ -4414,74 +4414,9 @@ export default function ChatScreen() {
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
   const profileId = participantId;
 
-  // ── THE HEADER IS THE PEER'S BANNER ────────────────────────────────────────
-  //
-  // Asked for: the header is "too banal, one to one with Telegram", and could it merge with the
-  // banner the user has on their profile — something unique, not too big.
-  //
-  // The note further down at the header JSX is the reason this takes the shape it does. A previous
-  // attempt STRIPPED the containers off the back button and the name, and it was rejected: "looks
-  // terrible". The lesson recorded there is that what was wanted is something DISTINCTIVE, and
-  // removing chrome only makes a header plainer. So nothing is removed here — the back pill, the
-  // name pill and the avatar all stay exactly as they are, because they already read correctly. What
-  // changes is what sits BEHIND them.
-  //
-  // Two sources, in order:
-  //
-  //   1. The peer's own banner. `stripBannerTransform` because the stored value can carry the crop
-  //      transform appended to the url, and the transform is meaningless at this size — the header is
-  //      a thin band, so the image is drawn `cover` and centred rather than positioned.
-  //   2. No banner → the peer's profile-theme accent as a soft two-stop wash. Deliberately NOT a flat
-  //      grey: the point is that the header belongs to the person you are talking to, and an accent
-  //      still carries that. A conversation with someone who set neither is the only case that falls
-  //      back to the plain scrim, which is exactly today's appearance.
-  //
-  // COST, because this screen is the one under scrutiny: the header band is ~100 pt tall, so this is
-  // ONE additional image on the chat-open path — the same class of thing the profile screen already
-  // pays for. It is deliberately NOT prefetched or gated: a banner is a backdrop, and the profile
-  // screen's own note records that withholding a backdrop produces a visible swap on every open,
-  // which is worse than showing it a beat late. `priority="low"` keeps it behind the transcript's own
-  // images, and `autoplay={false}` stops an animated banner from decoding a frame forever behind the
-  // chrome — the same continuous-cost mistake already fixed in the profile grids.
-  const peerBannerUrl = useMemo(() => {
-    const raw = (profileData as any)?.banner_url || (cachedProfile as any)?.banner_url || null;
-    return raw ? stripBannerTransform(raw) : null;
-  }, [profileData, cachedProfile]);
-  // The peer's theme accent, for the no-banner case. Falls back to the app accent so this is never
-  // undefined; `+ '00'` is a fully transparent stop of the same hue, which fades into the scrim
-  // instead of ending on a hard edge.
-  // ── OVER A PHOTO THE PILLS CANNOT STAY OPAQUE ──────────────────────────────
-  //
-  // The back pill, the name pill and the avatar circle fill with
-  // `theme.colors.background.elevated`, which is opaque by design — correct on a flat background,
-  // wrong on a photo, where three solid rectangles read as controls pasted on top of an image rather
-  // than as chrome belonging to it. That is the other half of "непонятно что случилось".
-  //
-  // So when a banner is behind them they become a translucent dark scrim with a bright hairline: the
-  // picture shows through, the white label and the name still hold contrast against the darkening,
-  // and the hairline gives each pill an edge it would otherwise lose against a busy image. Exactly
-  // the treatment `AppBlurView`'s `scrim` role landed on for the profile's floating buttons, for the
-  // same reason and with the same numbers.
-  //
-  // Null when there is no banner, so every call site falls back to its existing opaque style and the
-  // no-banner header is byte-for-byte what it was.
-  // Applied to the NAME PILL ONLY, because that is the only pill with an image inside it now. The
-  // first version also applied it to the back pill and the avatar circle, which made sense while a
-  // photo spanned the whole header and makes none now: over the ordinary background those two should
-  // stay exactly as they always were.
-  //
-  // `overflow: 'hidden'` is what clips the absolutely-positioned banner to the capsule, so the image
-  // takes the pill's radius for free rather than needing a second rounded wrapper.
-  const onBannerPillStyle = useMemo(
-    () =>
-      peerBannerUrl
-        ? { borderColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' as const }
-        : null,
-    [peerBannerUrl],
-  );
-  // Text on the pills has to follow the same switch: theme-coloured text on a dark scrim is
-  // unreadable in light mode, and the whole point of the scrim is that it darkens regardless of theme.
-  const onBannerTextColor = peerBannerUrl ? '#FFFFFF' : theme.colors.text.primary;
+  // The header's text sits on the chat's own colour (ChatHeaderSheet), so it takes the theme's text
+  // colours. The peer's banner is no longer drawn in the header: the band replaced it (Nov 2026).
+  const onBannerTextColor = theme.colors.text.primary;
 
   // ── `peerAccent` AND `peerHasIdentity` ARE GONE ────────────────────────────
   //
@@ -6103,7 +6038,7 @@ export default function ChatScreen() {
       </View>
       <ChatHeaderStatus
         username={displayUsername}
-        color={peerBannerUrl ? 'rgba(255,255,255,0.78)' : theme.colors.text.secondary}
+        color={theme.colors.text.secondary}
       />
     </>
   );
@@ -7976,12 +7911,11 @@ export default function ChatScreen() {
             the chat-open path, which is the path this whole session has been trying to make cheaper —
             the pill's copy is ~200 pt wide instead of ~1080, so it is roughly a thirtieth of the
             pixels to decode. */}
-        <LinearGradient
-          pointerEvents="none"
-          colors={topSurfaceScrimColors(bgColor)}
-          locations={SCRIM_LOCATIONS}
-          style={StyleSheet.absoluteFill}
-        />
+        {/* ── A BLURRED SHEET WITH A ROUNDED BOTTOM (Nov 2026) ──────────────────────────
+            Replaced the dimming ramp. Asked for: the header "looks the same as in every app"; the
+            shape of the profile banner card instead, a little bigger, blurred, and no outlines around
+            the back button, the name and the avatar. See ChatHeaderSheet. */}
+        <ChatHeaderSheet isDark={theme.isDark} bgColor={bgColor} solid={headerContentHeight - 12} />
         {searchMode ? (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
             {glassActive ? (
@@ -8063,23 +7997,17 @@ export default function ChatScreen() {
                 the name centred in a taller pill with a status line under it, and the round avatar
                 on the right. All three are 44 pt, which fits the existing header row and scrim
                 (`headerScrimHeights(insets.top, 8)`), so nothing below the header moves. */}
+            {/* On the sheet itself, with no circle around it (see ChatHeaderSheet). An arrow, as
+                asked, rather than the chevron. */}
             <View style={styles.headerSide}>
               <Pressable
                 onPress={() => router.back()}
-                hitSlop={6}
-                style={styles.headerRound}
+                hitSlop={8}
+                style={[styles.headerRound, styles.headerRoundFill]}
                 accessibilityRole="button"
                 accessibilityLabel={t('common.back')}
               >
-                {glassActive ? (
-                  <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerRoundFill}>
-                    <MaterialIcons name="chevron-left" size={30} color={theme.colors.text.primary} />
-                  </NativeGlassView>
-                ) : (
-                  <View style={[styles.headerRoundFill, styles.headerRoundFlat, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                    <MaterialIcons name="chevron-left" size={30} color={theme.colors.text.primary} />
-                  </View>
-                )}
+                <Feather name="arrow-left" size={24} color={onBannerTextColor} />
               </Pressable>
             </View>
             {/* ── RESTORED. THE BARE VERSION WAS WORSE. ────────────────────────────────
@@ -8098,137 +8026,30 @@ export default function ChatScreen() {
                 something DISTINCTIVE, not the removal of containers. Stripping chrome makes a header
                 plainer, which is the opposite direction. */}
             <View style={styles.headerTitleWrap}>
-              {glassActive ? (
-                <Pressable
-                  onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
-                  onLongPress={openSearch}
-                  delayLongPress={300}
-                  style={{ borderRadius: 22, maxWidth: '100%' }}
-                >
-                  {/* ── THE BANNER WAS MISSING FROM THIS BRANCH ENTIRELY ───────────
-                      The banner-in-the-name-pill feature was written only into the `glassActive ===
-                      false` branch below. `liquidGlassEnabled` defaults to TRUE and this is an iOS 26
-                      device, so the branch that actually renders on the reporting phone had no
-                      `peerBannerUrl`, no image and no scrim — the whole feature was dead code exactly
-                      where it was meant to be seen. Reported as "there is no photo in the profile
-                      where the name is". That is not a styling miss, it is a branch I never checked.
-
-                      Shaped per the rule this repo already documents on `GlassBg`: the CONTAINER owns
-                      the size, radius and clipping; the glass is a childless absolute-fill layer; the
-                      real content is a SIBLING painted on top. Putting the name inside a
-                      `NativeGlassView` (what this used to do) is the shape that note warns about
-                      twice — content inside the glass gets lensed, and `NativeGlassView` silently
-                      drops `isInteractive` whenever it has children, so the outward morph this branch
-                      claimed to be preserving was never happening in the first place.
-
-                      `glassStyle` switches on the banner: `clear` over a photo, because the point is
-                      that the photo stays visible through the glass — that IS the Liquid Glass look —
-                      and `regular` when there is nothing behind it to show. `regular` over the banner
-                      is what was hiding it in the profile emoji tile too, same cause, fixed there as
-                      well.
-
-                      `overflow: 'hidden'` is required to clip the image to the capsule, and it is
-                      what trades away the outward morph. That trade is deliberate: a visible banner
-                      was the request, and per the paragraph above the morph was already unreachable
-                      here. No border is added — the user asked for no outline. */}
-                  <View style={[styles.headerTitlePill, { overflow: 'hidden' }]}>
-                    {peerBannerUrl ? (
-                      <CachedImage
-                        uri={peerBannerUrl}
-                        proxyWidth={240}
-                        style={StyleSheet.absoluteFill as any}
-                        resizeMode="cover"
-                        priority="low"
-                        autoplay={false}
-                      />
-                    ) : null}
-                    <GlassBg
-                      borderRadius={22}
-                      glassStyle={peerBannerUrl ? 'clear' : 'regular'}
-                      control
-                      colorScheme={theme.isDark ? 'dark' : 'light'}
-                      interactive={false}
-                    />
-                    {headerTitleContent}
-                  </View>
-                </Pressable>
-              ) : (
-                <Pressable
-                  onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
-                  onLongPress={openSearch}
-                  delayLongPress={300}
-                  style={[styles.headerTitlePill, styles.headerTitlePillFlat, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }, onBannerPillStyle]}
-                >
-                  {/* ── THE BANNER LIVES HERE NOW ──────────────────────────────────────
-                      Asked for after two rejected full-width strips: not a photo sitting across the
-                      top, but something that INTERACTS with the name and the emoji — compact,
-                      minimal, convenient.
-
-                      This is that. The peer's banner becomes the FILL of their own name pill, so the
-                      identity block itself carries their image instead of a band hovering above the
-                      conversation. It is unique to this app (no messenger puts the banner in the
-                      title), it adds no height, it adds no element, and it cannot be mistaken for
-                      part of the transcript.
-
-                      `overflow: 'hidden'` is on `styles.headerTitlePill`'s radius via the absolute child
-                      being clipped by the parent's `borderRadius` — the pill already rounds itself,
-                      so the image takes the capsule shape for free.
-
-                      COST: the pill is ~200 pt wide, so `proxyWidth={240}` is roughly a thirtieth of
-                      the pixels the screen-width strip was decoding, and the URL differs from the
-                      profile screen's copy only in that width. `autoplay={false}` for the same
-                      reason as everywhere else: an animated banner behind a title would decode a
-                      frame forever. */}
-                  {peerBannerUrl ? (
-                    <>
-                      <CachedImage
-                        uri={peerBannerUrl}
-                        proxyWidth={240}
-                        style={StyleSheet.absoluteFill as any}
-                        resizeMode="cover"
-                        priority="low"
-                        autoplay={false}
-                      />
-                      {/* Just enough darkening for white text over an arbitrary photo. Flat rather
-                          than a gradient: the pill is one line tall, so a ramp across it would read
-                          as a smudge rather than as depth. */}
-                      <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.42)' }]} />
-                    </>
-                  ) : null}
-                  {headerTitleContent}
-                </Pressable>
-              )}
-            </View>
-            <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
-              {/* ── THE ACCENT RING IS GONE ────────────────────────────────────────
-                  It was `borderColor: peerHasIdentity ? peerAccent : theme.colors.border.light`, and
-                  the note that used to sit here argued it made the avatar and the name pill read as
-                  one identity block. It did not. `styles.headerCircle` already carries
-                  `borderWidth: 1`, so recolouring that hairline to a saturated accent turned a piece
-                  of neutral chrome into a second visible box around the emoji — reported as
-                  "containers around the container", and a coloured outline that was never asked for.
-                  Back to the ordinary hairline, identical to every other header circle.
-
-                  The inline `overflow: 'hidden'` went with it. It was inert — the child `Avatar` is
-                  24 pt inside a 36 pt box and cannot overflow — a leftover from the full-header
-                  banner version. */}
-              {/* Liquid glass like the back pill and the search buttons beside it. It was the one
-                  header control still drawn as a flat circle when glass is on. */}
+              {/* No pill any more: the name and the @username sit on the sheet (ChatHeaderSheet), whose
+                  blurred banner replaced the banner that used to fill the pill. */}
               <Pressable
                 onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
-                style={styles.headerRound}
+                onLongPress={openSearch}
+                delayLongPress={300}
+                hitSlop={6}
+                style={styles.headerTitleBare}
                 accessibilityRole="button"
                 accessibilityLabel={displayName}
               >
-                {glassActive ? (
-                  <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerRoundFill}>
-                    <Avatar emoji={displayEmoji} name={displayName} size="sm" />
-                  </NativeGlassView>
-                ) : (
-                  <View style={[styles.headerRoundFill, styles.headerRoundFlat, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                    <Avatar emoji={displayEmoji} name={displayName} size="sm" />
-                  </View>
-                )}
+                {headerTitleContent}
+              </Pressable>
+            </View>
+            <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
+              {/* The avatar on the sheet, without the circle that framed it. */}
+              <Pressable
+                onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
+                hitSlop={6}
+                style={[styles.headerRound, styles.headerRoundFill]}
+                accessibilityRole="button"
+                accessibilityLabel={displayName}
+              >
+                <Avatar emoji={displayEmoji} name={displayName} size="sm" />
               </Pressable>
             </View>
           </View>
@@ -8663,6 +8484,7 @@ const styles = StyleSheet.create({
   // rather than a circle; `maxWidth` lets a long name truncate inside `headerTitleWrap`.
   headerTitlePill: { maxWidth: '100%', minWidth: 120, height: 44, borderRadius: 22, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' },
   headerTitlePillFlat: { borderWidth: 1 },
+  headerTitleBare: { maxWidth: '100%', minHeight: 44, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
   headerNameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, maxWidth: '100%' },
   headerName: { fontSize: 15, lineHeight: 19, flexShrink: 1 },
 

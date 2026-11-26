@@ -16,7 +16,7 @@ import { MAX_MESSAGE_CHARS } from '../../utils/textLimits';
 import { useLiquidGlassActive, NativeGlassView } from '../ui/LiquidGlass';
 import { AnimatedKeyboardIcon } from './AnimatedKeyboardIcon';
 import { AnimatedEmojiIcon } from './AnimatedEmojiIcon';
-import { DictationGlow, DictationStopButton, useChatDictation } from './ChatDictation';
+import { DictationGlow, DictationLeftIcon, DictationStopButton, useChatDictation } from './ChatDictation';
 
 // ── How the composer grows (and the two ways it was broken) ────────────────
 //
@@ -386,9 +386,13 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   const scheme = theme.isDark ? 'dark' : 'light';
   const flatSurface = { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light };
 
-  // While dictating the photo button is the bin: it throws away what this session added.
-  const leftIcon = dictation.dictating ? 'trash-2' : 'image';
-  const leftColor = dictation.dictating ? theme.colors.text.primary : theme.colors.accent.primary;
+  // While dictating the photo button is the bin: it throws away what this session added. Its icon
+  // swap and the bin's exit are animated on the UI thread (DictationLeftIcon).
+  const leftIconEl = dictation.available ? (
+    <DictationLeftIcon bin={dictation.bin} binOut={dictation.binOut} photoColor={theme.colors.accent.primary} binColor={theme.colors.text.primary} />
+  ) : (
+    <Feather name="image" size={20} color={theme.colors.accent.primary} />
+  );
   const showMic = dictation.available && !dictation.dictating;
 
   return (
@@ -403,11 +407,11 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       >
         {glassActive ? (
           <NativeGlassView glassStyle="regular" colorScheme={scheme} style={styles.roundFill}>
-            <Feather name={leftIcon} size={20} color={leftColor} />
+            {leftIconEl}
           </NativeGlassView>
         ) : (
           <View style={[styles.roundFill, styles.flatBorder, flatSurface]}>
-            <Feather name={leftIcon} size={20} color={leftColor} />
+            {leftIconEl}
           </View>
         )}
       </Pressable>

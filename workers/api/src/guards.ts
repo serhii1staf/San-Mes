@@ -119,9 +119,9 @@ export function rateClassFor(method: string, path: string): RateClass {
     path === '/v1/posts/repost' ||
     path === '/v1/reports' ||
     path === '/v1/mini-apps' ||
-    path === '/v1/ai/complete' ||
-    path === '/v1/ai/transcribe' ||
-    path === '/v1/ai/transcribe/warm'
+    path === '/v1/ai/complete'
   )) return 'HEAVY';
+  // Voice input is sent phrase by phrase, so a minute of talking can be a dozen of these: the write
+  // limit (120 a minute) rather than the heavy one (20), with its own daily count (routes/ai.ts).
   return 'WRITE';
 }

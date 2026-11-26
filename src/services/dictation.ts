@@ -1,14 +1,22 @@
 /**
- * Voice dictation for the chat composer: what the user says is recorded while they speak and turned
- * into text by Whisper on our Worker (`POST /v1/ai/transcribe`, workers/api/src/routes/ai.ts).
+ * Voice dictation for the chat composer: what the user says is recorded and turned into text by
+ * Whisper on our Worker (`POST /v1/ai/transcribe`, workers/api/src/routes/ai.ts).
  *
  * ── WHY NOT THE PHONE'S OWN RECOGNISER (Nov 2026) ────────────────────────────────────────────────
  *
  * The first version used it (Apple's and Google's, through expo-speech-recognition), with the words
  * appearing while they were heard. It was rejected for the very thing the feature was asked for: the
  * built-in one "always misunderstands speech and phrases it strangely". Whisper large-v3-turbo hears
- * Russian far better and punctuates. The text arrives a moment after the user stops, as in ChatGPT's
- * dictation.
+ * Russian far better and punctuates.
+ *
+ * ── THE TEXT ARRIVES PHRASE BY PHRASE, WHILE THE USER SPEAKS (Nov 2026) ─────────────────────────
+ *
+ * Asked for once it worked: the transcription "can take long", the words should show up while
+ * speaking. Whisper takes a finished recording, not a stream, so the recording is cut into phrases:
+ * at a pause in speech (`SEGMENT_PAUSE_MS`) the current file is closed and sent, and a new one starts
+ * at once, in the silence, so no word is cut. Each phrase's text is added to the field as soon as it
+ * comes back, in order, with the text before it as Whisper's context (`prompt`) so the sentence reads
+ * on. Stop sends only the last phrase.
  *
  * ── ONLY ON BINARIES THAT MAY RECORD ─────────────────────────────────────────────────────────────
  *
@@ -22,9 +30,9 @@
  * Before the first recording the user is told where it goes and agrees (`hasDictationConsent`). The
  * microphone is on only while the composer shows it (the glow and the moving bars). A recording ends
  * on stop, on the bin, after `SILENCE_STOP_MS` without speech, after `MAX_RECORDING_MS`, when the app
- * leaves the foreground and when the chat closes. It is sent once, to our Worker, and deleted from the
- * phone right after; the Worker hands it to Workers AI (zero data retention) and keeps nothing.
- * See docs/privacy.html §3 and §4.
+ * leaves the foreground and when the chat closes. Each phrase is sent once, to our Worker, and deleted
+ * from the phone right after; the Worker hands it to Workers AI (zero data retention) and keeps
+ * nothing. See docs/privacy.html §3 and §4.
  */
 import { AppState, Platform } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';
@@ -36,12 +44,21 @@ type Recorder = import('expo-audio').AudioRecorder;
 const SILENCE_STOP_MS = 8000;
 /** And after this long in any case. */
 const MAX_RECORDING_MS = 180_000;
-/** How often the input level is read (the glow and the stop button follow it). */
+/** How often the input level is read (the glow, the bars, the pauses). */
 const LEVEL_INTERVAL_MS = 100;
-/** Shorter than this is a slip of the finger: nothing is sent. */
+/** A pause in speech this long ends a phrase, which is sent at once. */
+const SEGMENT_PAUSE_MS = 800;
+/** A phrase shorter than this waits for the next pause: Whisper needs a little context. */
+const SEGMENT_MIN_MS = 2200;
+/** And one without a pause is cut here, inside Whisper's 30-second window. */
+const SEGMENT_MAX_MS = 24_000;
+/** A phrase (or the whole recording) shorter than this is a slip of the finger: nothing is sent. */
 const MIN_RECORDING_MS = 700;
-/** Below this level (dBFS) counts as silence for `SILENCE_STOP_MS`. */
-const SILENCE_DB = -42;
+/** Above this (dBFS) is speech; at or below `SILENCE_DB` is a pause. */
+const SPEECH_DB = -36;
+const SILENCE_DB = -44;
+/** How much of the text so far goes with each phrase as Whisper's context. */
+const PROMPT_CHARS = 240;
 const TRANSCRIBE_PATH = '/v1/ai/transcribe';
 const WARM_PATH = '/v1/ai/transcribe/warm';
 const TRANSCRIBE_TIMEOUT_MS = 45_000;
@@ -99,22 +116,22 @@ export type DictationError = 'permission' | 'network' | 'limit' | 'other';
 export interface DictationHandlers {
   /** The input level, 0..1, about every `LEVEL_INTERVAL_MS` while recording. */
   onLevel?: (level: number) => void;
-  /** Recording has stopped and the recording is on its way to be turned into text. */
+  /** Recording has stopped; the last phrase is on its way to be turned into text. */
   onTranscribing?: () => void;
-  /** What was said, as text (empty when nothing could be made out). */
+  /** The next phrase, as text, in the order it was said. */
   onText: (text: string) => void;
   /**
-   * The session is over. `error` is set for a failure worth telling the user about; `settingsOnly`
-   * when the microphone was refused for good (only Settings can grant it now); `nothingHeard` when a
-   * real recording came back without words.
+   * The session is over. `error` is set when a phrase could not be turned into text; `settingsOnly`
+   * when the microphone was refused for good (only Settings can grant it now); `nothingHeard` when
+   * the user spoke but no words came back.
    */
   onEnd: (info: { cancelled: boolean; error?: DictationError; settingsOnly?: boolean; nothingHeard?: boolean }) => void;
 }
 
 export interface DictationSession {
-  /** Stop recording and turn what was said into text. */
+  /** Stop recording; the last phrase is turned into text. */
   stop: () => void;
-  /** Stop and throw the recording away (also while it is being turned into text). */
+  /** Stop and throw everything from this session away, including phrases still on their way. */
   cancel: () => void;
 }
 
@@ -145,6 +162,26 @@ function newRecorder(a: ExpoAudio): Recorder {
       web: { mimeType: 'audio/webm', bitsPerSecond: 32000 },
     }),
   );
+}
+
+async function startRecorder(a: ExpoAudio): Promise<Recorder> {
+  const rec = newRecorder(a);
+  try {
+    await rec.prepareToRecordAsync();
+    rec.record();
+  } catch (e) {
+    try {
+      rec.release();
+    } catch {}
+    throw e;
+  }
+  return rec;
+}
+
+function errorKindOf(e: string): DictationError {
+  if (e === 'offline' || /timeout|network|fetch/i.test(e)) return 'network';
+  if (/daily_limit|429/.test(e)) return 'limit';
+  return 'other';
 }
 
 let current: { cancel: () => void } | null = null;
@@ -184,45 +221,146 @@ export async function startDictation(lang: string, h: DictationHandlers): Promis
     }
   } catch {}
 
-  let recorder: Recorder | null = null;
+  let rec: Recorder;
   try {
     await a.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-    recorder = newRecorder(a);
-    await recorder.prepareToRecordAsync();
-    recorder.record();
+    rec = await startRecorder(a);
   } catch {
-    try {
-      recorder?.release();
-    } catch {}
     await restoreAudio(a, musicPaused);
     h.onEnd({ cancelled: false, error: 'other' });
     return null;
   }
-  const rec = recorder;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { apiPost } = require('./apiClient') as typeof import('./apiClient');
   // Wakes the model up while the user is still speaking: after a pause the first transcription
   // otherwise waits about 12 s for it to load (see workers/api/src/routes/ai.ts).
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    void (require('./apiClient') as typeof import('./apiClient')).apiPost(WARM_PATH, {}, { timeoutMs: 10_000 });
-  } catch {}
+  void apiPost(WARM_PATH, {}, { timeoutMs: 10_000 });
 
   let phase: 'recording' | 'transcribing' | 'done' = 'recording';
   let cancelled = false;
   const startedAt = Date.now();
   let lastSound = startedAt;
+  let segStartedAt = startedAt;
+  let heardInSegment = false;
+  let heardAny = false;
+  let cutting: Promise<void> | null = null;
   const abort = new AbortController();
 
+  // The phrases sent so far, in order: their text once it is back (null while on its way).
+  const phrases: (string | null)[] = [];
+  const inFlight: Promise<void>[] = [];
+  let nextToShow = 0;
+  let shownText = '';
+  let emitted = 0;
+  let failure: DictationError | undefined;
+
+  const showReady = () => {
+    while (nextToShow < phrases.length && phrases[nextToShow] !== null) {
+      const text = phrases[nextToShow] as string;
+      nextToShow += 1;
+      if (!text || cancelled) continue;
+      emitted += 1;
+      shownText = shownText ? `${shownText} ${text}` : text;
+      h.onText(text);
+    }
+  };
+
+  const send = (uri: string) => {
+    const index = phrases.length;
+    phrases.push(null);
+    const prompt = shownText.slice(-PROMPT_CHARS);
+    const job = (async () => {
+      let audio = '';
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { File } = require('expo-file-system') as typeof import('expo-file-system');
+        audio = await new File(uri).base64();
+      } catch {}
+      deleteFile(uri);
+      let text = '';
+      if (audio && !cancelled) {
+        for (let attempt = 0; attempt < 2 && !cancelled; attempt++) {
+          const res = await apiPost<{ text?: string }>(
+            TRANSCRIBE_PATH,
+            { audio, lang, ...(prompt ? { prompt } : null) },
+            { timeoutMs: TRANSCRIBE_TIMEOUT_MS, signal: abort.signal },
+          );
+          if (!res.error) {
+            text = typeof res.data?.text === 'string' ? res.data.text.trim() : '';
+            break;
+          }
+          const kind = errorKindOf(String(res.error));
+          // One more try for a dropped connection or a busy minute; a day's limit will not pass.
+          if (attempt === 0 && kind !== 'limit') {
+            await new Promise((r) => setTimeout(r, 1500));
+            continue;
+          }
+          failure = kind;
+        }
+      } else if (!audio) {
+        failure = 'other';
+      }
+      phrases[index] = text;
+      showReady();
+    })();
+    inFlight.push(job);
+  };
+
+  /** Ends the current file; starts the next one unless `last`. Sends it if it had speech in it. */
+  const cut = (last: boolean): Promise<void> => {
+    const run = async () => {
+      const old = rec;
+      const began = segStartedAt;
+      const heard = heardInSegment;
+      let uri: string | null = null;
+      try {
+        await old.stop();
+        uri = old.uri;
+      } catch {}
+      try {
+        old.release();
+      } catch {}
+      if (!last && phase === 'recording' && !cancelled) {
+        try {
+          rec = await startRecorder(a);
+          segStartedAt = Date.now();
+          heardInSegment = false;
+        } catch {
+          // Could not go on recording: what was said so far is still sent, and the session stops.
+          void stop();
+        }
+      }
+      if (uri && heard && !cancelled && Date.now() - began >= MIN_RECORDING_MS) send(uri);
+      else deleteFile(uri);
+    };
+    cutting = run().finally(() => {
+      cutting = null;
+    });
+    return cutting;
+  };
+
   const meter = setInterval(() => {
-    if (phase !== 'recording') return;
+    if (phase !== 'recording' || cutting) return;
     let db = -160;
     try {
       db = rec.getStatus().metering ?? -160;
     } catch {}
     const now = Date.now();
+    if (db > SPEECH_DB) {
+      heardInSegment = true;
+      heardAny = true;
+    }
     if (db > SILENCE_DB) lastSound = now;
     // -50 dB and below is silence, -10 dB is a raised voice.
     h.onLevel?.(Math.max(0, Math.min(1, (db + 50) / 40)));
-    if (now - lastSound > SILENCE_STOP_MS || now - startedAt > MAX_RECORDING_MS) void stop();
+    if (now - lastSound > SILENCE_STOP_MS || now - startedAt > MAX_RECORDING_MS) {
+      void stop();
+      return;
+    }
+    const segFor = now - segStartedAt;
+    if ((heardInSegment && segFor >= SEGMENT_MIN_MS && now - lastSound >= SEGMENT_PAUSE_MS) || segFor >= SEGMENT_MAX_MS) {
+      void cut(false);
+    }
   }, LEVEL_INTERVAL_MS);
   const appState = AppState.addEventListener('change', (s) => {
     if (s !== 'active') void stop();
@@ -237,60 +375,18 @@ export async function startDictation(lang: string, h: DictationHandlers): Promis
     h.onEnd(info);
   };
 
-  /** Ends the recording and returns its file, or null. Leaves the audio as it was before. */
-  const endRecording = async (): Promise<string | null> => {
-    clearInterval(meter);
-    let uri: string | null = null;
-    try {
-      await rec.stop();
-      uri = rec.uri;
-    } catch {}
-    try {
-      rec.release();
-    } catch {}
-    await restoreAudio(a, musicPaused);
-    return uri;
-  };
-
   const stop = async () => {
     if (phase !== 'recording') return;
     phase = 'transcribing';
-    const heardFor = Date.now() - startedAt;
-    const uri = await endRecording();
+    clearInterval(meter);
+    if (cutting) await cutting;
+    await cut(true);
+    await restoreAudio(a, musicPaused);
     if (cancelled) return;
-    if (!uri || heardFor < MIN_RECORDING_MS) {
-      deleteFile(uri);
-      finish({ cancelled: false });
-      return;
-    }
-    h.onTranscribing?.();
-    let audio = '';
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { File } = require('expo-file-system') as typeof import('expo-file-system');
-      audio = await new File(uri).base64();
-    } catch {}
-    deleteFile(uri);
+    if (inFlight.length > 0 && nextToShow < phrases.length) h.onTranscribing?.();
+    await Promise.all(inFlight);
     if (cancelled) return;
-    if (!audio) {
-      finish({ cancelled: false, error: 'other' });
-      return;
-    }
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { apiPost } = require('./apiClient') as typeof import('./apiClient');
-    const res = await apiPost<{ text?: string }>(TRANSCRIBE_PATH, { audio, lang }, { timeoutMs: TRANSCRIBE_TIMEOUT_MS, signal: abort.signal });
-    if (cancelled) return;
-    if (res.error) {
-      const e = String(res.error);
-      finish({
-        cancelled: false,
-        error: e === 'offline' || /timeout|network|fetch/i.test(e) ? 'network' : /daily_limit|429/.test(e) ? 'limit' : 'other',
-      });
-      return;
-    }
-    const text = typeof res.data?.text === 'string' ? res.data.text.trim() : '';
-    if (text) h.onText(text);
-    finish({ cancelled: false, nothingHeard: !text });
+    finish({ cancelled: false, error: failure, nothingHeard: !failure && heardAny && emitted === 0 });
   };
 
   const cancel = () => {
@@ -299,9 +395,14 @@ export async function startDictation(lang: string, h: DictationHandlers): Promis
     abort.abort();
     if (phase === 'recording') {
       phase = 'transcribing';
-      void endRecording().then(deleteFile);
+      clearInterval(meter);
+      void (async () => {
+        if (cutting) await cutting;
+        await cut(true);
+        await restoreAudio(a, musicPaused);
+      })();
     }
-    // At once: the words go now, and nothing from this session may arrive after that.
+    // At once: nothing from this session may arrive after the field has been put back.
     finish({ cancelled: true });
   };
   const handle = { cancel };
