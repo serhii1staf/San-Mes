@@ -4,6 +4,7 @@ import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 
 import { useProfileThemeAccents } from './ProfileThemeContext';
 import { ThemedProfileText } from './ThemedProfileText';
+import { emojiTextStyle } from '../ui/emojiText';
 
 /**
  * Seasonal Profile Themes — themed follow ("Подписаться") button (task 6.3).
@@ -60,7 +61,7 @@ export function ThemedFollowButton({
       style={[styles.base, style]}
     >
       {accents ? (
-        <RNText allowFontScaling={false} style={[styles.emoji, { fontSize: emojiSize }]}>
+        <RNText allowFontScaling={false} style={[emojiTextStyle(emojiSize), styles.emoji]}>
           {accents.follow}
         </RNText>
       ) : null}
@@ -82,10 +83,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  emoji: {
-    // Tight line height so the glyph centers against the label baseline.
-    textAlignVertical: 'center',
-  },
+  // The shared emoji box (emojiText.ts) centres the glyph against the label. It had only
+  // `textAlignVertical`, and Android's default font padding put the glyph low.
+  emoji: { textAlign: 'center' },
 });
 
 export default ThemedFollowButton;

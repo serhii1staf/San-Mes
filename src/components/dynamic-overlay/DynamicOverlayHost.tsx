@@ -61,6 +61,7 @@ import {
   View,
 } from 'react-native';
 import { BlurView } from '../../components/ui/AppBlurView';
+import { emojiTextStyle } from '../../components/ui/emojiText';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import Animated, {
@@ -852,10 +853,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // The shared emoji box (emojiText.ts): it had no height, so the line box was the font's and the
+  // glyph sat low in the 22 pt circle on Android.
   avatarEmoji: {
-    fontSize: 14,
-    lineHeight: 18,
-    includeFontPadding: false,
+    ...emojiTextStyle(14),
     textAlign: 'center',
   },
   avatarImage: { width: 22, height: 22, borderRadius: 11 },

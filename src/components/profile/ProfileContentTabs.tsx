@@ -43,6 +43,7 @@ import { stripMarkers } from '../../utils/previewText';
 import { parseReply } from '../../utils/commentReply';
 import { isCutoutCapableUrl } from '../../utils/mediaKind';
 import { linkDisplayName } from '../../utils/linkKind';
+import { useConnectivityStore } from '../../services/connectivityMonitor';
 import { parseGif } from '../../services/giphy';
 import { FormattedText } from '../ui/FormattedText';
 import { useTransitionSettled } from '../../hooks/useTransitionSettled';
@@ -225,24 +226,43 @@ const ReplyGif = memo(function ReplyGif({ uri, marginTop }: { uri: string; margi
   const onFailed = useCallback(() => {
     if (cutout) setFailed(true);
   }, [cutout]);
-  if (failed) {
-    return (
-      <View style={[styles.mediaGone, { marginTop, backgroundColor: theme.colors.background.secondary }]}>
-        <Feather name="image" size={13} color={theme.colors.text.tertiary} />
-        <Text variant="caption" color={theme.colors.text.tertiary} style={styles.mediaGoneText}>{t('stickers.unavailable')}</Text>
-      </View>
-    );
-  }
+  // ── IN ITS OWN BOX, AND TRIED AGAIN WHEN THE CONNECTION COMES BACK (Nov 2026) ─────────────────
+  //
+  // Reported: in «Ответы» a sticker says it is unavailable, "and while I scroll it may load, the
+  // container expands". The note replaced the 96 pt box with a pill about 30 pt tall, so a row
+  // shrank when its sticker failed and the cards under it moved up while the page was being read,
+  // and nothing tried again. Now the note is drawn in the box the sticker had, as in the chat and the
+  // thread, and a sticker that failed while the phone was offline is loaded again when the
+  // connection returns (the image is remounted: `attempt` is its key). One that failed online
+  // (gone for good, see the Worker's file route) stays as it is. Only a failed one subscribes.
+  const online = useConnectivityStore((s) => (failed ? s.isOnline : true));
+  const [attempt, setAttempt] = useState(0);
+  const wasOnlineRef = useRef(online);
+  useEffect(() => {
+    const cameBack = online && !wasOnlineRef.current;
+    wasOnlineRef.current = online;
+    if (cameBack && failed) {
+      setFailed(false);
+      setAttempt((n) => n + 1);
+    }
+  }, [online, failed]);
   return (
     <View
       style={[
         styles.replyGif,
         { marginTop },
         // A sticker is drawn to its own edges: no frame and no crop.
-        cutout ? null : { backgroundColor: theme.colors.background.secondary },
+        cutout && !failed ? null : { backgroundColor: theme.colors.background.secondary },
       ]}
     >
-      <CachedImage uri={uri} style={styles.replyGifImg} resizeMode={cutout ? 'contain' : 'cover'} autoplay={false} onFailed={onFailed} />
+      {failed ? (
+        <View style={styles.mediaGone} pointerEvents="none">
+          <Feather name="image" size={18} color={theme.colors.text.tertiary} />
+          <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={styles.mediaGoneText}>{t('stickers.unavailable')}</Text>
+        </View>
+      ) : (
+        <CachedImage key={attempt} uri={uri} style={styles.replyGifImg} resizeMode={cutout ? 'contain' : 'cover'} autoplay={false} onFailed={onFailed} />
+      )}
       {cutout ? null : (
         <View style={styles.gifBadge} pointerEvents="none">
           <Text variant="caption" weight="bold" color="#FFFFFF" style={styles.gifBadgeText}>GIF</Text>
@@ -767,8 +787,9 @@ const styles = StyleSheet.create({
   // Top corner: a GIF's own captions are burnt into its bottom edge.
   gifBadge: { position: 'absolute', left: 6, top: 6, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.5)' },
   gifBadgeText: { fontSize: 10, lineHeight: 14 },
-  mediaGone: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12 },
-  mediaGoneText: { fontSize: 12 },
+  // In the sticker's own box (`replyGif`), so the row keeps its height.
+  mediaGone: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 4, padding: 6 },
+  mediaGoneText: { fontSize: 11, lineHeight: 14 },
   replyBody: { fontSize: 14, lineHeight: 20 },
   empty: { alignItems: 'center', paddingVertical: 32, gap: 8 },
   mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 3 },

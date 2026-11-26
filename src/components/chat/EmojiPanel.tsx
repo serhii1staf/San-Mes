@@ -11,6 +11,7 @@ import {
 import { useT, useI18nStore } from '../../i18n/store';
 import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
 import { useScreenReaderEnabled } from '../../hooks/useScreenReaderEnabled';
+import { emojiTextStyle } from '../ui/emojiText';
 
 // ── Inline emoji panel ─────────────────────────────────────────────────────
 //
@@ -399,7 +400,10 @@ const styles = StyleSheet.create({
   },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   cell: { width: '12.5%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center' },
-  cellText: { fontSize: 28 },
+  // The shared emoji box (src/components/ui/emojiText.ts). It was a bare `fontSize: 28`, so on Android
+  // the glyph kept the font's extra top padding (`includeFontPadding` defaults to true) and sat low in
+  // every cell: reported as "all emoji are shifted down on Android, not centred as on iPhone".
+  cellText: { ...emojiTextStyle(28), textAlign: 'center' },
 });
 
 export const EmojiPanel = memo(EmojiPanelComponent);

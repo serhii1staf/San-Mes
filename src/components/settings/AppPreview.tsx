@@ -11,11 +11,12 @@
  * Plain views and text: no glass, no images, no list, nothing that loads.
  */
 import React, { memo } from 'react';
-import { StyleSheet, View, useWindowDimensions, type TextStyle } from 'react-native';
+import { StyleSheet, Text as RNText, View, useWindowDimensions, type TextStyle } from 'react-native';
 import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
+import { emojiTextStyle } from '../ui/emojiText';
 import { useAuthStore } from '../../store';
 import { useT } from '../../i18n/store';
 
@@ -78,7 +79,7 @@ function ChatListScreen({ p, myEmoji }: { p: Palette; myEmoji: string }) {
         </View>
         <View style={styles.titleRow}>
           <View style={[styles.titleAvatar, { backgroundColor: p.accent + '33' }]}>
-            <Text style={styles.titleEmoji}>{myEmoji}</Text>
+            <RNText style={styles.titleEmoji} allowFontScaling={false}>{myEmoji}</RNText>
           </View>
           <Text weight="bold" color={p.text} style={p.fs(24)}>{t('messages.title')}</Text>
         </View>
@@ -104,7 +105,7 @@ function ChatListScreen({ p, myEmoji }: { p: Palette; myEmoji: string }) {
       {ROWS.map((r, i) => (
         <View key={r.name} style={styles.row}>
           <View style={[styles.avatar, { backgroundColor: p.elevated }]}>
-            <Text style={styles.avatarEmoji}>{r.emoji}</Text>
+            <RNText style={styles.avatarEmoji} allowFontScaling={false}>{r.emoji}</RNText>
           </View>
           <View
             style={[
@@ -139,7 +140,7 @@ function ChatListScreen({ p, myEmoji }: { p: Palette; myEmoji: string }) {
           </View>
         </View>
         <View style={[styles.tabCapsule, { borderColor: p.hairline, backgroundColor: p.elevated }]}>
-          <Text style={styles.tabEmoji}>{myEmoji}</Text>
+          <RNText style={styles.tabEmoji} allowFontScaling={false}>{myEmoji}</RNText>
         </View>
       </View>
     </>
@@ -162,7 +163,7 @@ function ChatScreen({ p }: { p: Palette }) {
           <Text color={p.secondary} numberOfLines={1} style={p.fs(12)}>@maria</Text>
         </View>
         <View style={[styles.round44, { backgroundColor: p.elevated, borderColor: p.hairline }]}>
-          <Text style={styles.headerEmoji}>🌸</Text>
+          <RNText style={styles.headerEmoji} allowFontScaling={false}>🌸</RNText>
         </View>
       </View>
       <View style={styles.dayChipRow}>
@@ -282,7 +283,7 @@ const styles = StyleSheet.create({
   pill: { height: 36, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   titleAvatar: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  titleEmoji: { fontSize: 17, lineHeight: 21 },
+  titleEmoji: { ...emojiTextStyle(17), textAlign: 'center' },
   round36: { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   search: {
     marginTop: 10,
@@ -299,7 +300,7 @@ const styles = StyleSheet.create({
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16 },
   row: { flexDirection: 'row', alignItems: 'center', paddingLeft: 16, marginTop: 10 },
   avatar: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center' },
-  avatarEmoji: { fontSize: 27, lineHeight: 33 },
+  avatarEmoji: { ...emojiTextStyle(27), textAlign: 'center' },
   rowText: { flex: 1, marginLeft: 12, paddingRight: 16, paddingBottom: 10, gap: 3 },
   rowLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   badge: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center' },
@@ -308,11 +309,11 @@ const styles = StyleSheet.create({
   tabBar: { flexDirection: 'row', height: 58, borderRadius: 29, borderWidth: 1.5, padding: 4, gap: 4 },
   tabSlot: { width: 84, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   tabCapsule: { width: 58, height: 58, borderRadius: 29, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
-  tabEmoji: { fontSize: 26, lineHeight: 32 },
+  tabEmoji: { ...emojiTextStyle(26), textAlign: 'center' },
 
   chatHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, height: 56 },
   round44: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  headerEmoji: { fontSize: 20, lineHeight: 25 },
+  headerEmoji: { ...emojiTextStyle(20), textAlign: 'center' },
   namePill: { minWidth: 128, height: 44, borderRadius: 22, borderWidth: 1, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' },
   dayChipRow: { alignItems: 'center', marginTop: 18, marginBottom: 6 },
   dayChip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12 },
