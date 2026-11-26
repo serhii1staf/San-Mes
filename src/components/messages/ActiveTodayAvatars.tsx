@@ -1,6 +1,7 @@
 import React, { memo, useMemo } from 'react';
 import { View, Text as RNText, StyleSheet } from 'react-native';
 import type { Conversation } from '../../types';
+import { emojiTextStyle } from '../ui/emojiText';
 
 // ── Overlapping "active today" emoji avatars ────────────────────────────────
 //
@@ -146,6 +147,7 @@ const styles = StyleSheet.create({
   },
   // `allowFontScaling={false}` above + a fixed size keeps the disc circular at
   // every Dynamic Type setting; an oversized glyph would otherwise stretch the
-  // header row and shove the title off-centre.
-  emoji: { fontSize: 13, lineHeight: 17 },
+  // header row and shove the title off-centre. The shared emoji box (emojiText.ts): without
+  // `includeFontPadding: false` and a fixed height the glyph sat low in the disc on Android.
+  emoji: { ...emojiTextStyle(13), textAlign: 'center' },
 });

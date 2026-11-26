@@ -80,7 +80,10 @@ function rubberBand(v: number, size: number, s: number): number {
   return v;
 }
 
-/** The image at real-banner size, scaled into the frame. Rendered twice: faint outside, clipped inside. */
+/**
+ * The image at real-banner size, scaled into the frame. Rendered twice: faint outside, clipped inside.
+ * `still`: a GIF holds its first frame (the faint copy), so only the framed one animates.
+ */
 function ScaledImage({
   uri,
   realW,
@@ -89,6 +92,7 @@ function ScaledImage({
   k,
   imageStyle,
   wrapStyle,
+  still,
 }: {
   uri: string;
   realW: number;
@@ -97,6 +101,7 @@ function ScaledImage({
   k: number;
   imageStyle: React.ComponentProps<typeof Animated.View>['style'];
   wrapStyle?: React.ComponentProps<typeof Animated.View>['style'];
+  still?: boolean;
 }) {
   return (
     <Animated.View
@@ -114,7 +119,7 @@ function ScaledImage({
       ]}
     >
       <Animated.View style={[StyleSheet.absoluteFill, imageStyle]}>
-        <CachedImage uri={uri} style={StyleSheet.absoluteFillObject} resizeMode="cover" proxyWidth={IMAGE_PROXY_WIDTH} />
+        <CachedImage uri={uri} style={StyleSheet.absoluteFillObject} resizeMode="cover" proxyWidth={IMAGE_PROXY_WIDTH} autoplay={still ? false : undefined} />
       </Animated.View>
     </Animated.View>
   );
@@ -249,8 +254,10 @@ export function BannerPositionEditor({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel} statusBarTranslucent>
       <GestureHandlerRootView style={styles.root}>
         {/* The image itself, blurred, as the backdrop. Same proxy width as the frame, so it is the same
-            download; the blur is a single static pass, not a live blur view. */}
-        <CachedImage uri={uri} style={StyleSheet.absoluteFillObject} resizeMode="cover" proxyWidth={IMAGE_PROXY_WIDTH} blurRadius={40} />
+            download; the blur is a single static pass, not a live blur view. A GIF holds its first
+            frame here: animated, every frame of a full-screen layer was decoded (and on Android not
+            blurred) behind the editor, the heaviest of the layers that froze a quick drag. */}
+        <CachedImage uri={uri} style={StyleSheet.absoluteFillObject} resizeMode="cover" proxyWidth={IMAGE_PROXY_WIDTH} blurRadius={40} autoplay={false} />
         <View style={[StyleSheet.absoluteFill, styles.dim]} />
 
         {/* The whole screen is the drag surface, not only the frame: a small frame is a small target. */}
@@ -263,7 +270,7 @@ export function BannerPositionEditor({
               {t('edit_profile.banner.editor_hint')}
             </RNText>
             <View style={{ width: frameW, height: frameH, marginTop: 22 }}>
-              <ScaledImage uri={uri} realW={realW} frameW={frameW} frameH={frameH} k={k} imageStyle={imageStyle} wrapStyle={ghostStyle} />
+              <ScaledImage uri={uri} realW={realW} frameW={frameW} frameH={frameH} k={k} imageStyle={imageStyle} wrapStyle={ghostStyle} still />
               <View style={[StyleSheet.absoluteFill, styles.frameClip]}>
                 <ScaledImage uri={uri} realW={realW} frameW={frameW} frameH={frameH} k={k} imageStyle={imageStyle} />
               </View>

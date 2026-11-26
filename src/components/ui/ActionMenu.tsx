@@ -87,8 +87,11 @@ export interface ActionMenuHandle {
 interface ActionMenuProps<Id extends string> {
   /** Window rect of the held item. `null` centres the card. */
   anchor: ActionMenuAnchor | null;
-  /** Which edge of the held item the card lines up with: own messages sit on the right. */
-  align?: 'left' | 'right';
+  /**
+   * Where the card goes across: lined up with the held item's left or right edge, or `'end'`, the
+   * right side of the screen whatever the item (the chat: always under the thumb, see MessageContextMenu).
+   */
+  align?: 'left' | 'right' | 'end';
   /** Small caption at the top of the card (used by the report-reason step). */
   title?: string;
   /** Up to three actions shown as icon-over-label cells. */
@@ -141,9 +144,11 @@ interface ActionMenuProps<Id extends string> {
   /**
    * For an item too tall to be shown whole (see "AN ITEM TALLER THAN THE WINDOW IS NOT SNAPSHOTTED"):
    * a light copy of it, drawn by the caller for the height it is given, which rises just above the
-   * card while everything else dims. Without it such an item stays lit where it is.
+   * card while everything else dims. Without it such an item stays lit where it is. The copy takes
+   * touches (it scrolls, so the whole item can be read); `close` is for a tap on it, which closes
+   * the menu like a tap anywhere else off the card.
    */
-  longPreview?: (maxHeight: number) => React.ReactNode;
+  longPreview?: (maxHeight: number, close: () => void) => React.ReactNode;
   /**
    * How much of the bottom of the window is not the menu's, for a menu drawn inside a screen with
    * something under that screen: the minimized-session bar (BrowserBottomBand), which shortens every
@@ -295,14 +300,19 @@ const PREVIEW_RETURN = { duration: 230, easing: Easing.out(Easing.cubic) };
 // and faded with the card it stayed whole for the first 100 ms beside the item it copies, which
 // showed both (emulator). So it fades at once instead.
 const PREVIEW_FADE = { duration: 140, easing: Easing.out(Easing.quad) };
-// The open run backwards: the card shrinks a little about its centre, accelerating as it goes, so
-// it dissolves where it stood instead of vanishing at full size. The dim and the snapshot fade on
-// it; the card's own alpha does not (see `CONTENT_OUT`, `SURFACE_OUT`).
-const CLOSE_TIMING = { duration: 230, easing: Easing.bezier(0.55, 0, 0.75, 0.2) };
-// The close, for the card itself: its icons and labels go first, from the first frame, and its
-// surface follows, so neither is left over the chat (see "THE LABELS LEFT AFTER THE CARD HAD GONE").
-const CONTENT_OUT = { duration: 90, easing: Easing.out(Easing.quad) };
-const SURFACE_OUT = { duration: 170, easing: Easing.out(Easing.quad) };
+// ── THE CARD AND THE MESSAGE LEAVE TOGETHER (Nov 2026) ──────────────────────
+//
+// Reported: closing the menu of a held long message, "first the menu at the bottom disappears, and
+// only then the message". The card had its own quick fades (labels 90 ms, surface 170 ms, both fast
+// at first), while the dim, the long message's copy and the snapshot faded on a 230 ms ease-in that
+// is still at 94 % at 90 ms: the card was gone while the message had hardly started.
+//
+// Now everything goes on one curve, fast at first: the dim, the copy and the snapshot on
+// `CLOSE_TIMING`, the card's surface on the same, its labels a little ahead so they are never left
+// crisp over a snapshot going back under the card (see "THE LABELS LEFT AFTER THE CARD HAD GONE").
+const CLOSE_TIMING = { duration: 210, easing: Easing.out(Easing.quad) };
+const CONTENT_OUT = { duration: 150, easing: Easing.out(Easing.quad) };
+const SURFACE_OUT = CLOSE_TIMING;
 // The held bubble's lift in the chat (`liftStyle` in useMessageGestures), so a snapshot lifts the
 // same way the live bubble does in its cut-out.
 const LIFT_SPRING = { damping: 15, stiffness: 260, mass: 0.7 };
@@ -605,7 +615,9 @@ function ActionMenuInner<Id extends string>(
     // Taller than the free space on either side and no snapshot to show instead: pin to the bottom.
     menuTop = Math.max(minTop, maxBottom - menuH);
   }
-  const rawLeft = !anchor ? (W - menuW) / 2 : align === 'right' ? anchor.x + anchor.width - menuW : anchor.x;
+  const rawLeft = align === 'end'
+    ? W - menuW - 12
+    : !anchor ? (W - menuW) / 2 : align === 'right' ? anchor.x + anchor.width - menuW : anchor.x;
   const menuLeft = clamp(rawLeft, 12, W - menuW - 12);
   // The long item's copy: all the room above the card, at the item's own left edge and width. It
   // starts over the top of what was on screen of the item, so it rises out of it.
@@ -836,6 +848,8 @@ function ActionMenuInner<Id extends string>(
     [c, contentOut, surfaceOut, fade, finish, plan, shift, windowH, previewLift],
   );
   useImperativeHandle(ref, () => ({ dismiss }), [dismiss]);
+  // A tap on a long item's copy (see `longPreview`): the copy scrolls, so it takes touches itself.
+  const closeFromCopy = useCallback(() => dismiss(), [dismiss]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -1059,14 +1073,15 @@ function ActionMenuInner<Id extends string>(
       </Reanimated.View>
       <Pressable style={StyleSheet.absoluteFill} onPress={() => dismiss()} accessibilityRole="button" accessibilityLabel="Close" />
 
-      {/* A long item's copy (see `longCopy`). Untouchable, so a tap on it closes the menu like a tap
-          anywhere else off the card. */}
+      {/* A long item's copy (see `longCopy`). It scrolls, so the whole item can be read; a tap on it
+          closes the menu like a tap anywhere else off the card (`closeFromCopy`). The empty room
+          around a short copy passes touches through to the backdrop. */}
       {longCopy && anchor && longPreview ? (
         <Reanimated.View
-          pointerEvents="none"
+          pointerEvents="box-none"
           style={[styles.longCopy, { top: copyTop, left: anchor.x, width: anchor.width, height: copyH }, copyStyle]}
         >
-          {longPreview(copyH)}
+          {longPreview(copyH, closeFromCopy)}
         </Reanimated.View>
       ) : null}
 

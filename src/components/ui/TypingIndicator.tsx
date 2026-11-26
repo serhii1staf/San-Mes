@@ -23,7 +23,7 @@
  */
 
 import React from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, Text as RNText, View } from 'react-native';
 import { Text } from './Text';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
@@ -170,9 +170,11 @@ function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
           // from assistive tech rather than read out as stray characters.
           <View style={styles.emojiRow} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             {emoji.map((p) => (
-              <Text key={p.id} variant="caption" style={styles.emoji}>
+              // The plain Text: the app's sets its own font and scales with the system text size,
+              // which grew the glyph past its fixed 22 pt box so it sat low and clipped on Android.
+              <RNText key={p.id} style={styles.emoji} allowFontScaling={false}>
                 {p.emoji}
-              </Text>
+              </RNText>
             ))}
           </View>
         ) : null}

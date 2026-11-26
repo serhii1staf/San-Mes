@@ -129,6 +129,38 @@ function localImageWidth(uri: string): Promise<number> {
   });
 }
 
+/**
+ * A picked still image, made no wider than a banner (`BANNER_MAX_WIDTH`), or the original when it
+ * already is, is animated (GIF / WebP, which keep their frames), or cannot be read.
+ *
+ * Done when the image is picked, not only before the upload. The position editor shows the picked
+ * file in three layers (its blurred backdrop, the faint copy around the frame and the frame itself)
+ * over the edit screen's own preview, and a local file skips the image proxy, so a 12-48 MP photo was
+ * decoded at full size four times, with a full-size downscale on iOS's main thread each, right as
+ * the editor opened and the drag began: reported as the app freezing when the picked banner was
+ * dragged quickly left and right. 1600 px is still more than the banner is ever drawn at.
+ */
+export async function prepareBannerImage(imageUri: string): Promise<string> {
+  const lower = imageUri.toLowerCase();
+  if (/\.(gif|webp)(\?|$)/.test(lower)) return imageUri;
+  const png = /\.png(\?|$)/.test(lower);
+  try {
+    const width = await localImageWidth(imageUri);
+    if (width <= BANNER_MAX_WIDTH) return imageUri;
+    const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+    const resized = await manipulateAsync(
+      imageUri,
+      [{ resize: { width: BANNER_MAX_WIDTH } }],
+      // PNG stays PNG, so a banner with transparent parts keeps them.
+      png ? { format: SaveFormat.PNG } : { compress: 0.85, format: SaveFormat.JPEG },
+    );
+    return resized?.uri || imageUri;
+  } catch {
+    // The original; it may still be under the upload cap.
+    return imageUri;
+  }
+}
+
 /** Upload a banner image. Preserves GIF / WebP animation. */
 export async function uploadBanner(
   userId: string,
@@ -155,24 +187,8 @@ export async function uploadBanner(
     // the edit screen saved when an upload failed; the failure reasons were never logged). A still
     // image wider than `BANNER_MAX_WIDTH` is now resized to it. GIF and WebP are left alone so they
     // keep their animation; one over 4 MB still fails, and the edit screen says it is too large.
-    let uploadUri = imageUri;
-    if (ext === 'jpg' || ext === 'png') {
-      try {
-        const width = await localImageWidth(imageUri);
-        if (width > BANNER_MAX_WIDTH) {
-          const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
-          const resized = await manipulateAsync(
-            imageUri,
-            [{ resize: { width: BANNER_MAX_WIDTH } }],
-            // PNG stays PNG, so a banner with transparent parts keeps them.
-            ext === 'png' ? { format: SaveFormat.PNG } : { compress: 0.85, format: SaveFormat.JPEG },
-          );
-          if (resized?.uri) uploadUri = resized.uri;
-        }
-      } catch {
-        // Upload the original; it may still be under the cap.
-      }
-    }
+    // Usually done already, when the image was picked (`prepareBannerImage`); then this is a no-op.
+    const uploadUri = ext === 'jpg' || ext === 'png' ? await prepareBannerImage(imageUri) : imageUri;
     const { uploadToR2 } = await import('./r2');
     const { url, error, reason } = await uploadToR2(uploadUri, `banners/${userId}.${ext}`);
     if (!url) return { url: null, error: error || 'upload failed', reason };

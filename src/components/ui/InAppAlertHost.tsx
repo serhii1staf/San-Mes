@@ -45,7 +45,7 @@
  * on Android where it would be expensive.
  */
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text as RNText, View } from 'react-native';
 import Animated, {
   Easing,
   runOnJS,
@@ -509,8 +509,10 @@ function InAppAlertHostInner() {
             <View style={styles.avatar}>
               {/* `emojiTextStyle` rather than a bare fontSize: it supplies the matching lineHeight and
                   the Android `includeFontPadding: false`, which is what stops a colour emoji being
-                  clipped at the top. Same helper `Avatar` uses. */}
-              <Text style={emojiTextStyle(EMOJI_SIZE)}>{current.emoji}</Text>
+                  clipped at the top. Same helper `Avatar` uses. The plain Text, as `Avatar` does: the
+                  app's Text sets its own font and scales with the system text size, so the glyph grew
+                  past its fixed box and sat low in it on Android. */}
+              <RNText style={[emojiTextStyle(EMOJI_SIZE), styles.emojiGlyph]} allowFontScaling={false}>{current.emoji}</RNText>
             </View>
             <Animated.View style={[styles.textCol, textStyle]}>
               <Text variant="caption" weight="bold" numberOfLines={1}>
@@ -556,6 +558,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  emojiGlyph: { textAlign: 'center' },
   textCol: {
     marginLeft: GAP,
     flexShrink: 1,

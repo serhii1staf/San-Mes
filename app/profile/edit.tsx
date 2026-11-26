@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, Pressable, StyleSheet, Text as RNText, Dimensions, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from '../../src/components/ui/AppBlurView';
@@ -22,7 +22,7 @@ import { EmojiPickerSheet } from '../../src/components/profile/EmojiPickerSheet'
 import { BannerPositionEditor } from '../../src/components/profile/BannerPositionEditor';
 import type { LinkKind } from '../../src/utils/linkKind';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
-import { updateProfile as updateSupabaseProfile, uploadBanner, loadProfileMeta } from '../../src/lib/supabase';
+import { updateProfile as updateSupabaseProfile, uploadBanner, loadProfileMeta, prepareBannerImage } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
 import { useT } from '../../src/i18n/store';
 // Import the validators from the moderation PACKAGE INDEX explicitly.
@@ -138,7 +138,10 @@ export default function EditProfileScreen() {
       quality: 1.0,
     });
     if (!result.canceled && result.assets[0]) {
-      setBannerUri(result.assets[0].uri);
+      // A still photo comes back at camera size; the editor and the preview get it banner-sized
+      // (see `prepareBannerImage`: four full-size decodes froze the editor's drag).
+      const picked = await prepareBannerImage(result.assets[0].uri);
+      setBannerUri(picked);
       beginEditing();
       // New picks reset the transform to identity — the previous
       // position only made sense for the previous image. The editor
@@ -461,6 +464,9 @@ export default function EditProfileScreen() {
                 ]}
                 resizeMode="cover"
                 proxyWidth={SCREEN_WIDTH}
+                // Under the position editor it cannot be seen: a GIF holds still there instead of
+                // decoding every frame behind the editor's own layers.
+                autoplay={showBannerEditor ? false : undefined}
               />
             ) : null}
             <LinearGradient
@@ -617,6 +623,10 @@ export default function EditProfileScreen() {
         onRemove={handleRemoveEditingLink}
       />
 
+      {/* No swipe back while the position editor is up: this screen swipes back from anywhere
+          (`fullScreenGestureEnabled`), and a quick sideways drag as the editor fades in or out started
+          a pop of the very screen that was presenting it. */}
+      <Stack.Screen options={{ gestureEnabled: !showBannerEditor }} />
       {/* Banner position editor: drag and pinch the picked image in a centred frame. */}
       <BannerPositionEditor
         visible={showBannerEditor}
