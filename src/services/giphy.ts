@@ -9,6 +9,8 @@
 // (~100-200px wide, tens of KB) for the grid, and keep the original URL only for
 // sending. Nothing touches our own server/storage — GIF URLs are sent as-is.
 
+import { kvGetJSONSync, kvSetJSON } from './kvStore';
+
 const GIPHY_API_KEY = 'caEHH1NMR0T7xkQ00fWHryFVH49kLG1C';
 const BASE = 'https://api.giphy.com/v1/gifs';
 
@@ -106,13 +108,32 @@ export function parseGif(text: string | undefined | null): string | null {
   return url || null;
 }
 
-// Small in-memory cache of the trending list so reopening the picker doesn't
-// re-hit the API (the beta key is limited to 100 requests/hour). Lives for the
-// app session.
+// The trending list, kept so reopening a picker doesn't re-hit the API (the beta key is limited to
+// 100 requests/hour).
+//
+// It was in memory only, so the first GIF panel of every launch opened on a spinner and asked Giphy
+// again for a list it had fetched minutes before. Now it is also written to MMKV with the time it was
+// fetched, and a launch within TRENDING_FRESH_MS opens the panel on it at once, with no request.
+// Trending moves slowly; an older copy is not shown and the panel fetches as before.
+const TRENDING_KEY = 'giphy_trending';
+const TRENDING_FRESH_MS = 12 * 60 * 60_000;
 let trendingCache: GiphyItem[] | null = null;
+let trendingDiskRead = false;
 export function getCachedTrending(): GiphyItem[] | null {
+  if (trendingCache || trendingDiskRead) return trendingCache;
+  trendingDiskRead = true;
+  try {
+    const saved = kvGetJSONSync<{ at?: number; items?: GiphyItem[] } | null>(TRENDING_KEY, null);
+    const at = Number(saved?.at);
+    if (saved && Array.isArray(saved.items) && saved.items.length > 0 && Number.isFinite(at) && Date.now() - at < TRENDING_FRESH_MS) {
+      trendingCache = saved.items;
+    }
+  } catch {}
   return trendingCache;
 }
 export function setCachedTrending(items: GiphyItem[]) {
-  if (items.length > 0) trendingCache = items;
+  if (items.length === 0) return;
+  trendingCache = items;
+  trendingDiskRead = true;
+  try { kvSetJSON(TRENDING_KEY, { at: Date.now(), items }); } catch {}
 }

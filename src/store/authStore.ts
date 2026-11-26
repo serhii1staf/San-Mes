@@ -176,6 +176,10 @@ export const useAuthStore = create<AuthStoreState>()(
                   const { useChatUnread } = await import('./chatUnreadStore');
                   useChatUnread.getState().rehydrate();
                 } catch {}
+                try {
+                  const { syncMiniAppsAccount } = await import('./miniAppsStore');
+                  syncMiniAppsAccount();
+                } catch {}
               } catch {}
               try {
                 const { setThrottleAccount } = await import('../services/syncThrottle');

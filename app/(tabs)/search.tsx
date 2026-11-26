@@ -22,7 +22,7 @@ import { useProfilePosts, type ProfilePost } from '../../src/services/profilePos
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { accountKey } from '../../src/services/cacheService';
-import { kvGetStringRawSync } from '../../src/services/kvStore';
+import { kvGetStringRawSync, kvSetStringRaw } from '../../src/services/kvStore';
 import { parseImageUrls } from '../../src/lib/supabase';
 import { stripMarkers } from '../../src/utils/previewText';
 import { useShortAgo } from '../../src/utils/shortAgo';
@@ -82,6 +82,32 @@ interface RecentApp {
   emoji: string;
   url: string;
   ts?: number;
+}
+
+// ── RECENTS IN THE FIRST FRAME ──────────────────────────────────────────────────────────────────
+//
+// Both lists live in AsyncStorage, so they were read a native round trip after the tab mounted and
+// the "Recent" strip popped in under the field on the first visit of every session. They are now
+// mirrored in MMKV and read synchronously into the first render; AsyncStorage stays the copy every
+// write goes to, and is read (seeding MMKV) only when MMKV has none yet.
+
+/** A stored recents list from MMKV, synchronously; `[]` when MMKV has no copy. */
+function readRecentsSync<T>(baseKey: string): T[] {
+  try {
+    const raw = kvGetStringRawSync(accountKey(baseKey));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeRecents(baseKey: string, value: unknown[]): Promise<void> {
+  const key = accountKey(baseKey);
+  const json = JSON.stringify(value);
+  kvSetStringRaw(key, json);
+  return AsyncStorage.setItem(key, json);
 }
 
 /** One tile in the "Recent" strip — either a person or a mini app. */
@@ -446,8 +472,8 @@ export default function SearchScreen() {
       return true;
     }
   });
-  const [history, setHistory] = useState<ProfileResult[]>([]);
-  const [recentApps, setRecentApps] = useState<RecentApp[]>([]);
+  const [history, setHistory] = useState<ProfileResult[]>(() => readRecentsSync<ProfileResult>(SEARCH_HISTORY_KEY));
+  const [recentApps, setRecentApps] = useState<RecentApp[]>(() => readRecentsSync<RecentApp>(RECENT_APPS_KEY));
 
   useEffect(() => {
     loadProfiles();
@@ -549,14 +575,27 @@ export default function SearchScreen() {
     }
   };
 
+  // Only for a list MMKV does not hold yet; the first render already has the mirrored ones.
   const loadHistory = async () => {
     try {
-      const cached = await AsyncStorage.getItem(accountKey(SEARCH_HISTORY_KEY));
-      if (cached) setHistory(JSON.parse(cached));
+      const key = accountKey(SEARCH_HISTORY_KEY);
+      if (kvGetStringRawSync(key) == null) {
+        const cached = await AsyncStorage.getItem(key);
+        if (cached) {
+          kvSetStringRaw(key, cached);
+          setHistory(JSON.parse(cached));
+        }
+      }
     } catch {}
     try {
-      const cachedApps = await AsyncStorage.getItem(accountKey(RECENT_APPS_KEY));
-      if (cachedApps) setRecentApps(JSON.parse(cachedApps));
+      const key = accountKey(RECENT_APPS_KEY);
+      if (kvGetStringRawSync(key) == null) {
+        const cachedApps = await AsyncStorage.getItem(key);
+        if (cachedApps) {
+          kvSetStringRaw(key, cachedApps);
+          setRecentApps(JSON.parse(cachedApps));
+        }
+      }
     } catch {}
   };
 
@@ -564,7 +603,7 @@ export default function SearchScreen() {
     const stamped = { ...profile, ts: Date.now() };
     const updated = [stamped, ...history.filter(h => h.id !== profile.id)].slice(0, RECENT_LIMIT);
     setHistory(updated);
-    await AsyncStorage.setItem(accountKey(SEARCH_HISTORY_KEY), JSON.stringify(updated));
+    await writeRecents(SEARCH_HISTORY_KEY, updated);
   }, [history]);
 
   /**
@@ -578,13 +617,17 @@ export default function SearchScreen() {
     const entry: RecentApp = { id: app.id, name: app.name, emoji: app.emoji, url: app.url, ts: Date.now() };
     const updated = [entry, ...recentApps.filter(a => a.id !== app.id)].slice(0, RECENT_LIMIT);
     setRecentApps(updated);
-    await AsyncStorage.setItem(accountKey(RECENT_APPS_KEY), JSON.stringify(updated));
+    await writeRecents(RECENT_APPS_KEY, updated);
   }, [recentApps]);
 
   const clearHistory = async () => {
     triggerHaptic('light');
     setHistory([]);
     setRecentApps([]);
+    // An empty list in MMKV, not a deleted key: a deleted key would send the next mount back to
+    // AsyncStorage, which may still hold the list if the removal below did not finish.
+    kvSetStringRaw(accountKey(SEARCH_HISTORY_KEY), '[]');
+    kvSetStringRaw(accountKey(RECENT_APPS_KEY), '[]');
     await AsyncStorage.multiRemove([accountKey(SEARCH_HISTORY_KEY), accountKey(RECENT_APPS_KEY)]);
   };
 
