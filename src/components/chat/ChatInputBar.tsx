@@ -16,6 +16,7 @@ import { MAX_MESSAGE_CHARS } from '../../utils/textLimits';
 import { useLiquidGlassActive, NativeGlassView } from '../ui/LiquidGlass';
 import { AnimatedKeyboardIcon } from './AnimatedKeyboardIcon';
 import { AnimatedEmojiIcon } from './AnimatedEmojiIcon';
+import { DictationGlow, DictationStopButton, useChatDictation } from './ChatDictation';
 
 // ── How the composer grows (and the two ways it was broken) ────────────────
 //
@@ -300,17 +301,21 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   // non-empty transition (see ChatField.onHasTextChange), NOT per keystroke.
   const [hasText, setHasText] = useState(false);
   const canSend = hasText || hasPendingImages;
+  // Voice input (see ChatDictation): the mic in the empty field's send place, and while it listens
+  // the stop button there, so the field keeps its short shape until it stops.
+  const dictation = useChatDictation(fieldRef, onTyping);
+  const sendMode = canSend && !dictation.dictating;
 
   // 0 = nothing to send (round send button outside), 1 = something to send (the
   // field's surface covers that place and the pill inside it is shown). Driven
   // once per flip, on the UI thread.
-  const typing = useSharedValue(canSend ? 1 : 0);
-  const typingTargetRef = useRef(canSend);
+  const typing = useSharedValue(sendMode ? 1 : 0);
+  const typingTargetRef = useRef(sendMode);
   useEffect(() => {
-    if (typingTargetRef.current === canSend) return;
-    typingTargetRef.current = canSend;
-    typing.value = withTiming(canSend ? 1 : 0, TYPING_TIMING);
-  }, [canSend, typing]);
+    if (typingTargetRef.current === sendMode) return;
+    typingTargetRef.current = sendMode;
+    typing.value = withTiming(sendMode ? 1 : 0, TYPING_TIMING);
+  }, [sendMode, typing]);
 
   // Native paste payload → parent. Stable so the memoized ChatField never
   // re-renders just because the bar re-rendered.
@@ -328,8 +333,12 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   gifOpenRef.current = gifOpen;
   const onToggleEmojiRef = useRef(onToggleEmoji);
   onToggleEmojiRef.current = onToggleEmoji;
+  const stopDictationRef = useRef(dictation.stop);
+  stopDictationRef.current = dictation.stop;
   const handleFieldFocus = useCallback(() => {
     perfMonitor.markInputFocus('chat');
+    // A tap on the field while dictating stops it, keeping the words, so they can be edited.
+    stopDictationRef.current();
     // Tapping the field while a panel is open should close it and return to the
     // keyboard (which is already coming up).
     if (emojiOpenRef.current || gifOpenRef.current) onToggleEmojiRef.current?.();
@@ -374,23 +383,28 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   const scheme = theme.isDark ? 'dark' : 'light';
   const flatSurface = { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light };
 
+  // While dictating the photo button is the bin: it throws away what this session added.
+  const leftIcon = dictation.dictating ? 'trash-2' : 'image';
+  const leftColor = dictation.dictating ? theme.colors.text.primary : theme.colors.accent.primary;
+  const showMic = dictation.available && !dictation.dictating;
+
   return (
     <Reanimated.View style={[styles.row, inputRowStyle]}>
       <Pressable
-        onPress={onPickImages}
-        onLongPress={onPasteImage}
+        onPress={dictation.dictating ? dictation.cancel : onPickImages}
+        onLongPress={dictation.dictating ? undefined : onPasteImage}
         delayLongPress={300}
         style={styles.roundBtn}
         accessibilityRole="button"
-        accessibilityLabel={t('chat.composer.attach_a11y', 'Прикрепить фото')}
+        accessibilityLabel={dictation.dictating ? t('chat.composer.dictate_cancel_a11y', 'Удалить надиктованное') : t('chat.composer.attach_a11y', 'Прикрепить фото')}
       >
         {glassActive ? (
           <NativeGlassView glassStyle="regular" colorScheme={scheme} style={styles.roundFill}>
-            <Feather name="image" size={20} color={theme.colors.accent.primary} />
+            <Feather name={leftIcon} size={20} color={leftColor} />
           </NativeGlassView>
         ) : (
           <View style={[styles.roundFill, styles.flatBorder, flatSurface]}>
-            <Feather name="image" size={20} color={theme.colors.accent.primary} />
+            <Feather name={leftIcon} size={20} color={leftColor} />
           </View>
         )}
       </Pressable>
@@ -404,6 +418,11 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
             <View style={[styles.surfaceFill, styles.flatBorder, flatSurface]} />
           )}
         </Reanimated.View>
+        {/* Around the surface while it listens; invisible otherwise. The surface keeps its short
+            shape then (`sendMode`), so its right edge is the send slot. */}
+        {dictation.available ? (
+          <DictationGlow on={dictation.on} level={dictation.level} color={theme.colors.accent.primary} right={SEND_SLOT} radius={BTN / 2} />
+        ) : null}
 
         {/* The content. No `height` anywhere: the row is whatever the TextInput
             measures, and `layout` only eases the change (see the top of the file). */}
@@ -433,10 +452,10 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
         {/* The pill inside the field: shown while there is something to send. */}
         <Reanimated.View
           testID="composer-send-pill"
-          pointerEvents={canSend ? 'auto' : 'none'}
+          pointerEvents={sendMode ? 'auto' : 'none'}
           style={[styles.innerSendWrap, innerSendStyle]}
-          accessibilityElementsHidden={!canSend}
-          importantForAccessibility={canSend ? 'auto' : 'no-hide-descendants'}
+          accessibilityElementsHidden={!sendMode}
+          importantForAccessibility={sendMode ? 'auto' : 'no-hide-descendants'}
         >
           <Pressable
             onPress={handleSend}
@@ -449,25 +468,41 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
           </Pressable>
         </Reanimated.View>
 
-        {/* The round send button outside the field: shown while it is empty. */}
+        {/* The round button outside the field, while it is empty: the mic when this phone can
+            dictate (send otherwise), and the stop button while it listens. */}
         <Reanimated.View
           testID="composer-send-round"
-          pointerEvents={canSend ? 'none' : 'auto'}
+          pointerEvents={sendMode ? 'none' : 'auto'}
           style={[styles.outerSendWrap, outerSendStyle]}
-          accessibilityElementsHidden={canSend}
-          importantForAccessibility={canSend ? 'no-hide-descendants' : 'auto'}
+          accessibilityElementsHidden={sendMode}
+          importantForAccessibility={sendMode ? 'no-hide-descendants' : 'auto'}
         >
-          <Pressable onPress={handleSend} style={styles.roundBtn} accessibilityRole="button" accessibilityLabel={sendLabel}>
-            {glassActive ? (
-              <NativeGlassView glassStyle="regular" colorScheme={scheme} style={styles.roundFill}>
-                <Feather name={sendIcon} size={18} color={theme.colors.text.tertiary} />
-              </NativeGlassView>
-            ) : (
-              <View style={[styles.roundFill, styles.flatBorder, flatSurface]}>
-                <Feather name={sendIcon} size={18} color={theme.colors.text.tertiary} />
-              </View>
-            )}
-          </Pressable>
+          {dictation.dictating ? (
+            <DictationStopButton
+              level={dictation.level}
+              color={theme.colors.accent.primary}
+              size={BTN}
+              label={t('chat.composer.dictate_stop_a11y', 'Остановить голосовой ввод')}
+              onPress={dictation.stop}
+            />
+          ) : (
+            <Pressable
+              onPress={showMic ? dictation.start : handleSend}
+              style={styles.roundBtn}
+              accessibilityRole="button"
+              accessibilityLabel={showMic ? t('chat.composer.dictate_a11y', 'Голосовой ввод') : sendLabel}
+            >
+              {glassActive ? (
+                <NativeGlassView glassStyle="regular" colorScheme={scheme} style={styles.roundFill}>
+                  <Feather name={showMic ? 'mic' : sendIcon} size={showMic ? 19 : 18} color={showMic ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+                </NativeGlassView>
+              ) : (
+                <View style={[styles.roundFill, styles.flatBorder, flatSurface]}>
+                  <Feather name={showMic ? 'mic' : sendIcon} size={showMic ? 19 : 18} color={showMic ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+                </View>
+              )}
+            </Pressable>
+          )}
         </Reanimated.View>
       </View>
     </Reanimated.View>

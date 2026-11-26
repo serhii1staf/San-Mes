@@ -420,6 +420,10 @@ describe('ChatInputBar composer behaviour', () => {
       './AnimatedKeyboardIcon',
       './AnimatedEmojiIcon',
       'expo-paste-input',
+      // Voice dictation (Nov 2026). Its native module (expo-speech-recognition) is looked up at run
+      // time in src/services/dictation.ts, never imported, so the bar still loads on a binary
+      // without it (the mic is then not shown) and stays OTA-deliverable.
+      './ChatDictation',
     ]);
 
     expect([...specifiers].sort()).toEqual([...expected].sort());
@@ -437,6 +441,13 @@ describe('ChatInputBar composer behaviour', () => {
         // QR codes with expo-camera. Used only while scanning; nothing is recorded or sent. The
         // image-picker and expo-camera plugins carry the same string (app.json), with no microphone.
         'NSCameraUsageDescription',
+        // Added deliberately in Nov 2026 for voice dictation in the chat composer (ChatDictation,
+        // src/services/dictation.ts): the microphone and Apple's speech recognition are used only
+        // while the user dictates; nothing is recorded or kept. The expo-audio, expo-image-picker,
+        // expo-camera and expo-speech-recognition plugins carry the same microphone string, so none
+        // of them removes it. They reach users only with a new native build.
+        'NSMicrophoneUsageDescription',
+        'NSSpeechRecognitionUsageDescription',
         'NSPhotoLibraryAddUsageDescription',
         'NSPhotoLibraryUsageDescription',
         // Not a permission: React Native's release level, read by ExpoReactNativeFactory. It turns
@@ -449,7 +460,15 @@ describe('ChatInputBar composer behaviour', () => {
     // No tracking / motion / mic / location keys snuck in (compliance).
     expect(keys).not.toContain('NSUserTrackingUsageDescription');
     expect(keys).not.toContain('NSMotionUsageDescription');
-    expect(keys).not.toContain('NSMicrophoneUsageDescription');
+    // The microphone and speech strings must say what they are for: dictating a message.
+    expect(String(appJson.expo.ios.infoPlist.NSMicrophoneUsageDescription)).toMatch(/dictate/);
+    expect(String(appJson.expo.ios.infoPlist.NSSpeechRecognitionUsageDescription)).toMatch(/dictate/);
+    // No plugin may delete the microphone string (`false` removes the key from Info.plist).
+    for (const p of appJson.expo.plugins) {
+      if (Array.isArray(p) && p[1] && 'microphonePermission' in p[1]) {
+        expect(p[1].microphonePermission).toBe(appJson.expo.ios.infoPlist.NSMicrophoneUsageDescription);
+      }
+    }
     // The camera string must say what the camera is for: QR scanning, nothing recorded.
     expect(String(appJson.expo.ios.infoPlist.NSCameraUsageDescription)).toMatch(/QR/);
   });
