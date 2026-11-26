@@ -170,7 +170,10 @@ register('POST', '/v1/ai/complete', async (req, env, _ctx, _params, authedUserId
 const WHISPER = '@cf/openai/whisper-large-v3-turbo';
 /** About 6 MB of base64, i.e. minutes of the app's 32 kbit/s AAC (the app stops at 3 minutes). */
 const TRANSCRIBE_MAX_BODY = 6 * 1024 * 1024;
-const TRANSCRIBE_DAILY_LIMIT = 400;
+/** Phrases a day (the app sends a dictation phrase by phrase, each at most 24 s). */
+const TRANSCRIBE_DAILY_LIMIT = 1500;
+/** Characters of context (`initial_prompt`): Whisper reads at most 224 tokens of it. */
+const PROMPT_MAX = 300;
 const LANGS = new Set(['ru', 'en', 'uk', 'be', 'kk', 'de', 'fr', 'es', 'it', 'pt', 'pl', 'tr']);
 /**
  * Whisper's well-known inventions on silence or noise, learned from film subtitles. Dropped only when
@@ -239,13 +242,15 @@ register('POST', '/v1/ai/transcribe', async (req, env, _ctx, _params, authedUser
   if (Number.isFinite(declared) && declared > TRANSCRIBE_MAX_BODY) return fail(req, 'too_long', 413);
   let audio = '';
   let lang: string | undefined;
+  let prompt = '';
   try {
     const raw = await req.text();
     if (!raw) return fail(req, 'invalid body', 400);
     if (raw.length > TRANSCRIBE_MAX_BODY) return fail(req, 'too_long', 413);
-    const body = JSON.parse(raw) as { audio?: unknown; lang?: unknown };
+    const body = JSON.parse(raw) as { audio?: unknown; lang?: unknown; prompt?: unknown };
     if (typeof body.audio === 'string') audio = body.audio;
     if (typeof body.lang === 'string' && LANGS.has(body.lang)) lang = body.lang;
+    if (typeof body.prompt === 'string') prompt = body.prompt.slice(-PROMPT_MAX);
   } catch {
     return fail(req, 'invalid body', 400);
   }
@@ -260,6 +265,9 @@ register('POST', '/v1/ai/transcribe', async (req, env, _ctx, _params, authedUser
       audio,
       task: 'transcribe',
       ...(lang ? { language: lang } : {}),
+      // The text said before this phrase (the app sends a dictation phrase by phrase), so Whisper
+      // carries on the sentence instead of starting a new one each time.
+      ...(prompt ? { initial_prompt: prompt } : {}),
       // Skips the silence before, between and after the words, where Whisper invents text.
       vad_filter: true,
       // Keeps one misheard phrase from repeating through the rest of a long recording.
