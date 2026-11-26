@@ -62,7 +62,7 @@ import { reportImageDims } from '../../src/services/imageDimsReporter';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 import { useBottomChromeInset, useBrowserBandHeight } from '../../src/lib/browserWidget';
-import { BandFollowLayer } from '../../src/components/ui/BandFollowLayer';
+import { BandFollowLayer, useBandFollowOffset } from '../../src/components/ui/BandFollowLayer';
 import { composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { addTombstones, filterTombstoned, isTombstoned } from '../../src/services/messageTombstones';
@@ -3224,13 +3224,23 @@ export default function ChatScreen() {
   // finishing level with the pill rather than a little past it. Both the gradient AND the
   // transcript's top spacer move together — see `headerScrimHeights`.
   const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top, 8);
-  // The bottom inset this screen's own chrome pads by: 0 while the minimized-session bar is under
-  // the app (the home indicator is then under the bar, see `useBottomChromeInset`).
+  // The bottom inset the panels pad by: 0 while the minimized-session bar is under the app (the home
+  // indicator is then under the bar, see `useBottomChromeInset`).
   const chromeInset = useBottomChromeInset();
-  const inputBarBottomPad = Math.max(chromeInset, 12);
-  // The bar's height while it is under the app, 0 without it: how far above the screen's top the
-  // bottom chrome's layer starts (BandFollowLayer), so the transcript inside starts this far down.
+  // The bar's height while it is under the app, 0 without it.
   const bandH = useBrowserBandHeight();
+  // The composer's resting padding is always its no-bar value. While the bar is shown the composer's
+  // layer (BandFollowLayer `sink`) sits lower by `composerSink`, which is where the 12 pt it used to
+  // pad by with the bar put it. So nothing inside the layer changes when the bar comes or goes and the
+  // layer's transition carries it all: the field, the reply banner and the scrim used to hop by the
+  // difference (22 pt on an iPhone) when the bar's × was tapped.
+  const composerRestPad = Math.max(insets.bottom, 12);
+  const composerSink = bandH > 0 ? composerRestPad - 12 : 0;
+  // The padding in effect on screen, 12 with the bar and the safe area without: the keyboard maths and
+  // the message menu's bounds.
+  const inputBarBottomPad = composerRestPad - composerSink;
+  // Where the screen's top is inside the composer's layer.
+  const composerLayerTop = useBandFollowOffset(composerSink);
 
   // Gradient backdrop is now rendered as a STATIC absolute-positioned
   // element pinned to the bottom of the screen (see the JSX further down)
@@ -3243,7 +3253,7 @@ export default function ChatScreen() {
   // The input row keeps its resting bottom padding (the safe area) at all times. It used to shrink
   // to 8 while the keyboard was up, which was a layout change at the start of every keyboard move;
   // the same 8 pt gap above the keyboard now comes from the transform (`composerRise`).
-  const inputRowStyle = useMemo(() => ({ paddingBottom: inputBarBottomPad }), [inputBarBottomPad]);
+  const inputRowStyle = useMemo(() => ({ paddingBottom: composerRestPad }), [composerRestPad]);
 
   // With the minimized-session bar under the app this screen ends the bar's height above the bottom
   // of the window, and the keyboard (measured from the window's bottom) covers the bar first: the
@@ -3333,10 +3343,11 @@ export default function ChatScreen() {
   // bar itself rides KeyboardStickyView, so it always stays above the
   // keyboard regardless of this constant.
   const INPUT_BAR_HEIGHT = 60;
-  const LIST_FOOTER_HEIGHT = INPUT_BAR_HEIGHT + inputBarBottomPad + 12;
+  // In the composer's layer, so from the no-bar padding (the layer's sink does the rest).
+  const LIST_FOOTER_HEIGHT = INPUT_BAR_HEIGHT + composerRestPad + 12;
   // Resting top edge of the composer stack (typing strip + reply banner + input bar), measured from
-  // the top of the bottom chrome's layer (BandFollowLayer), which starts `bandH` above the screen's
-  // top: subtract `bandH` for screen coordinates. Layout only, so the keyboard's translate does not
+  // the top of the composer's layer (BandFollowLayer), which starts `composerLayerTop` above the
+  // screen's top: subtract that for screen coordinates. Layout only, so the keyboard's translate does not
   // move it; read when the message menu opens, which dismisses the keyboard first. A ref, so a
   // growing input never re-renders the screen for it.
   const composerTopRef = useRef<number | null>(null);
@@ -7583,9 +7594,11 @@ export default function ChatScreen() {
           above the input bar) without triggering FlatList layout. */}
       {/* Everything pinned to the bottom, down to the photo panel, glides with the minimized-session
           bar when it comes or goes instead of dropping by its height in one frame (BandFollowLayer).
-          The transcript fills the screen inside it from `top: bandH`. */}
-      <BandFollowLayer>
-      <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, top: bandH }, listShiftStyle]} pointerEvents="box-none">
+          Two layers: the transcript, the scrim and the composer pad by their no-bar values in one
+          that sinks by `composerSink` under the bar; the panels, which are sized from the keyboard,
+          in a plain one above it. The transcript fills the screen from `top: composerLayerTop`. */}
+      <BandFollowLayer sink={composerSink}>
+      <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, top: composerLayerTop }, listShiftStyle]} pointerEvents="box-none">
       <SkipCorrectionAtNewest data={windowedMessages} atNewest={isAtNewest} listRef={flatListRef} />
       <GestureDetector gesture={panelDismissTap}>
       {transcriptEl}
@@ -7622,7 +7635,7 @@ export default function ChatScreen() {
             library keeps its overhang, where there is no field for the ramp to climb over. */}
       <View
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(chromeInset, 12) }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 12) }}
       >
         {/* Shared scrim ramp (src/theme/scrim.ts). These stops used to be local
             (`[bgTransparent, bgColor + 'B3', bgColor]`, midpoint 0.45) — a
@@ -7835,7 +7848,9 @@ export default function ChatScreen() {
         />
       </Reanimated.View>
       )}
+      </BandFollowLayer>
 
+      <BandFollowLayer>
       {/* Search-result actions. Mounted only while searching so the bar's own
           enter animation is not competing with the input bar's unmount, and gated
           on having a match so it never appears with nothing to act on. */}
@@ -8294,7 +8309,7 @@ export default function ChatScreen() {
             visibleBounds={{
               top: headerContentHeight + (activePin ? PINNED_BAR_BAND : 0),
               bottom:
-                (composerTopRef.current != null ? composerTopRef.current - bandH : SCREEN_HEIGHT - bandH - (INPUT_BAR_HEIGHT + inputBarBottomPad)) -
+                (composerTopRef.current != null ? composerTopRef.current - composerLayerTop : SCREEN_HEIGHT - bandH - (INPUT_BAR_HEIGHT + inputBarBottomPad)) -
                 // The composer rises by the panel height less its resting padding (`barWrapStyle`).
                 (emojiOpen || gifOpen || keepLifted ? Math.max(0, emojiPanelHeight - padDelta) : 0),
             }}

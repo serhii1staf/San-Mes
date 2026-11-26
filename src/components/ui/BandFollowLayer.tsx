@@ -34,14 +34,36 @@ import { BAND_LAYOUT_TRANSITION } from '../../lib/browserBandShared';
  *
  * Only for screens inside the navigator's own area (pushed screens), the same ones that pad by
  * `useBottomChromeInset`.
+ *
+ * ── `sink`: NOTHING INSIDE MAY CHANGE WITH THE BAR ───────────────────────────────────────────────
+ *
+ * The transition animates only the layer's own frame; whatever changes inside it in the same commit
+ * jumps. The composers used to pad by `useBottomChromeInset()`, which steps from 0 to the safe area
+ * when the bar goes, so the field, its reply strip and the scrim hopped up by that much (about 20 pt on
+ * an iPhone) and only then glided ("the dimming and the strip with the author jump when I press ×").
+ *
+ * So the chrome inside pads by its no-bar value, always, and the layer itself sits `sink` lower while
+ * the bar is shown, which is where the smaller padding used to put it. The layer keeps its height and
+ * only its origin moves, so the transition carries everything. `useBandFollowOffset(sink)` is where
+ * the screen's top is inside the layer.
  */
-export function BandFollowLayer({ children }: { children: React.ReactNode }) {
+export function BandFollowLayer({ children, sink = 0 }: { children: React.ReactNode; sink?: number }) {
   const bandH = useBrowserBandHeight();
+  const s = bandH > 0 ? sink : 0;
   return (
-    <Reanimated.View pointerEvents="box-none" layout={BAND_LAYOUT_TRANSITION} style={[styles.layer, { top: -bandH }]}>
+    <Reanimated.View pointerEvents="box-none" layout={BAND_LAYOUT_TRANSITION} style={[styles.layer, { top: s - bandH, bottom: -s }]}>
       {children}
     </Reanimated.View>
   );
+}
+
+/**
+ * How far below the layer's top the screen's top is, for a layer with this `sink`: the `top` of a child
+ * that fills the screen, and what to subtract from a `y` measured inside the layer.
+ */
+export function useBandFollowOffset(sink = 0): number {
+  const bandH = useBrowserBandHeight();
+  return bandH > 0 ? bandH - sink : 0;
 }
 
 const styles = StyleSheet.create({
