@@ -33,6 +33,7 @@ import Animated, {
 import { triggerHaptic } from '../utils/haptics';
 import { UI_RUNTIME_MAPPERS } from '../utils/workletGuards';
 import type { ActionZone } from '../components/ui/MessageContextMenu';
+import { CARD_EDGE_RIGHT } from '../components/navigation/cardDismissEdges';
 
 // Pixels of left-swipe (on release) that commit a reply. Matches the legacy
 // MessageBubble constant exactly.
@@ -224,6 +225,11 @@ export function useMessageGestures<T extends { id: string }>({
         // vertical scrolls always win and horizontal swipes never fight them.
         .activeOffsetX([-12, 9999])
         .failOffsetY([-10, 10])
+        // Not from the right-edge strip: a leftward drag there takes the whole chat away
+        // (CardDismissSurface). Both pans see the same move events and the row's is offered each one
+        // first, so with a fast finger crossing both thresholds in one event the reply used to win
+        // and the chat stayed. A reply swipe starting on the last few points of a bubble is rare.
+        .hitSlop({ right: -CARD_EDGE_RIGHT })
         .onStart(() => {
           'worklet';
           swipeFlagsSV.value = (swipeFlagsSV.value & (LIFTED | HIDDEN)) | SWIPE_MOVED | SWIPE_ACTIVE;

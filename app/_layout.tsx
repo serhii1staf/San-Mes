@@ -49,6 +49,7 @@ import { ChatPeekHost } from '../src/components/chat/ChatPeekMenu';
 import { ProfileQrHost } from '../src/components/profile/ProfileQrHost';
 import { RealtimeAccountBridge } from '../src/components/realtime/RealtimeAccountBridge';
 import { NavigationBarController } from '../src/components/system/NavigationBarController';
+import { RootStackTagProvider } from '../src/components/navigation/CardDismiss';
 
 // Install the global JS error / promise hooks once at module load so we
 // capture every crash from the very first render onward (the bubble panel
@@ -1033,6 +1034,16 @@ const DISMISS_KEYBOARD_ON_LEAVE = {
   },
 };
 
+// ── CHAT AND PROFILE CLOSE BY BEING DRAGGED AWAY ─────────────────────────────
+//
+// Both screens wrap their content in `CardDismissSurface` (src/components/navigation/CardDismiss.tsx):
+// grabbed at an edge or by the header, the screen comes unstuck, shrinks with rounded corners over
+// the screen it was opened from, and flies off or springs back. The surface draws an opaque card of
+// its own, so the scene behind it is transparent here; that is what lets the screen below show
+// around the card. UIKit's swipe back is off on these two: it would start a second, competing pop
+// from the same left edge. (Android never had one; native-stack forces it off there.)
+const CARD_DISMISS = { gestureEnabled: false, contentStyle: { backgroundColor: 'transparent' } } as const;
+
 function AppStack() {
   const theme = useTheme();
   const screenOptions = React.useMemo(
@@ -1044,10 +1055,12 @@ function AppStack() {
     [theme.colors.background.primary],
   );
   return (
+    // Records the root stack's native tag for CardDismissSurface. Renders no view.
+    <RootStackTagProvider>
     <Stack screenOptions={screenOptions} screenListeners={DISMISS_KEYBOARD_ON_LEAVE as any}>
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="(auth)" />
-      <Stack.Screen name="chat/[id]" />
+      <Stack.Screen name="chat/[id]" options={CARD_DISMISS} />
       <Stack.Screen name="chat/ai" />
       <Stack.Screen name="chat/music" />
       {/* A normal pushed screen, like Telegram's profile editor, not a sheet sliding up from the
@@ -1055,7 +1068,7 @@ function AppStack() {
       <Stack.Screen name="profile/edit" options={SWIPE_BACK_ANYWHERE} />
       {/* New post, opened from «Публикации» on your own profile. */}
       <Stack.Screen name="post/new" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
-      <Stack.Screen name="profile/[id]" options={SWIPE_BACK_ANYWHERE} />
+      <Stack.Screen name="profile/[id]" options={CARD_DISMISS} />
       {/* @mention resolver. A username is not an id, so tapping a mention lands here, the lookup
           runs, and it either `replace`s itself with the profile or shows "no such user". */}
       <Stack.Screen name="u/[username]" options={SWIPE_BACK_ANYWHERE} />
@@ -1092,6 +1105,7 @@ function AppStack() {
       <Stack.Screen name="settings/pixel-icons" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
       <Stack.Screen name="settings/mini-app-preview" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
     </Stack>
+    </RootStackTagProvider>
   );
 }
 

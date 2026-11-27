@@ -31,6 +31,7 @@ import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { ChatHeaderStatus } from '../../src/components/chat/ChatHeaderStatus';
 import { ChatHeaderSheet } from '../../src/components/chat/ChatHeaderSheet';
+import { CardDismissSurface } from '../../src/components/navigation/CardDismiss';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { PhotoPickerPanel } from '../../src/components/chat/PhotoPickerPanel';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
@@ -4985,7 +4986,6 @@ export default function ChatScreen() {
 
   // ── Message search ──────────────────────────────────────────────────────────
   const openSearch = useCallback(() => {
-    triggerHaptic('light');
     // Search must cover the WHOLE conversation, not just the loaded seed
     // window — hydrate the full history (once) when the user opens search.
     // Deferred so opening the search bar stays snappy; the match recompute
@@ -4995,6 +4995,32 @@ export default function ChatScreen() {
     }
     setSearchMode(true);
   }, [conversationId, hydrateFullHistory]);
+
+  // ── HOLDING THE NAME: SEARCH ON RELEASE, OR DRAG THE CHAT AWAY ──────────────
+  //
+  // Holding the name used to open search the moment the hold registered (300 ms). The name is now
+  // also a handle for dragging the chat away (CardDismissSurface), and a hold followed by a drag
+  // opened search under the finger mid-drag. So the hold only arms search, with the same haptic, and
+  // the release decides: let go without moving and search opens; move, and the drag takes the touch.
+  // The press is cancelled when the drag takes over, and `onPressOut` runs for that as well, while
+  // the grab is reported from the UI thread in the same moment, so the check looks one frame later.
+  const searchArmedRef = useRef(false);
+  const cardGrabbedAtRef = useRef(0);
+  const armSearch = useCallback(() => {
+    searchArmedRef.current = true;
+    triggerHaptic('light');
+  }, []);
+  const releaseSearch = useCallback(() => {
+    if (!searchArmedRef.current) return;
+    searchArmedRef.current = false;
+    setTimeout(() => {
+      if (Date.now() - cardGrabbedAtRef.current < 600) return;
+      openSearch();
+    }, 32);
+  }, [openSearch]);
+  const onCardGrab = useCallback(() => {
+    cardGrabbedAtRef.current = Date.now();
+  }, []);
 
   const closeSearch = useCallback(() => {
     // Dismiss the keyboard first so the bottom input bar doesn't get stuck at the
@@ -7515,6 +7541,16 @@ export default function ChatScreen() {
   );
 
   return (
+    // Dragged by an edge or the header, the chat comes unstuck and can be thrown away; see
+    // CardDismissSurface. Off while the photo viewer or the hold menu, both drawn in this tree, own
+    // the touches.
+    <CardDismissSurface
+      mode="chat"
+      topZone={headerContentHeight}
+      enabled={!viewerImages && !actionMessage}
+      backgroundColor={bgColor}
+      onGrab={onCardGrab}
+    >
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       {chromeReady && chatSettings.backgroundImage && wallpaperPauseRef.current ? (
         <ChatWallpaper uri={chatSettings.backgroundImage} pause={wallpaperPauseRef.current} />
@@ -8033,7 +8069,8 @@ export default function ChatScreen() {
                   blurred banner replaced the banner that used to fill the pill. */}
               <Pressable
                 onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
-                onLongPress={openSearch}
+                onLongPress={armSearch}
+                onPressOut={releaseSearch}
                 delayLongPress={300}
                 hitSlop={6}
                 style={styles.headerTitleBare}
@@ -8180,6 +8217,7 @@ export default function ChatScreen() {
           pointerEvents none, native-driver particles. */}
       <EmojiDeleteBurst ref={burstRef} />
     </View>
+    </CardDismissSurface>
   );
 }
 
