@@ -556,6 +556,15 @@ function CustomSplash({ leaving = false, onGone }: { leaving?: boolean; onGone?:
   const opacityAnim = useRef(new Animated.Value(0)).current;
   // The whole splash, for lifting it off the app underneath (see AuthNavigationGuard).
   const coverAnim = useRef(new Animated.Value(1)).current;
+  // ── THE NAME GOES BEFORE THE BACKGROUND DOES ──────────────────────────────
+  //
+  // Reported: as the splash lifts, the dark screen goes and the icon, "San" and the greeting stay on
+  // screen for a moment after it. Both shared the cover's one fade, and a dark background fading over
+  // a dark app is invisible from about halfway, while white text over the same app is still plainly
+  // there to the end. So the branding fades on its own, in half the time, and is gone while the
+  // background still covers most of the app.
+  const brandOut = useRef(new Animated.Value(1)).current;
+  const brandOpacity = React.useMemo(() => Animated.multiply(opacityAnim, brandOut), [opacityAnim, brandOut]);
   const onGoneRef = useRef(onGone);
   onGoneRef.current = onGone;
 
@@ -570,14 +579,16 @@ function CustomSplash({ leaving = false, onGone }: { leaving?: boolean; onGone?:
   useEffect(() => {
     if (!leaving) {
       coverAnim.setValue(1);
+      brandOut.setValue(1);
       return;
     }
-    Animated.timing(coverAnim, { toValue: 0, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }).start(
-      ({ finished }) => {
-        if (finished) onGoneRef.current?.();
-      },
-    );
-  }, [leaving, coverAnim]);
+    Animated.parallel([
+      Animated.timing(brandOut, { toValue: 0, duration: 100, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(coverAnim, { toValue: 0, duration: 220, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) onGoneRef.current?.();
+    });
+  }, [leaving, coverAnim, brandOut]);
 
   // Layout: ORIGINAL side-by-side branding (logo slides in from the left,
   // "San" + greeting from the right). The only thing kept from the splash
@@ -592,10 +603,10 @@ function CustomSplash({ leaving = false, onGone }: { leaving?: boolean; onGone?:
       pointerEvents={leaving ? 'none' : 'auto'}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 32, maxWidth: '90%' }}>
-        <Animated.View style={{ transform: [{ translateX: logoAnim }], opacity: opacityAnim }}>
+        <Animated.View style={{ transform: [{ translateX: logoAnim }], opacity: brandOpacity }}>
           <RNImage source={require('../assets/icon.png')} style={{ width: 44, height: 44, borderRadius: 12 }} />
         </Animated.View>
-        <Animated.View style={{ transform: [{ translateX: textAnim }], opacity: opacityAnim, flexShrink: 1 }}>
+        <Animated.View style={{ transform: [{ translateX: textAnim }], opacity: brandOpacity, flexShrink: 1 }}>
           <RNText style={{ fontSize: 28, fontWeight: '700', color: '#FFFFFF' }}>San</RNText>
           {displayName && (
             <RNText numberOfLines={1} style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>
