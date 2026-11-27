@@ -30,6 +30,7 @@ import {
 } from '../../src/components/profile/ProfileLayout';
 import { ProfileContentTabs } from '../../src/components/profile/ProfileContentTabs';
 import { useAuthorChannel } from '../../src/services/realtime/authorChannel';
+import { CardDismissSurface } from '../../src/components/navigation/CardDismiss';
 
 /**
  * Someone else's profile. Same design as before (banner card, avatar tile, name, links, bio,
@@ -146,20 +147,29 @@ export default function UserProfileScreen() {
     emoji: profile.emoji, is_verified: profile.is_verified, badge: profile.badge,
   } : null), [profile]);
 
+  // Dragged sideways, by the right edge or down from the top strip (the back and menu buttons), the
+  // profile comes unstuck and can be thrown away; see CardDismissSurface. Every state is wrapped, so
+  // the loading and not-found screens close the same way.
+  const card = (content: React.ReactNode) => (
+    <CardDismissSurface mode="profile" topZone={insets.top + 56} backgroundColor={theme.colors.background.primary}>
+      {content}
+    </CardDismissSurface>
+  );
+
   // Guards after every hook, so the hook count never changes between renders.
   if (isLoading && !profile) {
-    return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
+    return card(<View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>);
   }
   if (!profile) {
-    return (
+    return card(
       <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
         <Text variant="body" color={theme.colors.text.tertiary}>{t('profile.user_not_found')}</Text>
         <Pressable onPress={back} style={{ marginTop: 16 }}><Text variant="body" color={theme.colors.accent.primary}>{t('common.back')}</Text></Pressable>
-      </View>
+      </View>,
     );
   }
 
-  return (
+  return card(
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       <ProfileFloatingButtons
         topInset={insets.top}
@@ -218,6 +228,6 @@ export default function UserProfileScreen() {
 
       {!isOwnProfile ? <ProfileMenuModal visible={showMenu} profile={menuTarget} onClose={closeMenu} /> : null}
       <ScreenshotShield visible={screenshotDetected} />
-    </View>
+    </View>,
   );
 }
