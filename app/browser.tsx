@@ -76,14 +76,39 @@ export default function BrowserScreen() {
   // the screen stays covered until the very end of its slide, so the bar rises into place and the
   // screen under it makes room for it behind the sheet. Deferred (the old 280 ms), all of that
   // happened in plain view after the sheet had gone. The URL is read now: the screen is unmounting.
+  //
+  // ── ON iOS, AT THE START OF THE SWIPE, NOT AFTER IT ──────────────────────
+  //
+  // Reported: swiping the browser down took it off the screen entirely, and only then did the bar
+  // come up from the bottom, where a mini-app lands on its bar. On iOS the swipe-dismiss of this sheet
+  // is native, and the route is removed (so `beforeRemove` fires) only once the sheet has left the
+  // screen. `transitionStart` with `closing: true` is the sheet's `viewWillDisappear`, at the START of
+  // the swipe (RNSScreen.mm), so the bar is set then and is already in place as the sheet goes. A swipe
+  // let go early brings the sheet back, which arrives as `gestureCancel` (`viewDidAppear` while still
+  // swiping), and the bar is taken away again. `beforeRemove` stays for every other way out (Android's
+  // back, a pop from code); whichever comes first sets the bar.
+  const minimizedRef = useRef(false);
   useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', () => {
-      if (!closedManually.current) {
-        setMinimized(currentUrl || decodedUrl, displayDomain);
-      }
+    const minimize = () => {
+      if (closedManually.current || minimizedRef.current) return;
+      minimizedRef.current = true;
+      setMinimized(currentUrl || decodedUrl, displayDomain);
+    };
+    const offRemove = navigation.addListener('beforeRemove', minimize);
+    const offStart = navigation.addListener('transitionStart' as never, (e: { data?: { closing?: boolean } }) => {
+      if (e?.data?.closing) minimize();
     });
-    return unsubscribe;
-  }, [navigation, currentUrl]);
+    const offCancel = navigation.addListener('gestureCancel' as never, () => {
+      if (!minimizedRef.current || closedManually.current) return;
+      minimizedRef.current = false;
+      clearMinimized();
+    });
+    return () => {
+      offRemove();
+      offStart();
+      offCancel();
+    };
+  }, [navigation, currentUrl, setMinimized, clearMinimized]);
 
   const handleClose = () => {
     closedManually.current = true;
