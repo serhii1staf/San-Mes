@@ -179,6 +179,7 @@ export function CardDismissSurface({
   enabled = true,
   backgroundColor,
   onGrab,
+  onLand,
   children,
 }: {
   /**
@@ -196,6 +197,8 @@ export function CardDismissSurface({
   backgroundColor: string;
   /** JS thread, when a drag has taken the touch (the press under the finger is being cancelled). */
   onGrab?: () => void;
+  /** JS thread, when the card is back in place after a drag that did not close it. */
+  onLand?: () => void;
   children: React.ReactNode;
 }) {
   const { width: W, height: H } = useWindowDimensions();
@@ -231,8 +234,10 @@ export function CardDismissSurface({
   // iOS composites the moved layer tree itself, and `shouldRasterizeIOS` would freeze the blur views.
   const [lifted, setLifted] = useState(false);
   const onGrabRef = useRef(onGrab);
+  const onLandRef = useRef(onLand);
   useEffect(() => {
     onGrabRef.current = onGrab;
+    onLandRef.current = onLand;
   });
   const grabbed = useCallback(() => {
     Keyboard.dismiss();
@@ -241,6 +246,7 @@ export function CardDismissSurface({
   }, []);
   const landedJS = useCallback(() => {
     setLifted(false);
+    onLandRef.current?.();
   }, []);
 
   // Safety net for a pop that did not happen (the native side refused it): the card would stay
@@ -259,6 +265,7 @@ export function CardDismissSurface({
         dy.value = withSpring(0, SPRING);
       })();
       setLifted(false);
+      onLandRef.current?.();
     }, 1500);
   }, [navigation, phase, dx, dy]);
 
