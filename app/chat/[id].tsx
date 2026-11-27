@@ -2113,21 +2113,25 @@ function resolveConversationLocally(id: string | undefined, paramParticipantId: 
 // The busy flag is a tiny store rather than screen state: it flips at every scroll start and stop and
 // every keyboard move, and a state change on this screen would re-render the whole screen to move one
 // image. Only `ChatWallpaper` subscribes.
+// `drag`: while the chat is being dragged away (CardDismissSurface). On Android the lifted card is one
+// hardware layer, and every new GIF frame would redraw that whole layer on each frame of the drag.
 interface WallpaperPause {
-  set: (reason: 'scroll' | 'keyboard', busy: boolean) => void;
+  set: (reason: 'scroll' | 'keyboard' | 'drag', busy: boolean) => void;
   subscribe: (cb: () => void) => () => void;
   isBusy: () => boolean;
 }
 function createWallpaperPause(): WallpaperPause {
   let scroll = false;
   let keyboard = false;
+  let drag = false;
   let busy = false;
   const listeners = new Set<() => void>();
   return {
     set(reason, value) {
       if (reason === 'scroll') scroll = value;
-      else keyboard = value;
-      const next = scroll || keyboard;
+      else if (reason === 'keyboard') keyboard = value;
+      else drag = value;
+      const next = scroll || keyboard || drag;
       if (next === busy) return;
       busy = next;
       listeners.forEach((l) => l());
@@ -5020,6 +5024,10 @@ export default function ChatScreen() {
   }, [openSearch]);
   const onCardGrab = useCallback(() => {
     cardGrabbedAtRef.current = Date.now();
+    wallpaperPauseRef.current?.set('drag', true);
+  }, []);
+  const onCardLand = useCallback(() => {
+    wallpaperPauseRef.current?.set('drag', false);
   }, []);
 
   const closeSearch = useCallback(() => {
@@ -7550,6 +7558,7 @@ export default function ChatScreen() {
       enabled={!viewerImages && !actionMessage}
       backgroundColor={bgColor}
       onGrab={onCardGrab}
+      onLand={onCardLand}
     >
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       {chromeReady && chatSettings.backgroundImage && wallpaperPauseRef.current ? (
