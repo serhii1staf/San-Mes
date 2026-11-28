@@ -54,7 +54,8 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   // Find accent config (check AI themes too)
   const aiThemes = useThemeStore((s) => s.aiThemes);
   const accentConfig = ACCENT_COLORS.find((c) => c.key === accent) || aiThemes.find((c) => c.key === accent);
-  const accentColor = accentConfig?.color || baseColors.accent.primary;
+  // `accent` when the theme has one (an AI theme from a light colour), so white text on buttons stays legible.
+  const accentColor = accentConfig?.accent || accentConfig?.color || baseColors.accent.primary;
 
   // Build theme colors — override backgrounds with accent-tinted colors
   let themeColors: ThemeColors;
@@ -71,7 +72,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       text: baseColors.text,
       accent: {
         primary: accentColor,
-        secondary: accentConfig.color + '80', // 50% opacity version
+        secondary: accentColor + '80', // 50% opacity version
         tertiary: baseColors.accent.tertiary,
       },
       border: {
@@ -93,12 +94,12 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       text: baseColors.text,
       accent: {
         primary: accentColor,
-        secondary: accentConfig.color + '80',
+        secondary: accentColor + '80',
         tertiary: baseColors.accent.tertiary,
       },
       border: {
         ...baseColors.border,
-        light: accentConfig.color + '20',
+        light: accentColor + '20',
       },
       status: baseColors.status,
     };
