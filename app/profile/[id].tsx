@@ -29,6 +29,7 @@ import {
   useProfileScrollAnim,
 } from '../../src/components/profile/ProfileLayout';
 import { ProfileContentTabs } from '../../src/components/profile/ProfileContentTabs';
+import { ProfileHand } from '../../src/components/profile/ProfileHand';
 import { useAuthorChannel } from '../../src/services/realtime/authorChannel';
 import { CardDismissSurface } from '../../src/components/navigation/CardDismiss';
 
@@ -225,6 +226,8 @@ export default function UserProfileScreen() {
           sticky={{ scrollY: anim.scrollY, rest: anim.rest, top: insets.top + 6, bottomPad: insets.bottom + 32 }}
         />
       </Animated.ScrollView>
+      {/* The hand that pulls the header up as the page scrolls; a layer of the screen, not of the card. */}
+      <ProfileHand topInset={insets.top} scrollY={anim.scrollY} marks={anim.marks} />
 
       {!isOwnProfile ? <ProfileMenuModal visible={showMenu} profile={menuTarget} onClose={closeMenu} /> : null}
       <ScreenshotShield visible={screenshotDetected} />

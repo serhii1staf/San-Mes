@@ -34,6 +34,7 @@ import { NativeGlassView } from '../ui/LiquidGlass';
 import { LinkedText } from '../ui/LinkedText';
 import { ProfileLinkBubbles } from './ProfileLinkBubbles';
 import { createScrollRest, useRestFlag } from './scrollRest';
+import { avatarGeometry, createHandMarks } from './profileHandMath';
 import type { BannerTransform } from '../../utils/bannerTransform';
 import { compareIso } from '../../utils/compareIso';
 import { kvGetJSONSync } from '../../services/kvStore';
@@ -79,6 +80,9 @@ export function useProfileScrollAnim() {
     const { rest, onRest } = createScrollRest();
     return {
       scrollY,
+      // Where the name and the buttons sit on the page, reported once by the header card, for the hand
+      // that pulls them up (ProfileHand).
+      marks: createHandMarks(),
       onScroll: Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
       // Both: a drag released without a fling ends with `onScrollEndDrag` alone on iOS.
       onScrollEndDrag: onRest,
@@ -206,13 +210,9 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
   // driver. No opacity on the avatar's container: an alpha on a GlassView ancestor discards the glass.
   const island = Platform.OS === 'ios' && topInset >= 51;
   const avatarAnim = useMemo(() => {
-    const startX = 20 + 42;
-    const startY = topInset + 52 + 42;
-    const targetX = island ? width / 2 : startX;
-    const targetY = island ? topInset / 2 : -70;
-    const travel = Math.max(60, startY - targetY);
+    // The same numbers the hand reaches for (profileHandMath.ts).
+    const { startX, targetX, travel, pin } = avatarGeometry(topInset, width, island);
     const s = anim.scrollY;
-    const pin = targetY - startY + travel;
     return {
       container: {
         transform: [
@@ -299,7 +299,13 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
         {/* Placeholder: the real avatar is drawn above the frost (see the end of the card) so it
             stays crisp while it flies to the island. */}
         <View style={styles.avatarTile} />
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+        <View
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}
+          onLayout={(e) => {
+            const l = e.nativeEvent.layout;
+            anim.marks.set({ nameX: l.x + 26, nameY: l.y + l.height / 2 });
+          }}
+        >
           <Text variant="heading" weight="bold" color={nameColor} numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28, ...(shadow || {}) }}>{displayName}</Text>
           {isVerified ? <VerifiedBadge size={18} /> : null}
           {badge ? <UserBadge badge={badge} size="md" /> : null}
@@ -310,7 +316,15 @@ export const ProfileHeaderCard = memo(function ProfileHeaderCard({
             <LinkedText style={{ color: theme.colors.text.secondary, fontSize: 15, lineHeight: 21 }}>{bio}</LinkedText>
           </View>
         ) : null}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}>{actions}</View>
+        <View
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}
+          onLayout={(e) => {
+            const l = e.nativeEvent.layout;
+            anim.marks.set({ actionsX: l.x + 36, actionsY: l.y + l.height / 2 });
+          }}
+        >
+          {actions}
+        </View>
       </View>
 
       {/* Links float as liquid bubbles in the space beside the avatar (they replaced the chip row
