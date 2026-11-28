@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { kvGetJSONSync, kvGetStringSync, kvSetJSON, kvSetString } from './kvStore';
 import { t, useI18nStore } from '../i18n/store';
 import { apiPost } from './apiClient';
+import { aiThemeKey, buildThemeFromColor, parseColor, splitThemeValue } from './aiTheme';
 
 // ── NO API KEY IN THE APP (Nov 2026) ─────────────────────────────────────────────────────────────
 //
@@ -85,7 +86,8 @@ function incrementUsage(): boolean {
 function buildSystemPrompt(): string {
   const user = useAuthStore.getState().user;
   const themeState = useThemeStore.getState();
-  const currentTheme = ACCENT_COLORS.find(c => c.key === themeState.accent);
+  // AI themes too: a theme San AI made reported itself as «Стандартная».
+  const currentTheme = [...ACCENT_COLORS, ...themeState.aiThemes].find(c => c.key === themeState.accent);
 
   const replyLanguage = useI18nStore.getState().locale === 'en' ? 'английском (English)' : 'русском';
 
@@ -99,7 +101,7 @@ function buildSystemPrompt(): string {
 2. Если пользователь говорит "не меняй"/"не надо" — НЕ включай теги.
 3. Включай тег ТОЛЬКО при прямой просьбе: "смени", "поменяй", "сделай", "хочу".
 4. Если сомневаешься — СПРОСИ.
-5. НИКОГДА не используй белый (#FFFFFF) или очень светлые цвета как основной цвет темы.
+5. Цвет темы может быть ЛЮБЫМ: любой оттенок, от белого до чёрного, светлые, пастельные, тёмные. Если пользователь дал код цвета (#FFF1B5, FFF1B5, rgb(255,241,181), hsl(...)) — используй ИМЕННО его, символ в символ, в виде #RRGGBB. Никогда не заменяй, не затемняй и не высветляй цвет пользователя: из светлого цвета приложение само сделает светлую тему, из тёмного — тёмную. Если цвет назван словами (сливочный, Buttermilk, пыльная роза, мокрый асфальт) — подбери точный hex именно этого оттенка.
 6. ОДНА тема за один ответ. Либо [ACTION:theme:...] (переключение на встроенную), ЛИБО [ACTION:custom_theme:...] (создание новой). НИКОГДА не добавляй оба тега в одном ответе.
 7. Если создаёшь НОВУЮ тему — используй ТОЛЬКО [ACTION:custom_theme:Название:#hex]. НЕ дублируй её через [ACTION:theme:...].
 8. Если переключаешь на СУЩЕСТВУЮЩУЮ тему из списка — используй ТОЛЬКО [ACTION:theme:ключ]. НЕ добавляй custom_theme.
@@ -107,7 +109,7 @@ function buildSystemPrompt(): string {
 
 Теги действий (ТОЛЬКО при явной просьбе):
 [ACTION:theme:ключ] — применить существующую тему
-[ACTION:custom_theme:название:hex_цвет] — создать новую тему с указанным цветом (НЕ белый, НЕ светлый!)
+[ACTION:custom_theme:название:#RRGGBB] — создать новую тему с этим цветом (любой цвет и оттенок)
 [ACTION:mode:dark] или [ACTION:mode:light] — режим
 [ACTION:name:Имя] — сменить имя
 [ACTION:emoji:🎭] — сменить эмодзи
@@ -116,13 +118,15 @@ function buildSystemPrompt(): string {
 [ACTION:links:url1,url2,url3] — добавить ссылки в профиль (до 3, через запятую)
 [ACTION:font:inter|system|serif|mono] — шрифт
 
-Существующие темы (используй их в первую очередь): ${ACCENT_COLORS.map(c => `${c.key}(${c.label})`).join(', ')}
+Встроенные темы (для просьб по настроению или по названию из списка): ${ACCENT_COLORS.map(c => `${c.key}(${c.label})`).join(', ')}
 
-Если ни одна тема не подходит — создай кастомную через [ACTION:custom_theme:Название:hex]. Цвет должен быть насыщенным, НЕ белым, НЕ слишком светлым. Примеры хороших цветов: #6B4EFF, #FF6B6B, #4ECDC4, #2D3436.
+Если пользователь назвал конкретный цвет, оттенок или код — ВСЕГДА создавай [ACTION:custom_theme:Название:#RRGGBB] с этим цветом, а не подбирай похожую встроенную тему. Не добавляй [ACTION:mode:...] к новой теме, если пользователь сам не просил режим.
 
 Примеры правильного использования (ВНИМАНИЕ к правилам 6-8):
 ✅ Переключить: "Готово, тема Шалфей применена!" + [ACTION:theme:sage]
 ✅ Создать новую: "Создал тему Sunset Vibes!" + [ACTION:custom_theme:Sunset Vibes:#FF6A88]
+✅ Пользователь: «сделай тему Buttermilk #FFF1B5» → "Готово, тема Buttermilk!" + [ACTION:custom_theme:Buttermilk:#FFF1B5]
+✅ Пользователь: «хочу тему цвета мокрого асфальта» → "Сделал!" + [ACTION:custom_theme:Мокрый асфальт:#4A4F55]
 ❌ НЕПРАВИЛЬНО: [ACTION:theme:sage] + [ACTION:custom_theme:Mint:#4ECDC4]   ← никогда не отправляй ОБА
 ❌ НЕПРАВИЛЬНО: [ACTION:custom_theme:Sunset:#FF6A88] + [ACTION:theme:sunset]   ← дубликат, не нужен
 
@@ -216,43 +220,37 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
   try {
     switch (action.type) {
       case 'theme': {
-        const allThemes = [...ACCENT_COLORS, ...useThemeStore.getState().aiThemes];
-        const theme = allThemes.find(c => c.key === action.value);
-        if (theme) {
-          useThemeStore.getState().setAccent(action.value);
+        const store = useThemeStore.getState();
+        const builtIn = ACCENT_COLORS.find(c => c.key === action.value);
+        if (builtIn) {
+          store.setAccent(action.value);
           // Auto-switch to dark mode for better theme visibility
-          useThemeStore.getState().setMode('dark');
+          store.setMode('dark');
+          return true;
+        }
+        // Back to a theme San AI made earlier: rebuilt from its colour, so one made before any
+        // colour was accepted gets the new palette, and in the mode its colour reads in.
+        const own = store.aiThemes.find(c => c.key === action.value);
+        const ownColor = own ? parseColor(own.color) : null;
+        if (own && ownColor) {
+          const { theme, mode } = buildThemeFromColor(own.key, own.label, ownColor);
+          store.addAiTheme(theme);
+          store.setAccent(theme.key);
+          store.setMode(mode);
           return true;
         }
         return false;
       }
       case 'custom_theme': {
-        // Format: "Название:hex_цвет"
-        const parts = action.value.split(':');
-        if (parts.length < 2) return false;
-        const name = parts[0].trim();
-        const color = parts[1].trim();
-        if (!color.startsWith('#') || color.length < 4) return false;
-        // Reject white/very light colors
-        const hex = color.replace('#', '');
-        const r = parseInt(hex.substring(0, 2), 16) || 0;
-        const g = parseInt(hex.substring(2, 4), 16) || 0;
-        const b = parseInt(hex.substring(4, 6), 16) || 0;
-        if (r > 240 && g > 240 && b > 240) return false; // pure white — reject
-
-        const key = 'ai-' + name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-        const darkBg = `#${Math.max(10, Math.floor(r * 0.1)).toString(16).padStart(2, '0')}${Math.max(10, Math.floor(g * 0.1)).toString(16).padStart(2, '0')}${Math.max(10, Math.floor(b * 0.1)).toString(16).padStart(2, '0')}`;
-        const darkElevated = `#${Math.max(20, Math.floor(r * 0.15)).toString(16).padStart(2, '0')}${Math.max(20, Math.floor(g * 0.15)).toString(16).padStart(2, '0')}${Math.max(20, Math.floor(b * 0.15)).toString(16).padStart(2, '0')}`;
-        const darkSecondary = `#${Math.max(14, Math.floor(r * 0.12)).toString(16).padStart(2, '0')}${Math.max(14, Math.floor(g * 0.12)).toString(16).padStart(2, '0')}${Math.max(14, Math.floor(b * 0.12)).toString(16).padStart(2, '0')}`;
-        const darkBorder = `#${Math.max(30, Math.floor(r * 0.2)).toString(16).padStart(2, '0')}${Math.max(30, Math.floor(g * 0.2)).toString(16).padStart(2, '0')}${Math.max(30, Math.floor(b * 0.2)).toString(16).padStart(2, '0')}`;
-
-        const newTheme = {
-          key, label: `✨ ${name}`, color,
-          light: '#F8F8F8', darkBg, darkElevated, darkSecondary, darkBorder,
-        };
-        useThemeStore.getState().addAiTheme(newTheme);
-        useThemeStore.getState().setAccent(key);
-        useThemeStore.getState().setMode('dark');
+        // "Name:colour". Any colour and any shade; see aiTheme.ts for what it becomes.
+        const parsed = splitThemeValue(action.value);
+        if (!parsed) return false;
+        const name = parsed.name.slice(0, 40);
+        const { theme, mode } = buildThemeFromColor(aiThemeKey(name), `✨ ${name}`, parsed.color);
+        const store = useThemeStore.getState();
+        store.addAiTheme(theme);
+        store.setAccent(theme.key);
+        store.setMode(mode);
         return true;
       }
       case 'mode': {

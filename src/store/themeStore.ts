@@ -35,6 +35,13 @@ export const ACCENT_COLORS: {
   darkElevated: string;
   darkSecondary: string;
   darkBorder: string;
+  /**
+   * The colour of buttons and highlights when it is not `color` itself. Only themes San AI builds
+   * from a light colour have it: there `color` is the page (#FFF1B5) and this is the same hue deep
+   * enough to carry white text (see src/services/aiTheme.ts). `color` stays the user's colour, so
+   * swatches show what they asked for.
+   */
+  accent?: string;
 }[] = [
   { key: 'coral', label: 'Коралл', color: '#FF8F8F', light: '#FFF0F0', darkBg: '#1A1414', darkElevated: '#2A1E1E', darkSecondary: '#221919', darkBorder: '#3A2828' },
   { key: 'sage', label: 'Шалфей', color: '#8FAE8B', light: '#F0F5EF', darkBg: '#141A14', darkElevated: '#1E2A1E', darkSecondary: '#192219', darkBorder: '#283A28' },

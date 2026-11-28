@@ -21,6 +21,7 @@ import { useAuthStore } from '../../src/store';
 import { useMiniAppsStore, MiniApp } from '../../src/store/miniAppsStore';
 import { useMusicStore } from '../../src/store/musicStore';
 import { sendMessage, parseActions, applyAction, toModelMessage, AIMessage, ParsedAction, getRemainingRequestsSync, saveChatHistory, loadChatHistorySync, migrateLegacyAiStorage, hasAiConsent, grantAiConsent, AI_DAILY_LIMIT } from '../../src/services/aiService';
+import { aiThemeKey, legacyAiThemeKey, splitThemeValue } from '../../src/services/aiTheme';
 import { SpecialChatHeader, SpecialChatEmpty, useSpecialChatHeaderHeight, type SpecialChatSuggestion } from '../../src/components/chat/SpecialChatChrome';
 import { useDeferredPersist } from '../../src/hooks/useDeferredPersist';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -39,11 +40,11 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-function MiniThemeCard({ themeKey }: { themeKey: string }) {
+function MiniThemeCard({ themeKey, fallbackKey }: { themeKey: string; fallbackKey?: string | null }) {
   const user = useAuthStore((s) => s.user);
   const t = useT();
   const allThemes = [...ACCENT_COLORS, ...useThemeStore((s) => s.aiThemes)];
-  const themeOpt = allThemes.find(c => c.key === themeKey);
+  const themeOpt = allThemes.find(c => c.key === themeKey) ?? (fallbackKey ? allThemes.find(c => c.key === fallbackKey) : undefined);
   if (!themeOpt) return null;
   return (
     <View style={{ width: SCREEN_WIDTH * 0.55, borderRadius: 16, overflow: 'hidden', backgroundColor: themeOpt.darkBg, borderWidth: 2, borderColor: themeOpt.color, marginTop: 8 }}>
@@ -79,15 +80,18 @@ function ActionBubble({ action }: { action: ParsedAction }) {
   const theme = useTheme();
   const t = useT();
   const labels: Record<string, string> = { theme: t('ai_chat.label.theme'), custom_theme: t('ai_chat.label.custom_theme'), mode: t('ai_chat.label.mode'), name: t('ai_chat.label.name'), emoji: t('ai_chat.label.emoji'), username: t('ai_chat.label.username'), bio: t('ai_chat.label.bio'), font: t('ai_chat.label.font') };
-  const displayValue = action.type === 'custom_theme' ? action.value.split(':')[0] : action.value;
-  const themeKey = action.type === 'theme' ? action.value : (action.type === 'custom_theme' ? 'ai-' + action.value.split(':')[0].toLowerCase().replace(/[^a-z0-9]/g, '-') : null);
+  const themeValue = action.type === 'custom_theme' ? splitThemeValue(action.value) : null;
+  const displayValue = action.type === 'custom_theme' ? (themeValue?.name ?? action.value.split(':')[0]) : action.value;
+  const themeKey = action.type === 'theme' ? action.value : (action.type === 'custom_theme' ? aiThemeKey(themeValue?.name ?? action.value.split(':')[0].trim()) : null);
+  // The key such a theme got before Nov 2026, for the card under an older message.
+  const legacyKey = action.type === 'custom_theme' ? legacyAiThemeKey(themeValue?.name ?? action.value.split(':')[0].trim()) : null;
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: action.applied ? theme.colors.accent.primary + '15' : 'rgba(255,59,48,0.1)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, marginTop: 4, alignSelf: 'flex-start' }}>
         <Text variant="caption" color={action.applied ? theme.colors.accent.primary : '#FF3B30'} style={{ fontSize: 11 }}>{labels[action.type] || action.type}: {displayValue}</Text>
         {action.applied ? <Feather name="check-circle" size={12} color={theme.colors.accent.primary} /> : <Feather name="x-circle" size={12} color="#FF3B30" />}
       </View>
-      {themeKey && action.applied && <MiniThemeCard themeKey={themeKey} />}
+      {themeKey && action.applied && <MiniThemeCard themeKey={themeKey} fallbackKey={legacyKey} />}
     </View>
   );
 }
@@ -122,10 +126,8 @@ function MessageBubble({ message, onActionUpdate }: MessageBubbleProps) {
   const themeHex = React.useMemo(() => {
     if (!themeAction) return null;
     if (themeAction.type === 'custom_theme') {
-      // value format: "Name:#hex"
-      const parts = themeAction.value.split(':');
-      const c = parts[1]?.trim();
-      return c && c.startsWith('#') ? c : null;
+      // value format: "Name:colour"
+      return splitThemeValue(themeAction.value)?.color ?? null;
     }
     // type === 'theme' — resolve key against built-ins + ai-themes
     const all = [...ACCENT_COLORS, ...useThemeStore.getState().aiThemes];
