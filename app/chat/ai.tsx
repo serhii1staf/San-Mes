@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, LayoutAnimation, UIManager, InteractionManager, Animated, Alert, Share } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText, Platform, LayoutAnimation, UIManager, InteractionManager, Animated, Alert, Share } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import { useKeyboardRiseStyle } from '../../src/hooks/useKeyboardFrames';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,7 +21,8 @@ import { useAuthStore } from '../../src/store';
 import { useMiniAppsStore, MiniApp } from '../../src/store/miniAppsStore';
 import { useMusicStore } from '../../src/store/musicStore';
 import { sendMessage, parseActions, applyAction, toModelMessage, AIMessage, ParsedAction, getRemainingRequestsSync, saveChatHistory, loadChatHistorySync, migrateLegacyAiStorage, hasAiConsent, grantAiConsent, AI_DAILY_LIMIT } from '../../src/services/aiService';
-import { aiThemeKey, legacyAiThemeKey, splitThemeValue } from '../../src/services/aiTheme';
+import { aiThemeKey, legacyAiThemeKey, preferredModeFor, splitThemeValue } from '../../src/services/aiTheme';
+import { AiActionChip, ThemePreviewCard } from '../../src/components/chat/AiActionPreview';
 import { SpecialChatHeader, SpecialChatEmpty, useSpecialChatHeaderHeight, type SpecialChatSuggestion } from '../../src/components/chat/SpecialChatChrome';
 import { useDeferredPersist } from '../../src/hooks/useDeferredPersist';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -33,66 +34,55 @@ import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { emojiTextStyle } from '../../src/components/ui/emojiText';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-
 // Enable LayoutAnimation on Android (no-op on iOS).
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-function MiniThemeCard({ themeKey, fallbackKey }: { themeKey: string; fallbackKey?: string | null }) {
-  const user = useAuthStore((s) => s.user);
-  const t = useT();
-  const allThemes = [...ACCENT_COLORS, ...useThemeStore((s) => s.aiThemes)];
-  const themeOpt = allThemes.find(c => c.key === themeKey) ?? (fallbackKey ? allThemes.find(c => c.key === fallbackKey) : undefined);
-  if (!themeOpt) return null;
-  return (
-    <View style={{ width: SCREEN_WIDTH * 0.55, borderRadius: 16, overflow: 'hidden', backgroundColor: themeOpt.darkBg, borderWidth: 2, borderColor: themeOpt.color, marginTop: 8 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 10, paddingTop: 10, paddingBottom: 4 }}>
-        <Text style={{ fontSize: 11, fontWeight: '700', color: '#FFFFFF' }}>San</Text>
-        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: themeOpt.color }} />
-      </View>
-      <View style={{ marginHorizontal: 8, marginVertical: 4, backgroundColor: themeOpt.darkElevated, borderRadius: 12, padding: 8, borderWidth: 0.5, borderColor: themeOpt.darkBorder }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-          <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: themeOpt.color + '20', alignItems: 'center', justifyContent: 'center' }}>
-            <RNText style={emojiTextStyle(9)} allowFontScaling={false}>{user?.emoji || '😊'}</RNText>
-          </View>
-          <Text style={{ fontSize: 8, fontWeight: '600', color: '#FFFFFF', marginLeft: 6, flexShrink: 1 }} numberOfLines={1}>{user?.displayName || t('ai_chat.user_fallback')}</Text>
-        </View>
-        <View style={{ height: 6, width: '80%', borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.08)', marginBottom: 3 }} />
-        <View style={{ height: 6, width: '50%', borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.05)' }} />
-      </View>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6, borderTopWidth: 0.5, borderTopColor: themeOpt.darkBorder }}>
-        {/* The app's real tab bar: search, chats, profile. (The old preview still drew the
-            removed home feed and «Создать» tabs.) */}
-        <Feather name="search" size={10} color="rgba(255,255,255,0.4)" />
-        <Feather name="message-circle" size={10} color={themeOpt.color} />
-        <Feather name="user" size={10} color="rgba(255,255,255,0.4)" />
-      </View>
-      <View style={{ alignItems: 'center', paddingVertical: 4, backgroundColor: themeOpt.color + '15' }}>
-        <Text style={{ fontSize: 9, fontWeight: '600', color: themeOpt.color }}>{themeOpt.label}</Text>
-      </View>
-    </View>
-  );
-}
-
+/**
+ * Under a reply that changed something: the theme's preview card for an applied theme, a chip for
+ * everything else and for anything that failed. See AiActionPreview.
+ */
 function ActionBubble({ action }: { action: ParsedAction }) {
   const theme = useTheme();
   const t = useT();
+  const emoji = useAuthStore((s) => s.user?.emoji) || '😊';
+  const aiThemes = useThemeStore((s) => s.aiThemes);
   const labels: Record<string, string> = { theme: t('ai_chat.label.theme'), custom_theme: t('ai_chat.label.custom_theme'), mode: t('ai_chat.label.mode'), name: t('ai_chat.label.name'), emoji: t('ai_chat.label.emoji'), username: t('ai_chat.label.username'), bio: t('ai_chat.label.bio'), font: t('ai_chat.label.font') };
   const themeValue = action.type === 'custom_theme' ? splitThemeValue(action.value) : null;
   const displayValue = action.type === 'custom_theme' ? (themeValue?.name ?? action.value.split(':')[0]) : action.value;
   const themeKey = action.type === 'theme' ? action.value : (action.type === 'custom_theme' ? aiThemeKey(themeValue?.name ?? action.value.split(':')[0].trim()) : null);
   // The key such a theme got before Nov 2026, for the card under an older message.
   const legacyKey = action.type === 'custom_theme' ? legacyAiThemeKey(themeValue?.name ?? action.value.split(':')[0].trim()) : null;
+  const themeOpt = useMemo(() => {
+    if (!themeKey || !action.applied) return undefined;
+    const all = [...ACCENT_COLORS, ...aiThemes];
+    return all.find(c => c.key === themeKey) ?? (legacyKey ? all.find(c => c.key === legacyKey) : undefined);
+  }, [themeKey, legacyKey, action.applied, aiThemes]);
+  if (themeOpt) {
+    // Built-in themes are applied in dark mode (see applyAction); an AI theme in the mode its colour reads in.
+    const builtIn = ACCENT_COLORS.some(c => c.key === themeOpt.key);
+    return (
+      <ThemePreviewCard
+        theme={themeOpt}
+        mode={builtIn ? 'dark' : preferredModeFor(themeOpt.color)}
+        emoji={emoji}
+        incoming={t('ai_chat.preview.incoming')}
+        outgoing={t('ai_chat.preview.outgoing')}
+        composer={t('ai_chat.preview.composer')}
+        appliedLabel={t('ai_chat.preview.applied')}
+      />
+    );
+  }
   return (
-    <View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: action.applied ? theme.colors.accent.primary + '15' : 'rgba(255,59,48,0.1)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, marginTop: 4, alignSelf: 'flex-start' }}>
-        <Text variant="caption" color={action.applied ? theme.colors.accent.primary : '#FF3B30'} style={{ fontSize: 11 }}>{labels[action.type] || action.type}: {displayValue}</Text>
-        {action.applied ? <Feather name="check-circle" size={12} color={theme.colors.accent.primary} /> : <Feather name="x-circle" size={12} color="#FF3B30" />}
-      </View>
-      {themeKey && action.applied && <MiniThemeCard themeKey={themeKey} fallbackKey={legacyKey} />}
-    </View>
+    <AiActionChip
+      label={labels[action.type] || action.type}
+      value={displayValue}
+      applied={!!action.applied}
+      accent={theme.colors.accent.primary}
+      ink={theme.colors.text.primary}
+      isDark={theme.isDark}
+    />
   );
 }
 

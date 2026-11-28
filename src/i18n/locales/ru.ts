@@ -597,6 +597,11 @@ const ru: Record<string, string> = {
   'ai_chat.label.bio': '📝 Био',
   'ai_chat.label.font': '🔤 Шрифт',
   'ai_chat.user_fallback': 'User',
+  // The conversation drawn in the preview of a theme San AI applied (src/components/chat/AiActionPreview.tsx).
+  'ai_chat.preview.incoming': 'Как тебе новая тема?',
+  'ai_chat.preview.outgoing': 'Очень красиво ✨',
+  'ai_chat.preview.composer': 'Сообщение',
+  'ai_chat.preview.applied': 'Применена',
 
   // ─── Music chat ────────────────────────────────────────────────────────
   'music_chat.title': 'Музыка',
