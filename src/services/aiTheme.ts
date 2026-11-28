@@ -157,6 +157,12 @@ export function splitThemeValue(value: string): { name: string; color: string } 
   return null;
 }
 
+/** The mode a theme made from `color` is shown in: light for creams, pastels and white. */
+export function preferredModeFor(color: string): ThemeMode {
+  const hex = parseColor(color);
+  return hex && luminance(hexToRgb(hex)) >= LIGHT_THEME_LUMINANCE ? 'light' : 'dark';
+}
+
 /** The palette for `color` (already `#RRGGBB`), and the mode it reads best in. */
 export function buildThemeFromColor(key: string, label: string, color: string): { theme: ThemeOption; mode: ThemeMode } {
   const rgb = hexToRgb(color);
